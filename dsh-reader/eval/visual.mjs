@@ -657,6 +657,73 @@ async function main() {
     record('guide synopsis renders', guideText.includes('分布式系统'), guideText.slice(0, 40))
     await shot('04-guide')
 
+    await page.setViewport({ width: 1280, height: 300, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const independent = await page.evaluate(() => {
+      const drawer = document.querySelector('.rd-drawer-body')
+      const main = document.querySelector('.rd-main')
+      const mainBefore = main.scrollTop
+      drawer.scrollTop = 80
+      return {
+        drawerScrollable: drawer.scrollHeight > drawer.clientHeight,
+        drawer: drawer.scrollTop,
+        mainBefore,
+        mainAfter: main.scrollTop,
+      }
+    })
+    record(
+      'sidebar scrolls independently of the text',
+      independent.drawerScrollable && independent.drawer > 0 && independent.mainBefore === independent.mainAfter,
+      `drawer=${independent.drawer} main=${independent.mainAfter}`,
+    )
+    const crossScroll = await page.evaluate(() => {
+      const drawer = document.querySelector('.rd-drawer-body')
+      const main = document.querySelector('.rd-main')
+      const drawerBefore = drawer.scrollTop
+      main.scrollTo({ top: 120, behavior: 'instant' })
+      return { drawerBefore, drawerAfter: drawer.scrollTop, main: main.scrollTop }
+    })
+    record(
+      'text scroll does not move the sidebar',
+      crossScroll.main > 0 && crossScroll.drawerBefore === crossScroll.drawerAfter,
+      `drawer ${crossScroll.drawerBefore} -> ${crossScroll.drawerAfter}`,
+    )
+    await page.evaluate(() => {
+      document.querySelector('.rd-main').scrollTop = 0
+      document.querySelector('.rd-drawer-body').scrollTop = 60
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await clickAny('.rd-toolbar button', ['目录', 'Contents'])
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    await clickAny('.rd-toolbar button', ['导读', 'Guide'])
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const restoredDrawer = await page.evaluate(() => document.querySelector('.rd-drawer-body').scrollTop)
+    record('each sidebar tab remembers its own scroll position', Math.abs(restoredDrawer - 60) <= 4, `${restoredDrawer}px`)
+    const beforeKeyboard = await page.evaluate(() => {
+      const drawer = document.querySelector('.rd-drawer-body')
+      drawer.scrollTop = 40
+      const item = document.querySelector('.rd-drawer-body [data-activate]')
+      if (item) item.focus()
+      return { drawer: drawer.scrollTop, main: document.querySelector('.rd-main').scrollTop }
+    })
+    await page.keyboard.press('ArrowDown')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const afterKeyboard = await page.evaluate(() => ({
+      drawer: document.querySelector('.rd-drawer-body').scrollTop,
+      main: document.querySelector('.rd-main').scrollTop,
+      active: document.activeElement && document.activeElement.closest('.rd-drawer-body') ? 'drawer' : 'outside',
+    }))
+    record(
+      'arrow keys scroll the sidebar, not the text',
+      afterKeyboard.active === 'drawer' && afterKeyboard.drawer >= beforeKeyboard.drawer && afterKeyboard.main === beforeKeyboard.main,
+      `drawer ${beforeKeyboard.drawer} -> ${afterKeyboard.drawer}, main ${afterKeyboard.main}`,
+    )
+    await page.evaluate(() => {
+      document.querySelector('.rd-drawer-body').scrollTop = 0
+    })
+    await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
     const mapClicked = await clickAny('.rd-drawer button', ['导图', 'Mindmap'])
     await page.waitForSelector('.rd-map-scroll svg .rdm-label', { timeout: 8000 })
     const nodes = await page.$$eval('.rdm-label', (items) => items.length)

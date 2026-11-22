@@ -294,6 +294,9 @@ export function ReaderView(props) {
   const rootRef = React.useRef(null)
   const pageInputRef = React.useRef(null)
   const chapterScrollHint = React.useRef(null)
+  const drawerBodyRef = React.useRef(null)
+  const drawerScroll = React.useRef({})
+  const lastDrawer = React.useRef(null)
   const [layoutTick, setLayoutTick] = React.useState(0)
   const [readingProgress, setReadingProgress] = React.useState(0)
   const [historyTick, setHistoryTick] = React.useState(0)
@@ -499,6 +502,19 @@ export function ReaderView(props) {
   }, [page])
 
   React.useEffect(() => {
+    if (lastDrawer.current && lastDrawer.current !== drawer) {
+      // The previous body is gone by the time this runs; each tab keeps its
+      // last known offset via the onScroll handler instead.
+    }
+    lastDrawer.current = drawer
+    const body = drawerBodyRef.current
+    if (!body || !drawer) return
+    requestAnimationFrame(() => {
+      body.scrollTop = drawerScroll.current[drawer] || 0
+    })
+  }, [drawer])
+
+  React.useEffect(() => {
     const onKey = (event) => {
       const action = shortcutFor(event, { editable: isEditableTarget(event.target), pageKeys: prefs.pageKeys })
       if (action === 'undo' || action === 'redo') {
@@ -541,6 +557,24 @@ export function ReaderView(props) {
       const buttonTarget = event.target && event.target.closest
         ? event.target.closest('button, a, [role="button"]')
         : null
+      const drawerBody = event.target && event.target.closest
+        ? event.target.closest('.rd-drawer-body')
+        : null
+      if (drawerBody) {
+        if (typingTarget) return
+        if ((event.key === ' ' || event.key === 'Spacebar') && buttonTarget) return
+        event.preventDefault()
+        if (action === 'start' || action === 'end') {
+          drawerBody.scrollTo({ top: action === 'start' ? 0 : drawerBody.scrollHeight, behavior: 'instant' })
+          return
+        }
+        const target = scrollStepTarget(
+          { scrollTop: drawerBody.scrollTop, scrollHeight: drawerBody.scrollHeight, clientHeight: drawerBody.clientHeight },
+          action === 'next' ? 'next' : 'prev',
+        )
+        if (target.kind === 'scroll') drawerBody.scrollTo({ top: target.top, behavior: 'instant' })
+        return
+      }
       if (action === 'start' || action === 'end') {
         if (typingTarget) return
         if ((event.key === ' ' || event.key === 'Spacebar') && buttonTarget) return
@@ -2062,7 +2096,17 @@ export function ReaderView(props) {
               h('span', { className: 'rd-spacer' }),
               h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
             ),
-            h('div', { className: 'rd-drawer-body' }, body),
+            h(
+        'div',
+        {
+          className: 'rd-drawer-body',
+          ref: drawerBodyRef,
+          onScroll: (event) => {
+            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+          },
+        },
+        body,
+      ),
           )
         }
         const outline = doc.pdf.tocReliable ? doc.pdf.toc || [] : []
@@ -2661,7 +2705,17 @@ export function ReaderView(props) {
         h('span', { className: 'rd-spacer' }),
         h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
       ),
-      h('div', { className: 'rd-drawer-body' }, body),
+      h(
+        'div',
+        {
+          className: 'rd-drawer-body',
+          ref: drawerBodyRef,
+          onScroll: (event) => {
+            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+          },
+        },
+        body,
+      ),
     )
   }
 
