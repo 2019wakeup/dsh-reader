@@ -95,6 +95,15 @@ function IconSearch() {
   )
 }
 
+function IconPin() {
+  return h(
+    'svg',
+    { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'M9 4h6l-1 7 4 3v2H6v-2l4-3-1-7Z' }),
+    h('path', { d: 'M12 16v4' }),
+  )
+}
+
 function IconSettings() {
   return h(
     'svg',
@@ -3384,12 +3393,25 @@ export function ReaderView(props) {
           'h3',
           null,
           concept.term,
-          card.pinned ? h('span', { className: 'rd-badge' }, t('label.pinned')) : null,
           concept.depth !== 'full' && concept.source !== 'user'
             ? h('span', { className: 'rd-badge' }, t('label.quick'))
             : null,
           h('span', { className: 'rd-spacer' }),
-          h('button', { className: 'rd-btn ghost', onClick: () => setCards(popCard) }, '×'),
+          h(
+            'button',
+            {
+              className: 'rd-btn ghost rd-icon-btn rd-card-pin',
+              'aria-pressed': Boolean(card.pinned),
+              'aria-label': card.pinned ? t('action.unpin') : t('action.pin'),
+              title: card.pinned ? t('action.unpin') : t('action.pin'),
+              onClick: () =>
+                setCards((current) =>
+                  current.map((entry) => (entry.id === card.id ? { ...entry, pinned: !entry.pinned } : entry)),
+                ),
+            },
+            h(IconPin),
+          ),
+          h('button', { className: 'rd-btn ghost rd-icon-btn', 'aria-label': t('action.dismiss'), onClick: () => setCards(popCard) }, '×'),
         ),
         chain.length
           ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, chain.map((item) => item.term).join(' › '))
@@ -3500,6 +3522,7 @@ export function ReaderView(props) {
             'button',
             {
               className: 'rd-btn',
+              title: t('label.conceptListHint'),
               onClick: () => {
                 setCards([])
                 setDrawer('concepts')
@@ -3507,7 +3530,7 @@ export function ReaderView(props) {
                 setFocusConcept(concept.id)
               },
             },
-            t('tab.concepts'),
+            t('label.conceptList'),
           ),
           concept.depth !== 'full' && concept.source !== 'user'
             ? h(
@@ -3531,19 +3554,6 @@ export function ReaderView(props) {
             },
             t('action.edit'),
           ),
-          h(
-            'button',
-            {
-              className: 'rd-btn',
-              onClick: () =>
-                setCards((current) =>
-                  current.map((entry, index) =>
-                    index === current.length - 1 ? { ...entry, pinned: !entry.pinned } : entry,
-                  ),
-                ),
-            },
-            card.pinned ? t('action.unpin') : t('action.pin'),
-          ),
           h('button', { className: 'rd-btn', onClick: () => removeConcept(concept.id) }, t('action.delete')),
         ),
       )
@@ -3555,7 +3565,7 @@ export function ReaderView(props) {
     if (cards.length === 0) return null
     const base = cards[0].rect
     const editingInCard = cards.some((entry) => conceptEdit && conceptEdit.id === entry.id)
-    const style = placePanel(base, editingInCard ? 540 : 360)
+    const style = placePanel(base, editingInCard ? 540 : 480)
     const pinned = cards.some((entry) => entry.pinned)
     return h(
       'div',

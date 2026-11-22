@@ -122,6 +122,8 @@ const ZH = {
   'label.updatedConcept': '概念已更新',
   'label.examplesTitle': '例子',
   'label.quick': '快速',
+  'label.conceptList': '概念库',
+  'label.conceptListHint': '概念已自动保存；打开概念库并定位到它',
   'action.deepen': '深入解释',
   'label.upgrading': '正在深入解释…',
   'label.deepenDone': '已补充完整解释',
@@ -348,6 +350,8 @@ const EN = {
   'label.updatedConcept': 'Concept updated',
   'label.examplesTitle': 'Examples',
   'label.quick': 'Quick',
+  'label.conceptList': 'Concept library',
+  'label.conceptListHint': 'Already saved automatically; open the library focused on this concept',
   'action.deepen': 'Explain fully',
   'label.upgrading': 'Explaining fully…',
   'label.deepenDone': 'Full explanation added',
@@ -781,13 +785,19 @@ const READER_CSS = `
 .rd-entry .rd-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rd-hover-zone{position:fixed;z-index:80;padding:16px}
 .rd-hover-zone .rd-card{position:absolute;left:0;top:0;z-index:auto}
-.rd-card{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:min(58vh,460px);overflow:auto;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:14px 15px;animation:rd-in .12s ease-out}
+.rd-card{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:min(62vh,500px);overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:14px 15px;animation:rd-in .12s ease-out;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent) transparent}
+.rd-card::-webkit-scrollbar{width:8px}
+.rd-card::-webkit-scrollbar-track{background:transparent;margin:8px 0}
+.rd-card::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent);border:2px solid transparent;background-clip:padding-box;border-radius:999px}
+.rd-card::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 30%,transparent);border:2px solid transparent;background-clip:padding-box}
 @keyframes rd-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
-.rd-card h3{margin:0 0 8px;font-size:15px;display:flex;align-items:center;gap:6px}
+.rd-card h3{position:sticky;top:-14px;z-index:3;margin:-14px 0 8px;padding:14px 0 8px;background:var(--dsw-alias-bg-overlay);font-size:15px;display:flex;align-items:center;gap:6px}
 .rd-card .rd-def{font-size:13.5px;line-height:1.62}
 .rd-card .rd-sec{font-size:12.5px;line-height:1.6;color:var(--dsw-alias-label-secondary);margin-top:8px}
 .rd-card .rd-sec b{color:var(--dsw-alias-label-primary);font-weight:600}
 .rd-card .rd-actions{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.rd-card-pin{width:24px;height:24px;min-width:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary)}
+.rd-card-pin[aria-pressed=true]{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 
 .rd-editor .rd-input{width:100%;margin-top:6px}
 .rd-editor{max-height:min(64vh,520px)}
@@ -3283,6 +3293,15 @@ function IconSearch() {
   )
 }
 
+function IconPin() {
+  return h(
+    'svg',
+    { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'M9 4h6l-1 7 4 3v2H6v-2l4-3-1-7Z' }),
+    h('path', { d: 'M12 16v4' }),
+  )
+}
+
 function IconSettings() {
   return h(
     'svg',
@@ -3393,7 +3412,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.11.1'
+const READER_VERSION = '0.11.2'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -6572,12 +6591,25 @@ function ReaderView(props) {
           'h3',
           null,
           concept.term,
-          card.pinned ? h('span', { className: 'rd-badge' }, t('label.pinned')) : null,
           concept.depth !== 'full' && concept.source !== 'user'
             ? h('span', { className: 'rd-badge' }, t('label.quick'))
             : null,
           h('span', { className: 'rd-spacer' }),
-          h('button', { className: 'rd-btn ghost', onClick: () => setCards(popCard) }, '×'),
+          h(
+            'button',
+            {
+              className: 'rd-btn ghost rd-icon-btn rd-card-pin',
+              'aria-pressed': Boolean(card.pinned),
+              'aria-label': card.pinned ? t('action.unpin') : t('action.pin'),
+              title: card.pinned ? t('action.unpin') : t('action.pin'),
+              onClick: () =>
+                setCards((current) =>
+                  current.map((entry) => (entry.id === card.id ? { ...entry, pinned: !entry.pinned } : entry)),
+                ),
+            },
+            h(IconPin),
+          ),
+          h('button', { className: 'rd-btn ghost rd-icon-btn', 'aria-label': t('action.dismiss'), onClick: () => setCards(popCard) }, '×'),
         ),
         chain.length
           ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, chain.map((item) => item.term).join(' › '))
@@ -6688,6 +6720,7 @@ function ReaderView(props) {
             'button',
             {
               className: 'rd-btn',
+              title: t('label.conceptListHint'),
               onClick: () => {
                 setCards([])
                 setDrawer('concepts')
@@ -6695,7 +6728,7 @@ function ReaderView(props) {
                 setFocusConcept(concept.id)
               },
             },
-            t('tab.concepts'),
+            t('label.conceptList'),
           ),
           concept.depth !== 'full' && concept.source !== 'user'
             ? h(
@@ -6719,19 +6752,6 @@ function ReaderView(props) {
             },
             t('action.edit'),
           ),
-          h(
-            'button',
-            {
-              className: 'rd-btn',
-              onClick: () =>
-                setCards((current) =>
-                  current.map((entry, index) =>
-                    index === current.length - 1 ? { ...entry, pinned: !entry.pinned } : entry,
-                  ),
-                ),
-            },
-            card.pinned ? t('action.unpin') : t('action.pin'),
-          ),
           h('button', { className: 'rd-btn', onClick: () => removeConcept(concept.id) }, t('action.delete')),
         ),
       )
@@ -6743,7 +6763,7 @@ function ReaderView(props) {
     if (cards.length === 0) return null
     const base = cards[0].rect
     const editingInCard = cards.some((entry) => conceptEdit && conceptEdit.id === entry.id)
-    const style = placePanel(base, editingInCard ? 540 : 360)
+    const style = placePanel(base, editingInCard ? 540 : 480)
     const pinned = cards.some((entry) => entry.pinned)
     return h(
       'div',

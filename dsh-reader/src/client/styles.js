@@ -79,13 +79,19 @@ export const READER_CSS = `
 .rd-entry .rd-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rd-hover-zone{position:fixed;z-index:80;padding:16px}
 .rd-hover-zone .rd-card{position:absolute;left:0;top:0;z-index:auto}
-.rd-card{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:min(58vh,460px);overflow:auto;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:14px 15px;animation:rd-in .12s ease-out}
+.rd-card{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:min(62vh,500px);overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:14px 15px;animation:rd-in .12s ease-out;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent) transparent}
+.rd-card::-webkit-scrollbar{width:8px}
+.rd-card::-webkit-scrollbar-track{background:transparent;margin:8px 0}
+.rd-card::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent);border:2px solid transparent;background-clip:padding-box;border-radius:999px}
+.rd-card::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 30%,transparent);border:2px solid transparent;background-clip:padding-box}
 @keyframes rd-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
-.rd-card h3{margin:0 0 8px;font-size:15px;display:flex;align-items:center;gap:6px}
+.rd-card h3{position:sticky;top:-14px;z-index:3;margin:-14px 0 8px;padding:14px 0 8px;background:var(--dsw-alias-bg-overlay);font-size:15px;display:flex;align-items:center;gap:6px}
 .rd-card .rd-def{font-size:13.5px;line-height:1.62}
 .rd-card .rd-sec{font-size:12.5px;line-height:1.6;color:var(--dsw-alias-label-secondary);margin-top:8px}
 .rd-card .rd-sec b{color:var(--dsw-alias-label-primary);font-weight:600}
 .rd-card .rd-actions{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.rd-card-pin{width:24px;height:24px;min-width:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary)}
+.rd-card-pin[aria-pressed=true]{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 
 .rd-editor .rd-input{width:100%;margin-top:6px}
 .rd-editor{max-height:min(64vh,520px)}

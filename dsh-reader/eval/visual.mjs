@@ -543,7 +543,31 @@ async function main() {
       ),
     )
     record('deepen action present', deepen, '')
+    const cardButtons = await page.evaluate(() => [...document.querySelectorAll('.rd-card button')].map((button) => button.textContent.trim()))
+    record('card actions avoid duplicate pin buttons', !cardButtons.includes('固定') && !cardButtons.includes('解除固定'), cardButtons.join('|'))
+    record('concept library action remains available', cardButtons.includes('概念库'), cardButtons.join('|'))
+    const cardChrome = await page.evaluate(() => {
+      const card = document.querySelector('.rd-card')
+      const header = card.querySelector('h3')
+      return {
+        scrollbarWidth: getComputedStyle(card).scrollbarWidth,
+        headerPosition: getComputedStyle(header).position,
+        maxHeight: getComputedStyle(card).maxHeight,
+      }
+    })
+    record('long card uses a thin scrollbar and sticky header', cardChrome.scrollbarWidth === 'thin' && cardChrome.headerPosition === 'sticky', JSON.stringify(cardChrome))
     await shot('03-concept-card')
+    const pinClicked = await page.evaluate(() => {
+      const pin = document.querySelector('.rd-card-pin')
+      if (!pin) return false
+      pin.click()
+      return true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const pinState = await page.evaluate(() => document.querySelector('.rd-card-pin')?.getAttribute('aria-pressed') || '')
+    record('pin icon toggles from the card header', pinClicked && pinState === 'true', pinState)
+    await page.evaluate(() => document.querySelector('.rd-card-pin')?.click())
+    await new Promise((resolve) => setTimeout(resolve, 200))
 
     const cardCenter = await page.$eval('.rd-card', (node) => {
       const rect = node.getBoundingClientRect()
