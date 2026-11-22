@@ -12,7 +12,11 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..')
 const workspace = path.resolve(root, '..')
 const DSH = 'http://127.0.0.1:60592'
-const SESSION = process.env.DSH_SESSION_ID || 'session-cdc269f1-aff0-470e-b808-1836af158ef9'
+const SESSION = process.env.DSH_SESSION_ID || ''
+if (!SESSION) {
+  console.error('eval:visual needs DSH_SESSION_ID (run it from a DSH session or export one)')
+  process.exit(1)
+}
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const BASELINE = path.join(here, 'visual', 'baseline')
 
