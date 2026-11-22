@@ -913,6 +913,14 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 300))
     const fullscreenClosed = await page.evaluate(() => !document.querySelector('.rd-map-stage-fullscreen'))
     record('Escape exits mindmap fullscreen', fullscreenClosed, '')
+    await clickAny('.rd-drawer button', ['展开全部', 'Expand all'])
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const expandedAll = await page.$$eval('.rdm-node', (nodes) => nodes.length)
+    record('expand all reveals every map node', expandedAll > mapDefault.nodes, `${mapDefault.nodes} -> ${expandedAll}`)
+    await clickAny('.rd-drawer button', ['收起全部', 'Collapse all'])
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const collapsedAll = await page.$$eval('.rdm-node', (nodes) => nodes.length)
+    record('collapse all returns to chapter level', collapsedAll === mapDefault.nodes, `${expandedAll} -> ${collapsedAll}`)
     const partRect = await page.$eval('[data-node-id="part1"] rect', (node) => {
       const rect = node.getBoundingClientRect()
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }

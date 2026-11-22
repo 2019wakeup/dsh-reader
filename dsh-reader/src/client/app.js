@@ -1654,18 +1654,13 @@ export function ReaderView(props) {
       while (translationQueueRef.current.size > 0) {
         const lang = translationLangRef.current
         const from = translationFromRef.current
-        const segments = []
-        let chars = 0
-        for (const [id, text] of translationQueueRef.current) {
+        for (const [id] of translationQueueRef.current) {
           if (translationFor(translationMapRef.current, id)) {
             translationQueueRef.current.delete(id)
             translationQueuedRef.current.delete(id)
-            continue
           }
-          if (segments.length >= 8 || (chars > 0 && chars + text.length > 3200)) break
-          segments.push({ id, text })
-          chars += text.length
         }
+        const segments = takeTranslationBatch(translationQueueRef.current)
         if (segments.length === 0) {
           translationQueueRef.current.clear()
           translationQueuedRef.current.clear()
@@ -1706,8 +1701,7 @@ export function ReaderView(props) {
     const viewport = scroller ? scroller.getBoundingClientRect() : null
     const visible = blocks.filter((block) => {
       if (!viewport) return true
-      const rect = block.node.getBoundingClientRect()
-      return rect.bottom > viewport.top - 200 && rect.top < viewport.bottom + 200
+      return isNearViewport(block.node.getBoundingClientRect(), viewport, 200)
     })
     enqueueTranslationSegments(visible.map((block) => ({ id: block.hash, text: block.text })))
   }
@@ -2031,8 +2025,7 @@ export function ReaderView(props) {
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
     const nodeLines = (node) => {
       if (node.chunkIndex) {
-        const suffix = Number.isFinite(node.page) && node.page > 0 ? ` · p${node.page}` : ''
-        const head = `${t('label.chunk')} ${node.chunkIndex}${suffix}`
+        const head = chunkNodeLabel(node, t('label.chunk'))
         const summary = String(node.summary || '').replace(/\s+/g, ' ').trim()
         if (!summary) return [head]
         return [head, summary.slice(0, 18) + (summary.length > 18 ? '…' : '')]
@@ -2109,7 +2102,7 @@ export function ReaderView(props) {
             {
               className: 'rd-map-btn',
               onClick: () =>
-                setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+                setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren && node.depth > 0).map((node) => node.id))),
             },
             t('label.collapseAll'),
           ),
@@ -3623,15 +3616,15 @@ export function ReaderView(props) {
     const bounds = rootBounds()
     const width = style.width + 32
     const cardWidth = cardBox.width || style.width
-    const minLeft = bounds.left + 4
-    const maxLeft = Math.max(minLeft, bounds.right - cardWidth - 8)
-    const left = Math.min(Math.max(style.left - 16 + drag.x, minLeft), maxLeft)
-    const minTop = bounds.top + 52
     // Use the rendered card height so short cards can travel to the lower half
     // of the reader; long cards stop when their own height no longer fits.
     const heightLimit = cardBox.height || Number(style.maxHeight) || 480
-    const maxTop = Math.max(minTop, bounds.bottom - heightLimit - 8)
-    const top = Math.min(Math.max(style.top - 16 + drag.y, minTop), maxTop)
+    const clamped = clampCardPosition(
+      { left: style.left - 16 + drag.x, top: style.top - 16 + drag.y, width: cardWidth, height: heightLimit },
+      bounds,
+    )
+    const left = clamped.left
+    const top = clamped.top
     const startDrag = (event, id) => {
       if (event.button !== 0) return
       if (event.target && event.target.closest && event.target.closest('button, input, textarea, select, a')) return

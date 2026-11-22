@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildTree, buildGuideTree, layoutTree, guideMarkdown, splitNodeTitle } from '../src/client/mindmap.js'
+import { buildTree, buildGuideTree, layoutTree, guideMarkdown, splitNodeTitle, chunkNodeLabel } from '../src/client/mindmap.js'
 
 const sections = [
   { id: 'a', title: '第一部分', level: 1, summary: 'A' },
@@ -72,4 +72,11 @@ test('long node titles wrap to at most two lines', () => {
   const veryLong = splitNodeTitle('01 示例章节——价格波动与阶段划分以及更多补充说明文字用于测试超长标题换行与省略')
   assert.equal(veryLong.length, 2)
   assert.ok(veryLong[1].endsWith('…'))
+})
+
+
+test('chunk labels carry the chunk number and page', () => {
+  assert.equal(chunkNodeLabel({ chunkIndex: 2, page: 11, title: 'x' }), '分片 2 · p11')
+  assert.equal(chunkNodeLabel({ chunkIndex: 2, title: 'x' }, 'Part'), 'Part 2')
+  assert.equal(chunkNodeLabel({ title: '完整标题' }), '完整标题')
 })

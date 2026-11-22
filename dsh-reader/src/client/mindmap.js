@@ -9,6 +9,13 @@ function baseTitle(value) {
     .trim()
 }
 
+/** Display label for a chunked chapter node: "分片 2 · p11". */
+export function chunkNodeLabel(node, word = '分片') {
+  if (!node || !node.chunkIndex) return (node && node.title) || ''
+  const suffix = Number.isFinite(node.page) && node.page > 0 ? ` · p${node.page}` : ''
+  return `${word} ${node.chunkIndex}${suffix}`
+}
+
 /** Split a long node title into two readable SVG lines. */
 export function splitNodeTitle(value, perLine = 17) {
   const chars = Array.from(String(value || ''))

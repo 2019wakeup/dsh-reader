@@ -32,7 +32,9 @@ const { markdownSections } = await import(path.join(root, 'src/client/sections.j
 const { docFingerprint } = await import(path.join(root, 'lib/fingerprint.js'))
 const { readStore } = await import(path.join(root, 'lib/store.js'))
 const { parseSectionReply, parseOverviewReply } = await import(path.join(root, 'lib/guide.js'))
-const { buildTree, layoutTree } = await import(path.join(root, 'src/client/mindmap.js'))
+const { buildTree, layoutTree, chunkNodeLabel } = await import(path.join(root, 'src/client/mindmap.js'))
+const { clampCardPosition } = await import(path.join(root, 'src/client/card-drag.js'))
+const { takeTranslationBatch, isNearViewport } = await import(path.join(root, 'src/client/translation-schedule.js'))
 
 function mount(html) {
   const host = document.createElement('div')
@@ -157,6 +159,37 @@ export const cases = [
       if (layout.nodes.length !== 4 || layout.edges.length !== 3) throw new Error('tree layout incomplete')
       if (layout.width <= 0 || layout.height <= 0) throw new Error('empty layout')
       return { nodes: layout.nodes.length, edges: layout.edges.length }
+    },
+  },
+  {
+    name: 'carddrag.bounds',
+    async run() {
+      const bounds = { left: 0, top: 0, right: 1280, bottom: 860 }
+      const short = clampCardPosition({ left: 900, top: 700, width: 330, height: 300 }, bounds)
+      const tall = clampCardPosition({ left: 900, top: 700, width: 330, height: 700 }, bounds)
+      if (short.top !== 552) throw new Error('short card cannot reach the lower half')
+      if (tall.top !== 152) throw new Error('tall card exceeded its height')
+      return { short: short.top, tall: tall.top }
+    },
+  },
+  {
+    name: 'translate.schedule',
+    async run() {
+      const entries = [['a', 'hello'], ['b', 'world'], ['c', 'again']]
+      const batch = takeTranslationBatch(entries, { maxChars: 7 })
+      if (batch.length !== 1 || batch[0].id !== 'a') throw new Error('character limit not applied')
+      const count = takeTranslationBatch(entries, { maxSegments: 2 })
+      if (count.length !== 2) throw new Error('segment limit not applied')
+      if (!isNearViewport({ top: 480, bottom: 540 }, { top: 100, bottom: 500 }, 200)) throw new Error('viewport margin missing')
+      return { batch: batch.length, count: count.length }
+    },
+  },
+  {
+    name: 'mindmap.chunklabel',
+    async run() {
+      const label = chunkNodeLabel({ chunkIndex: 2, page: 11, title: 'x' })
+      if (label !== '分片 2 · p11') throw new Error('chunk label lost its page')
+      return { label }
     },
   },
   {

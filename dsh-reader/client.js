@@ -2810,6 +2810,52 @@ function parsePageInput(value, total) {
 }
 
 
+/** Translation batching and viewport helpers, kept pure for tests/eval. */
+
+/** Take the next batch from an insertion-ordered translation queue. */
+function takeTranslationBatch(entries, options = {}) {
+  const maxSegments = Number.isFinite(options.maxSegments) ? options.maxSegments : 8
+  const maxChars = Number.isFinite(options.maxChars) ? options.maxChars : 3200
+  const batch = []
+  let chars = 0
+  for (const [id, text] of entries) {
+    if (batch.length >= maxSegments) break
+    const value = String(text || '')
+    if (chars > 0 && chars + value.length > maxChars) break
+    batch.push({ id, text: value })
+    chars += value.length
+  }
+  return batch
+}
+
+/** True when a block rect is inside (or near) the reading viewport. */
+function isNearViewport(rect, viewport, margin = 200) {
+  if (!rect || !viewport) return false
+  return rect.bottom > viewport.top - margin && rect.top < viewport.bottom + margin
+}
+
+
+/**
+ * Clamp a dragged card to the reader surface.
+ *
+ * The card keeps its full rendered height inside the bounds; using the max
+ * height instead would confine short cards to the upper half.
+ */
+function clampCardPosition({ left, top, width, height }, bounds, options = {}) {
+  const margin = Number.isFinite(options.margin) ? options.margin : 8
+  const topOffset = Number.isFinite(options.topOffset) ? options.topOffset : 52
+  const edge = Number.isFinite(options.edge) ? options.edge : 4
+  const minLeft = bounds.left + edge
+  const maxLeft = Math.max(minLeft, bounds.right - width - margin)
+  const minTop = bounds.top + topOffset
+  const maxTop = Math.max(minTop, bounds.bottom - height - margin)
+  return {
+    left: Math.min(Math.max(left, minLeft), maxLeft),
+    top: Math.min(Math.max(top, minTop), maxTop),
+  }
+}
+
+
 const MAP_NODE_WIDTH = 230
 const MAP_NODE_HEIGHT = 40
 const MAP_ROW_HEIGHT = 54
@@ -2819,6 +2865,13 @@ function baseTitle(value) {
   return String(value || '')
     .replace(/[（(]\s*\d+\s*[）)]\s*$/, '')
     .trim()
+}
+
+/** Display label for a chunked chapter node: "分片 2 · p11". */
+function chunkNodeLabel(node, word = '分片') {
+  if (!node || !node.chunkIndex) return (node && node.title) || ''
+  const suffix = Number.isFinite(node.page) && node.page > 0 ? ` · p${node.page}` : ''
+  return `${word} ${node.chunkIndex}${suffix}`
 }
 
 /** Split a long node title into two readable SVG lines. */
@@ -3413,7 +3466,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.11.4'
+const READER_VERSION = '0.11.5'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -4853,18 +4906,13 @@ function ReaderView(props) {
       while (translationQueueRef.current.size > 0) {
         const lang = translationLangRef.current
         const from = translationFromRef.current
-        const segments = []
-        let chars = 0
-        for (const [id, text] of translationQueueRef.current) {
+        for (const [id] of translationQueueRef.current) {
           if (translationFor(translationMapRef.current, id)) {
             translationQueueRef.current.delete(id)
             translationQueuedRef.current.delete(id)
-            continue
           }
-          if (segments.length >= 8 || (chars > 0 && chars + text.length > 3200)) break
-          segments.push({ id, text })
-          chars += text.length
         }
+        const segments = takeTranslationBatch(translationQueueRef.current)
         if (segments.length === 0) {
           translationQueueRef.current.clear()
           translationQueuedRef.current.clear()
@@ -4905,8 +4953,7 @@ function ReaderView(props) {
     const viewport = scroller ? scroller.getBoundingClientRect() : null
     const visible = blocks.filter((block) => {
       if (!viewport) return true
-      const rect = block.node.getBoundingClientRect()
-      return rect.bottom > viewport.top - 200 && rect.top < viewport.bottom + 200
+      return isNearViewport(block.node.getBoundingClientRect(), viewport, 200)
     })
     enqueueTranslationSegments(visible.map((block) => ({ id: block.hash, text: block.text })))
   }
@@ -5230,8 +5277,7 @@ function ReaderView(props) {
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
     const nodeLines = (node) => {
       if (node.chunkIndex) {
-        const suffix = Number.isFinite(node.page) && node.page > 0 ? ` · p${node.page}` : ''
-        const head = `${t('label.chunk')} ${node.chunkIndex}${suffix}`
+        const head = chunkNodeLabel(node, t('label.chunk'))
         const summary = String(node.summary || '').replace(/\s+/g, ' ').trim()
         if (!summary) return [head]
         return [head, summary.slice(0, 18) + (summary.length > 18 ? '…' : '')]
@@ -5308,7 +5354,7 @@ function ReaderView(props) {
             {
               className: 'rd-map-btn',
               onClick: () =>
-                setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+                setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren && node.depth > 0).map((node) => node.id))),
             },
             t('label.collapseAll'),
           ),
@@ -6822,15 +6868,15 @@ function ReaderView(props) {
     const bounds = rootBounds()
     const width = style.width + 32
     const cardWidth = cardBox.width || style.width
-    const minLeft = bounds.left + 4
-    const maxLeft = Math.max(minLeft, bounds.right - cardWidth - 8)
-    const left = Math.min(Math.max(style.left - 16 + drag.x, minLeft), maxLeft)
-    const minTop = bounds.top + 52
     // Use the rendered card height so short cards can travel to the lower half
     // of the reader; long cards stop when their own height no longer fits.
     const heightLimit = cardBox.height || Number(style.maxHeight) || 480
-    const maxTop = Math.max(minTop, bounds.bottom - heightLimit - 8)
-    const top = Math.min(Math.max(style.top - 16 + drag.y, minTop), maxTop)
+    const clamped = clampCardPosition(
+      { left: style.left - 16 + drag.x, top: style.top - 16 + drag.y, width: cardWidth, height: heightLimit },
+      bounds,
+    )
+    const left = clamped.left
+    const top = clamped.top
     const startDrag = (event, id) => {
       if (event.button !== 0) return
       if (event.target && event.target.closest && event.target.closest('button, input, textarea, select, a')) return
