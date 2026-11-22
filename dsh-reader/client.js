@@ -229,6 +229,9 @@ const ZH = {
   'label.error': '出错了',
   'label.noModel': '未配置可用模型，无法生成解释',
   'label.mapHint': '拖动可平移；点击节点查看摘要并跳到原文',
+  'label.chunk': '分片',
+  'label.expandAll': '展开全部',
+  'label.collapseAll': '收起全部',
   'label.jumpOriginal': '跳到原文',
   'label.timeout': '模型没有响应，已超时；请重试，或在设置里调高解释超时',
   'label.traversal': '路径不合法',
@@ -432,6 +435,9 @@ const EN = {
   'label.error': 'Something went wrong',
   'label.noModel': 'No model is configured',
   'label.mapHint': 'Drag to pan; click a node to read its summary and jump to the text',
+  'label.chunk': 'Part',
+  'label.expandAll': 'Expand all',
+  'label.collapseAll': 'Collapse all',
   'label.jumpOriginal': 'Jump to text',
   'label.timeout': 'The model did not answer in time; retry, or raise the explanation timeout',
   'label.sessionLost': 'Session or workspace unavailable; reopen from a session',
@@ -2783,9 +2789,11 @@ function buildGuideTree(title, guide) {
     for (const sectionId of part.sectionIds || []) {
       const section = byId.get(sectionId)
       if (!section) continue
+      const suffix = String(section.title || '').match(/[（(]\s*(\d+)\s*[）)]\s*$/)
       node.children.push({
         id: section.id,
         title: section.title || '',
+        chunkIndex: suffix ? Number(suffix[1]) : undefined,
         summary: section.summary || '',
         page: section.page,
         chapter: section.chapter,
@@ -2793,12 +2801,10 @@ function buildGuideTree(title, guide) {
         children: [],
       })
     }
-    // Chunked sections of one chapter share the chapter title with a （1）/（2）
-    // suffix. They are not semantic child topics; merging them avoids three
-    // identical branches in the map. A single-section part is merged too.
-    const partBase = baseTitle(node.title)
-    const chunked = node.children.length > 0 && node.children.every((child) => baseTitle(child.title) === partBase)
-    if (node.children.length === 1 || chunked) {
+    // A part with exactly one section has no finer reading unit above page
+    // level; keep one node. Longer chapters keep their chunk children so the
+    // map can drill down instead of collapsing the detail away.
+    if (node.children.length === 1) {
       const first = node.children[0]
       node.page = first.page
       node.chapter = first.chapter
@@ -2841,6 +2847,9 @@ function layoutTree(tree, collapsed = new Set(), options = {}) {
       title: node.title,
       summary: node.summary,
       keyPoints: node.keyPoints || [],
+      label: node.label || '',
+      chunkIndex: node.chunkIndex,
+      fullTitle: node.title || '',
       page: node.page,
       chapter: node.chapter,
       x: node.x,
@@ -3304,7 +3313,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.9.6'
+const READER_VERSION = '0.9.7'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -4840,6 +4849,13 @@ function ReaderView(props) {
     const canvasWidth = Math.round(width * mapScale)
     const canvasHeight = Math.round(height * mapScale)
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
+    const labelOf = (node) => {
+      if (node.chunkIndex) {
+        const suffix = Number.isFinite(node.page) && node.page > 0 ? ` · p${node.page}` : ''
+        return `${t('label.chunk')} ${node.chunkIndex}${suffix}`
+      }
+      return node.title || ''
+    }
 
     const activateNode = (node) => {
       if (suppressMapClick.current) return
@@ -4888,6 +4904,16 @@ function ReaderView(props) {
         h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
         h('button', { className: 'rd-btn ghost', onClick: () => setMapScale(1) }, '1:1'),
+        h('button', { className: 'rd-btn ghost', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
+        h(
+          'button',
+          {
+            className: 'rd-btn ghost',
+            onClick: () =>
+              setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+          },
+          t('label.collapseAll'),
+        ),
         h('button', { className: 'rd-btn', onClick: exportGuideSvg }, 'SVG'),
         h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
         h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
@@ -4934,7 +4960,7 @@ function ReaderView(props) {
               })
             }),
             guideLayout.nodes.map((node) => {
-              const lines = splitNodeTitle(node.title)
+              const lines = splitNodeTitle(labelOf(node))
               const isSelected = node.id === selectedNodeId
               return h(
                 'g',

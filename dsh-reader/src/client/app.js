@@ -1739,6 +1739,13 @@ export function ReaderView(props) {
     const canvasWidth = Math.round(width * mapScale)
     const canvasHeight = Math.round(height * mapScale)
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
+    const labelOf = (node) => {
+      if (node.chunkIndex) {
+        const suffix = Number.isFinite(node.page) && node.page > 0 ? ` · p${node.page}` : ''
+        return `${t('label.chunk')} ${node.chunkIndex}${suffix}`
+      }
+      return node.title || ''
+    }
 
     const activateNode = (node) => {
       if (suppressMapClick.current) return
@@ -1787,6 +1794,16 @@ export function ReaderView(props) {
         h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
         h('button', { className: 'rd-btn ghost', onClick: () => setMapScale(1) }, '1:1'),
+        h('button', { className: 'rd-btn ghost', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
+        h(
+          'button',
+          {
+            className: 'rd-btn ghost',
+            onClick: () =>
+              setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+          },
+          t('label.collapseAll'),
+        ),
         h('button', { className: 'rd-btn', onClick: exportGuideSvg }, 'SVG'),
         h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
         h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
@@ -1833,7 +1850,7 @@ export function ReaderView(props) {
               })
             }),
             guideLayout.nodes.map((node) => {
-              const lines = splitNodeTitle(node.title)
+              const lines = splitNodeTitle(labelOf(node))
               const isSelected = node.id === selectedNodeId
               return h(
                 'g',

@@ -55,9 +55,12 @@ test('chunked sections of one chapter merge into the chapter node', () => {
     ],
   })
   assert.equal(tree.children.length, 1)
-  assert.equal(tree.children[0].children.length, 0, 'chunk suffixes are not separate branches')
-  assert.equal(tree.children[0].page, 3)
-  assert.equal(tree.children[0].summary, '本篇摘要')
+  assert.equal(tree.children[0].children.length, 3, 'chunk children stay available for drill-down')
+  assert.deepEqual(tree.children[0].children.map((child) => child.chunkIndex), [1, 2, 3])
+  const collapsed = layoutTree(tree, new Set(['c1']))
+  assert.equal(collapsed.nodes.length, 2, 'the map opens at chapter level')
+  const expanded = layoutTree(tree, new Set())
+  assert.equal(expanded.nodes.length, 5)
 })
 
 test('long node titles wrap to at most two lines', () => {

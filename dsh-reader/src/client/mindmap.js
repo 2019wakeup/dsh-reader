@@ -66,9 +66,11 @@ export function buildGuideTree(title, guide) {
     for (const sectionId of part.sectionIds || []) {
       const section = byId.get(sectionId)
       if (!section) continue
+      const suffix = String(section.title || '').match(/[（(]\s*(\d+)\s*[）)]\s*$/)
       node.children.push({
         id: section.id,
         title: section.title || '',
+        chunkIndex: suffix ? Number(suffix[1]) : undefined,
         summary: section.summary || '',
         page: section.page,
         chapter: section.chapter,
@@ -76,12 +78,10 @@ export function buildGuideTree(title, guide) {
         children: [],
       })
     }
-    // Chunked sections of one chapter share the chapter title with a （1）/（2）
-    // suffix. They are not semantic child topics; merging them avoids three
-    // identical branches in the map. A single-section part is merged too.
-    const partBase = baseTitle(node.title)
-    const chunked = node.children.length > 0 && node.children.every((child) => baseTitle(child.title) === partBase)
-    if (node.children.length === 1 || chunked) {
+    // A part with exactly one section has no finer reading unit above page
+    // level; keep one node. Longer chapters keep their chunk children so the
+    // map can drill down instead of collapsing the detail away.
+    if (node.children.length === 1) {
       const first = node.children[0]
       node.page = first.page
       node.chapter = first.chapter
@@ -124,6 +124,9 @@ export function layoutTree(tree, collapsed = new Set(), options = {}) {
       title: node.title,
       summary: node.summary,
       keyPoints: node.keyPoints || [],
+      label: node.label || '',
+      chunkIndex: node.chunkIndex,
+      fullTitle: node.title || '',
       page: node.page,
       chapter: node.chapter,
       x: node.x,
