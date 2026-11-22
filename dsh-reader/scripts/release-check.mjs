@@ -58,7 +58,7 @@ await check('visual pipeline', async () => {
 
 await check('host layout probe', async () => {
   command('layout', 'node eval/layout-host.mjs')
-  return '5/5 probes'
+  return '6/6 probes'
 })
 
 await check('migration rehearsal x3', async () => {

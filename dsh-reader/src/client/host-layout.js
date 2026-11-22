@@ -13,6 +13,28 @@
  * @param {number} [viewportHeight]
  * @returns {number} height in CSS pixels available to `node`, 0 when unknown
  */
+function bottomOverlay(scroller, node) {
+  if (!scroller) return 0
+  const scrollerRect = scroller.getBoundingClientRect()
+  let reserve = 0
+  for (const child of scroller.children) {
+    if (child === node || child.contains(node)) continue
+    const style = typeof getComputedStyle === 'function' ? getComputedStyle(child) : null
+    if (!style) continue
+    if (style.position !== 'sticky' && style.position !== 'fixed') continue
+    if (style.display === 'none' || style.visibility === 'hidden') continue
+    const rect = child.getBoundingClientRect()
+    if (rect.height <= 0) continue
+    // Only reserve elements anchored to the visible bottom of the scroller
+    // (DSH's sticky composer seat lives there and would otherwise add a
+    // second, outer scrollbar on top of the reader's own panes).
+    if (rect.bottom >= scrollerRect.bottom - 8 && rect.bottom <= scrollerRect.bottom + 8) {
+      reserve = Math.max(reserve, rect.height)
+    }
+  }
+  return reserve
+}
+
 export function hostAvailableHeight(node, viewportHeight) {
   if (!node || typeof node.getBoundingClientRect !== 'function') return 0
   const viewport = Number.isFinite(viewportHeight)
@@ -21,6 +43,7 @@ export function hostAvailableHeight(node, viewportHeight) {
       ? window.innerHeight
       : 0
   let bottom = viewport
+  let scroller = null
   for (let parent = node.parentElement; parent; parent = parent.parentElement) {
     const style = typeof getComputedStyle === 'function' ? getComputedStyle(parent) : null
     if (!style) break
@@ -33,11 +56,14 @@ export function hostAvailableHeight(node, viewportHeight) {
       const candidate = rect.bottom - padBottom
       if (candidate > 0 && candidate < bottom) bottom = candidate
       // The nearest scroll container already bounds everything above it.
-      if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') break
+      if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
+        scroller = parent
+        break
+      }
     }
   }
   const top = node.getBoundingClientRect().top
-  return Math.max(0, Math.floor(bottom - top))
+  return Math.max(0, Math.floor(bottom - top - bottomOverlay(scroller, node)))
 }
 
 /**

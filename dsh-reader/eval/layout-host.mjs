@@ -37,6 +37,7 @@ const HOST_CSS = `
   .kiGsTW_scrollBody{scrollbar-gutter:stable;flex-direction:column;flex:1;min-height:0;margin-right:2px;display:flex;overflow-y:auto}
   .kiGsTW_viewArea{flex-direction:column;flex:1;min-height:0;display:flex}
   .kiGsTW_root[data-phase=active] .kiGsTW_viewArea{flex:1 0 auto;min-height:auto}
+  .kiGsTW_composerSeat{flex:none;position:sticky;bottom:0;height:96px;background:var(--dsw-alias-bg-base);border-top:1px solid var(--dsw-alias-border-l1)}
 `
 
 const HTML = `<!doctype html>
@@ -51,6 +52,7 @@ const HTML = `<!doctype html>
           <div id="slot-wrapper"></div>
         </div>
       </div>
+      <div class="kiGsTW_composerSeat" aria-label="composer"></div>
     </div>
   </div>
 </div>
@@ -110,7 +112,9 @@ async function main() {
       const root = document.querySelector('.rd-root')
       if (!root) return { missing: true }
       const rect = root.getBoundingClientRect()
-      const visible = window.innerHeight - rect.top
+      const composer = document.querySelector('.kiGsTW_composerSeat')
+      const composerHeight = composer ? composer.getBoundingClientRect().height : 0
+      const visible = window.innerHeight - rect.top - composerHeight
       const main = document.querySelector('.rd-main')
       const out = {
         visible,
@@ -161,6 +165,16 @@ async function main() {
       metrics.drift <= 2,
       `root=${metrics.rootHeight.toFixed(1)}px visible=${metrics.visible.toFixed(1)}px drift=${metrics.drift.toFixed(1)}px`,
     )
+    const outer = await page.evaluate(() => {
+      const scroller = document.querySelector('.kiGsTW_scrollBody')
+      return { client: scroller.clientHeight, scroll: scroller.scrollHeight, scrollTop: scroller.scrollTop }
+    })
+    record(
+      'outer host body does not add a third scrollbar',
+      outer.scroll <= outer.client + 1 && outer.scrollTop === 0,
+      `client=${outer.client} scroll=${outer.scroll} top=${outer.scrollTop}`,
+    )
+
     record(
       'main pane becomes a scroll container',
       metrics.mainScroll > metrics.mainClient + 100,
