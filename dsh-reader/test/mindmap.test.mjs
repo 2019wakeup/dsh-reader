@@ -46,12 +46,12 @@ test('exports a readable markdown outline', () => {
 test('chunked sections of one chapter merge into the chapter node', () => {
   const tree = buildGuideTree('书', {
     parts: [
-      { id: 'c1', title: '01 康波中的价格波动', summary: '本篇摘要', sectionIds: ['c1-1', 'c1-2', 'c1-3'] },
+      { id: 'c1', title: '01 示例章节', summary: '本篇摘要', sectionIds: ['c1-1', 'c1-2', 'c1-3'] },
     ],
     sections: [
-      { id: 'c1-1', title: '01 康波中的价格波动（1）', page: 3, summary: '第一段' },
-      { id: 'c1-2', title: '01 康波中的价格波动（2）', page: 11, summary: '第二段' },
-      { id: 'c1-3', title: '01 康波中的价格波动（3）', page: 20, summary: '第三段' },
+      { id: 'c1-1', title: '01 示例章节（1）', page: 3, summary: '第一段' },
+      { id: 'c1-2', title: '01 示例章节（2）', page: 11, summary: '第二段' },
+      { id: 'c1-3', title: '01 示例章节（3）', page: 20, summary: '第三段' },
     ],
   })
   assert.equal(tree.children.length, 1)
@@ -63,10 +63,10 @@ test('chunked sections of one chapter merge into the chapter node', () => {
 test('long node titles wrap to at most two lines', () => {
   const short = splitNodeTitle('短标题')
   assert.deepEqual(short, ['短标题'])
-  const long = splitNodeTitle('01 人生财富靠康波——康波中的价格波动与阶段划分')
+  const long = splitNodeTitle('01 示例章节——价格波动与阶段划分')
   assert.equal(long.length, 2)
   assert.ok(long[0].length <= 17)
-  const veryLong = splitNodeTitle('01 人生财富靠康波——康波中的价格波动与阶段划分以及更多补充说明文字')
+  const veryLong = splitNodeTitle('01 示例章节——价格波动与阶段划分以及更多补充说明文字')
   assert.equal(veryLong.length, 2)
   assert.ok(veryLong[1].endsWith('…'))
 })
