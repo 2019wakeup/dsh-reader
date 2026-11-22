@@ -48,6 +48,7 @@
     "migrate:rehearsal": "node scripts/migrate-rehearsal.mjs",
     "release:check": "node scripts/release-check.mjs",
     "make:demo": "node scripts/make-demo-epub.mjs",
-    "eval:visual": "node eval/visual.mjs"
+    "eval:visual": "node eval/visual.mjs",
+    "eval:layout": "node eval/layout-host.mjs"
   }
 }
