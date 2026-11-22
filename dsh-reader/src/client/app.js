@@ -282,7 +282,9 @@ export function ReaderView(props) {
   const [childMenu, setChildMenu] = React.useState(null)
   const [cards, setCards] = React.useState([])
   const [cardDrag, setCardDrag] = React.useState({ id: null, x: 0, y: 0 })
+  const [cardBox, setCardBox] = React.useState({ width: 0, height: 0 })
   const cardDragRef = React.useRef(null)
+  const hoverZoneRef = React.useRef(null)
   const [noteDraft, setNoteDraft] = React.useState(null)
   const [editing, setEditing] = React.useState(null)
   const [toast, setToast] = React.useState(null)
@@ -478,6 +480,21 @@ export function ReaderView(props) {
     setChildMenu(null)
     if (!cardDragRef.current) setCardDrag({ id: null, x: 0, y: 0 })
   }, [cardSignature])
+
+  React.useEffect(() => {
+    const zone = hoverZoneRef.current
+    if (!zone) return
+    const cardNode = zone.querySelector('.rd-card') || zone
+    const measure = () => {
+      const rect = cardNode.getBoundingClientRect()
+      setCardBox({ width: rect.width, height: rect.height })
+    }
+    measure()
+    if (typeof ResizeObserver !== 'function') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(cardNode)
+    return () => observer.disconnect()
+  }, [cardSignature, cards.length])
 
   React.useEffect(() => {
     const end = () => {
@@ -3605,11 +3622,14 @@ export function ReaderView(props) {
     const drag = cardDrag.id === topCard.id ? cardDrag : { x: 0, y: 0 }
     const bounds = rootBounds()
     const width = style.width + 32
+    const cardWidth = cardBox.width || style.width
     const minLeft = bounds.left + 4
-    const maxLeft = Math.max(minLeft, bounds.right - width - 4)
+    const maxLeft = Math.max(minLeft, bounds.right - cardWidth - 8)
     const left = Math.min(Math.max(style.left - 16 + drag.x, minLeft), maxLeft)
     const minTop = bounds.top + 52
-    const heightLimit = Number(style.maxHeight) || 480
+    // Use the rendered card height so short cards can travel to the lower half
+    // of the reader; long cards stop when their own height no longer fits.
+    const heightLimit = cardBox.height || Number(style.maxHeight) || 480
     const maxTop = Math.max(minTop, bounds.bottom - heightLimit - 8)
     const top = Math.min(Math.max(style.top - 16 + drag.y, minTop), maxTop)
     const startDrag = (event, id) => {
@@ -3656,6 +3676,7 @@ export function ReaderView(props) {
       'div',
       {
         className: 'rd-hover-zone',
+        ref: hoverZoneRef,
         style: { left, top, width, maxWidth: width },
         onMouseEnter: () => clearTimeout(hideTimer.current),
         onMouseLeave: () => {

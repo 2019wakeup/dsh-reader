@@ -620,8 +620,12 @@ async function main() {
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
     })
     record(
-      'dragged card stays inside reader bounds',
-      clampedCard.left >= readerBounds.left && clampedCard.right <= readerBounds.right + 1 && clampedCard.top >= readerBounds.top + 40,
+      'dragged card can reach the lower half and stays inside the reader',
+      clampedCard.left >= readerBounds.left &&
+        clampedCard.right <= readerBounds.right + 1 &&
+        clampedCard.bottom <= readerBounds.bottom + 1 &&
+        clampedCard.top >= readerBounds.top + 40 &&
+        (clampedCard.top + clampedCard.bottom) / 2 > readerBounds.top + (readerBounds.bottom - readerBounds.top) / 2,
       `${Math.round(clampedCard.left)},${Math.round(clampedCard.top)}-${Math.round(clampedCard.right)},${Math.round(clampedCard.bottom)}`,
     )
     const childMenuSelection = await page.evaluate(() => {
