@@ -432,6 +432,30 @@ export function ReaderView(props) {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  // Percentage heights only resolve inside a definite-height host, which the
+  // conversation view does not provide; pin the root to the visible box instead.
+  React.useEffect(() => {
+    const fit = () => {
+      const node = rootRef.current
+      if (node) fitHostHeight(node)
+    }
+    fit()
+    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fit) : 0
+    let observer = null
+    if (typeof ResizeObserver === 'function') {
+      observer = new ResizeObserver(fit)
+      observer.observe(document.documentElement)
+      const parent = rootRef.current ? rootRef.current.parentElement : null
+      if (parent) observer.observe(parent)
+    }
+    window.addEventListener('resize', fit)
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      if (observer) observer.disconnect()
+      window.removeEventListener('resize', fit)
+    }
+  }, [])
+
   const rootBounds = () => {
     void layoutTick
     const node = rootRef.current
