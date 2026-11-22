@@ -31,8 +31,6 @@ export function createDeadline({ timeoutMs = 0, signal: parent } = {}) {
       timedOut = true
       controller.abort(new Error(`model call timed out after ${timeoutMs}ms`))
     }, timeoutMs)
-    // A pending call must not keep the host process alive on its own.
-    if (typeof timer.unref === 'function') timer.unref()
   }
 
   return {
