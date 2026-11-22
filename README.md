@@ -1,6 +1,6 @@
 # 砚读 · DSH Reader
 
-在 DeepSeek Harness 的工作区里读 PDF、EPUB 和 Markdown。阅读保持连续，遇到问题在原文处解决，解释和笔记沉淀成可以再次使用的概念卡。
+在 DeepSeek Harness 的工作区里读 PDF、EPUB 和 Markdown。主要用在论文、技术文档、新领域入门和系统学习：阅读保持连续，遇到问题在原文处解决，解释和笔记沉淀成可以再次使用的概念卡。
 
 ![CI](https://github.com/2019wakeup/dsh-reader/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -73,6 +73,30 @@
 
 当前书籍的全文搜索、标注列表、概念列表都放在侧栏。侧栏有独立滚动，切换标签会记住各自的滚动位置；正文与侧栏各自滚动。
 
+## 用在这些场景
+
+### 论文与研究报告
+
+一篇论文的难点往往集中在几个术语和一段背景上。选中摘要或正文里的术语，解释卡会出现在原位置；卡片记录出处，之后回到那一页仍然能找到。读下一篇论文时，同一个概念会追加「本书用法」，对比不同论文的定义差异。
+
+英文论文可以开段落对照或仅译文，按当前视口翻译，滚动时继续补。划词依赖文本层：公式区域和扫描版 PDF 暂时无法选中；有文本层的论文可以正常解释与翻译。
+
+### 技术文档与规范
+
+读框架、API、协议文档时，常遇到「这个词在这里具体指什么」。术语解释、代码块旁的说明、高亮和笔记都留在文档上；翻译时代码块保持原文，避免标识符被改写。全文搜索、目录和侧栏定位用于在长文档里来回跳转。
+
+### 进入一个新领域
+
+先用导读建立章节骨架，再用导图看篇/章关系；读到不懂的词，生成概念卡，遇到派生词继续生成子卡，形成一条概念链。概念库可以按当前书或全部查看，把散落在各章的术语收成一张领域地图。
+
+适合主题阅读：同一领域的几本书可以各自保留「本书用法」，概念卡在书之间复用。
+
+### 系统学习与长期积累
+
+概念卡可以长期维护：记录定义、直觉、语境、例子和出处，随时编辑、合并，也可以导出为 Markdown 或 JSON。标注同样可以导出，换设备或换工作区时带走。
+
+课程材料、行业报告、技术书都适合用这套流程：读的时候解决问题，读完留下可检索的概念和标注。
+
 ## 一次阅读会话
 
 | 步骤 | 会看到什么 |
@@ -87,12 +111,9 @@
 
 ![导读](dsh-reader/eval/visual/baseline/04-guide.png)
 
-## 适合谁
+## 共同点
 
-- 读技术书、行业报告、外文非虚构，希望边读边留下可复用笔记的人；
-- 需要把厚书快速拆成章节骨架与核心问题的人；
-- 在意数据归属，希望标注和概念跟着文件走的人；
-- 希望阅读、提问、记录在同一条工作流里完成的人。
+这些场景都要求阅读保持连续：问题在原文旁解决，结果留在书里，下一次还能找到。
 
 **暂未覆盖**：扫描版 PDF（没有文本层，无法划词）、固定版式 EPUB（FXL）、手机端阅读。
 
@@ -170,7 +191,7 @@ dsh-reader/        插件本体
 
 ## English
 
-DSH Reader is a reading workspace plugin for DeepSeek Harness. It keeps reading continuous: select a term to get an in-place explanation, follow up without leaving the page, and keep the result as a reusable concept card anchored to the source text. PDF, EPUB and Markdown reading, structure-aware guides, mind maps and visible-first translation are built around that workflow. Reading data stays in the workspace `.dsh-reader/` store. Status: 1.0 release candidate (plugin 0.11.2).
+DSH Reader is a reading workspace plugin for DeepSeek Harness, built for papers, technical documentation and learning a new field. It keeps reading continuous: select a term to get an in-place explanation, follow up without leaving the page, and keep the result as a reusable concept card anchored to the source text. PDF, EPUB and Markdown reading, structure-aware guides, mind maps and visible-first translation are built around that workflow. Reading data stays in the workspace `.dsh-reader/` store. Status: 1.0 release candidate (plugin 0.11.2).
 
 ## License
 
