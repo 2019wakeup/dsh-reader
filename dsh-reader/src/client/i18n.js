@@ -182,6 +182,7 @@ const ZH = {
   'label.notePlaceholder': '写点备注…',
   'label.error': '出错了',
   'label.noModel': '未配置可用模型，无法生成解释',
+  'label.timeout': '模型没有响应，已超时；请重试，或在设置里调高解释超时',
   'label.traversal': '路径不合法',
   'label.epubFail': 'EPUB 解析失败',
   'label.pdfFail': 'PDF 加载失败',
@@ -382,6 +383,7 @@ const EN = {
   'label.notePlaceholder': 'Add a note…',
   'label.error': 'Something went wrong',
   'label.noModel': 'No model is configured',
+  'label.timeout': 'The model did not answer in time; retry, or raise the explanation timeout',
   'label.sessionLost': 'Session or workspace unavailable; reopen from a session',
   'label.docMissing': 'Document not found',
   'label.tooLarge': 'Content is too large; narrow the scope and retry',
@@ -405,6 +407,7 @@ export function errorText(message) {
   const raw = String(message || '')
   const rules = [
     [/no model configured/i, 'label.noModel'],
+    [/did not answer within|timed out|timeout/i, 'label.timeout'],
     [/session workspace unavailable|sessionId required/i, 'label.sessionLost'],
     [/unknown docKey|unknown doc|unknown file/i, 'label.docMissing'],
     [/too many sections|too large|body too large/i, 'label.tooLarge'],

@@ -82,3 +82,36 @@ test('writes atomically and leaves no temp file', async () => {
   const entries = await fs.readdir(path.join(cwd, '.dsh-reader'))
   assert.deepEqual(entries.sort(), ['store.json'])
 })
+
+test('keeps the failure breadcrumb across a read/write cycle', async () => {
+  const cwd = await tmpWorkspace()
+  const store = await readStore(cwd)
+  assert.equal(store.debug.lastError, null)
+  assert.deepEqual(store.debug.errors, [])
+  store.debug.lastError = {
+    at: 1_700_000_000_000,
+    route: 'explain',
+    term: '超时词',
+    depth: 'quick',
+    status: 504,
+    message: 'model did not answer within 90000ms',
+  }
+  store.debug.errors = [store.debug.lastError]
+  await writeStore(cwd, store)
+  const reread = await readStore(cwd)
+  assert.equal(reread.debug.lastError.status, 504)
+  assert.equal(reread.debug.lastError.term, '超时词')
+  assert.equal(reread.debug.errors.length, 1)
+})
+
+test('drops junk failure entries instead of leaking them into the store', async () => {
+  const cwd = await tmpWorkspace()
+  await writeStore(cwd, {
+    ...emptyStore(),
+    debug: { lastSent: [], lastError: 'boom', errors: [null, 3, { message: 'x'.repeat(999) }] },
+  })
+  const store = await readStore(cwd)
+  assert.equal(store.debug.errors.length, 1)
+  assert.equal(store.debug.errors[0].message.length, 300)
+  assert.equal(store.debug.lastError.message.length, 300)
+})

@@ -2920,7 +2920,7 @@ export function ReaderView(props) {
         'div',
         null,
         h('h3', null, card.term),
-        h('div', { className: 'rd-error' }, card.error),
+        h('div', { className: 'rd-error' }, errorText(card.error)),
         h(
           'div',
           { className: 'rd-actions' },

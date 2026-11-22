@@ -5,10 +5,20 @@ import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { apply } from '../index.js'
+import { readStore } from '../lib/store.js'
 
 const SESSION = { id: 's1', header: { cwd: '' } }
 
-function makeCtx(cwd, { llmText = '{"definition":"D","intuition":"I","context":"C","examples":[]}', llmReply, web, llmDelay = 0 } = {}) {
+function makeCtx(
+  cwd,
+  {
+    llmText = '{"definition":"D","intuition":"I","context":"C","examples":[]}',
+    llmReply,
+    web,
+    llmDelay = 0,
+    llmStall = false,
+  } = {},
+) {
   const routes = []
   let calls = 0
   const ctx = {
@@ -37,6 +47,19 @@ function makeCtx(cwd, { llmText = '{"definition":"D","intuition":"I","context":"
       },
       async *stream(options) {
         calls++
+        if (llmStall) {
+          // A provider that stops producing chunks without ever finishing: the
+          // only way out is the deadline aborting the signal.
+          await new Promise((_resolve, reject) => {
+            const signal = options.signal
+            if (!signal) return
+            if (signal.aborted) {
+              reject(new Error('aborted'))
+              return
+            }
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+          })
+        }
         if (llmDelay) await new Promise((resolve) => setTimeout(resolve, llmDelay))
         ctx.lastStream = options
         const text = typeof llmReply === 'function' ? llmReply(options) : llmText
@@ -700,7 +723,10 @@ test('routes simple explanations through the quick prompt and low effort', async
   assert.equal(body.concept.depth, 'quick')
   assert.match(system, /只需要快速理解/)
   assert.equal(ctx.lastStream.reasoningEffort, 'low')
-  assert.ok(ctx.lastStream.maxTokens <= 260)
+  // 260 was too small once the model spends part of the budget before emitting
+  // the JSON; the quick path now budgets like the guide's single calls.
+  assert.ok(ctx.lastStream.maxTokens >= 900)
+  assert.ok(ctx.lastStream.maxTokens <= 1_000)
 })
 
 test('upgrades a quick concept to a full explanation on demand', async (t) => {
@@ -962,4 +988,48 @@ test('returns 400 when the session cannot be resolved', async (t) => {
   const { call } = await setup(t)
   const res = await call('/dsh-reader-live/api/list?sessionId=nope&dir=.')
   assert.equal(res.status, 400)
+})
+
+test('a stalled explanation is aborted and reported instead of spinning forever', async (t) => {
+  const previous = process.env.DSH_READER_EXPLAIN_TIMEOUT_MS
+  process.env.DSH_READER_EXPLAIN_TIMEOUT_MS = '60'
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_READER_EXPLAIN_TIMEOUT_MS
+    else process.env.DSH_READER_EXPLAIN_TIMEOUT_MS = previous
+  })
+  const { call, cwd } = await setup(t, { llmStall: true })
+  const res = await call('/dsh-reader-live/api/explain?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ term: '停滞词', depth: 'quick' }),
+  })
+  assert.equal(res.status, 504)
+  const body = await res.json()
+  assert.match(body.error, /did not answer within 60ms/)
+  const store = await readStore(cwd)
+  assert.equal(Object.keys(store.concepts).length, 0, 'nothing half-written')
+  assert.equal(store.debug.lastError.route, 'explain')
+  assert.equal(store.debug.lastError.status, 504)
+  assert.equal(store.debug.lastError.term, '停滞词')
+  assert.equal(store.debug.errors.length, 1)
+
+  // The single-flight entry is released, so the retry fails the same fast way
+  // instead of joining a promise that can never settle.
+  const retry = await call('/dsh-reader-live/api/explain?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ term: '停滞词', depth: 'quick' }),
+  })
+  assert.equal(retry.status, 504)
+  assert.equal((await readStore(cwd)).debug.errors.length, 2)
+})
+
+test('a finished explanation is still stored with the explanations last-sent trace', async (t) => {
+  const { call, cwd } = await setup(t)
+  const res = await call('/dsh-reader-live/api/explain?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ term: '正常词', depth: 'quick' }),
+  })
+  assert.equal(res.status, 200)
+  const store = await readStore(cwd)
+  assert.equal(store.debug.lastError, null, 'a success leaves no failure breadcrumb')
+  assert.equal(store.debug.errors.length, 0)
 })
