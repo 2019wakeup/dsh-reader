@@ -405,10 +405,10 @@ test('guide builds part summaries for long books and reuses them', async (t) => 
     docKey: 'fp1',
     title: '长书',
     sections: [
-      { id: 's1', title: '一', text: 'a' },
-      { id: 's2', title: '二', text: 'b' },
-      { id: 's3', title: '三', text: 'c' },
-      { id: 's4', title: '四', text: 'd' },
+      { id: 's1', title: '一', text: 'a', page: 3 },
+      { id: 's2', title: '二', text: 'b', page: 11, chapter: 2 },
+      { id: 's3', title: '三', text: 'c', page: 20 },
+      { id: 's4', title: '四', text: 'd', page: 30 },
     ],
     parts: [
       { id: 'pt1', title: '篇一', sectionIds: ['s1', 's2'] },
@@ -426,6 +426,8 @@ test('guide builds part summaries for long books and reuses them', async (t) => 
   if (!done) console.error('GUIDE EVENTS:', JSON.stringify(events).slice(0, 800))
   assert.equal(done.guide.parts.length, 2)
   assert.equal(done.guide.parts[0].summary, '篇章摘要')
+  assert.equal(done.guide.sections[0].page, 3, 'page survives for guide jumps')
+  assert.equal(done.guide.sections[1].chapter, 2, 'chapter survives for epub jumps')
   assert.equal(done.partsGenerated, 2)
   assert.equal(events.filter((event) => event.phase === 'part').length, 2)
 
@@ -434,6 +436,7 @@ test('guide builds part summaries for long books and reuses them', async (t) => 
   const secondDone = (await second.text()).trim().split('\n').map((line) => JSON.parse(line)).find((event) => event.type === 'done')
   assert.equal(secondDone.partsGenerated, 0)
   assert.equal(secondDone.reused, 4)
+  assert.equal(secondDone.guide.sections[0].page, 3, 'cached summary keeps its page')
   assert.equal(calls(), before, 'a fully cached guide makes no model calls')
 })
 

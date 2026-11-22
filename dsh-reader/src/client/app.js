@@ -1580,22 +1580,31 @@ export function ReaderView(props) {
   const jumpToSection = (section) => {
     if (!section) return
     if (doc?.ext === '.epub') {
-      const index = Number(String(section.id).replace('c', ''))
-      if (Number.isFinite(index)) goChapter(index, 'top')
+      const match = String(section.id || '').match(/^(?:e|c)(\d+)/i)
+      const index = Number.isFinite(section.chapter) ? section.chapter : match ? Number(match[1]) : NaN
+      if (Number.isFinite(index) && doc.epub.chapters[index]) goChapter(index, 'top')
       return
     }
     if (doc?.ext === '.pdf') {
-      if (Number.isFinite(section.page)) setPage(section.page)
+      let page = Number.isFinite(section.page) ? section.page : null
+      if (!page) {
+        const match = String(section.id || '').match(/^(?:p|d)(\d+)/i)
+        if (match) page = Number(match[1])
+      }
+      if (Number.isFinite(page) && page >= 1) setPage(page)
       return
     }
     const root = contentRef.current
     if (!root) return
+    const base = String(section.title || '')
+      .replace(/[（(]\d+[）)]\s*$/, '')
+      .trim()
+    if (!base) return
     const headings = Array.from(root.querySelectorAll('h1,h2,h3'))
-    const target = headings.find(
-      (element) =>
-        (element.textContent || '').trim() === section.title ||
-        (element.textContent || '').trim().startsWith(section.title.replace(/ \(\d+\)$/, '')),
-    )
+    const target = headings.find((element) => {
+      const text = (element.textContent || '').trim()
+      return text === base || text.startsWith(base.slice(0, 12))
+    })
     if (target) target.scrollIntoView({ block: 'start' })
   }
 
@@ -1656,6 +1665,8 @@ export function ReaderView(props) {
     const byId = new Map(guideLayout.nodes.map((node) => [node.id, node]))
     const width = guideLayout.width + 60
     const height = guideLayout.height + 60
+    const canvasWidth = Math.round(width * mapScale)
+    const canvasHeight = Math.round(height * mapScale)
     return h(
       'div',
       null,
@@ -1665,6 +1676,7 @@ export function ReaderView(props) {
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
         h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
+        h('button', { className: 'rd-btn ghost', onClick: () => setMapScale(1) }, '1:1'),
         h('button', { className: 'rd-btn', onClick: exportGuideSvg }, 'SVG'),
         h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
         h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
@@ -1676,9 +1688,9 @@ export function ReaderView(props) {
           'svg',
           {
             ref: svgRef,
-            width: Math.round(width),
-            height: Math.round(height),
-            viewBox: `0 0 ${width} ${height}`,
+            width: canvasWidth,
+            height: canvasHeight,
+            viewBox: `0 0 ${canvasWidth} ${canvasHeight}`,
             xmlns: 'http://www.w3.org/2000/svg',
           },
           h(
@@ -2088,7 +2100,7 @@ export function ReaderView(props) {
           body = h('div', { className: 'rd-empty' }, t('label.analyzingOutline'))
           return h(
             'div',
-            { className: 'rd-drawer' },
+            { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
             h(
               'div',
               { className: 'rd-drawer-head' },
@@ -2475,18 +2487,48 @@ export function ReaderView(props) {
             const parts = guide.parts || []
             if (parts.length === 0) return (guide.sections || []).map(sectionRow)
             const byId = new Map((guide.sections || []).map((section) => [section.id, section]))
-            return parts.map((part) =>
-              h(
+            return parts.map((part) => {
+              const sections = (part.sectionIds || []).map((id) => byId.get(id)).filter(Boolean)
+              if (sections.length === 1) {
+                const only = sections[0]
+                return h(
+                  'div',
+                  {
+                    key: part.id,
+                    className: 'rd-drawer-item',
+                    'data-activate': '1',
+                    tabIndex: 0,
+                    role: 'button',
+                    onClick: () => jumpToSection(only),
+                  },
+                  h('div', { style: { fontWeight: 600 } }, part.title || only.title),
+                  part.summary || only.summary
+                    ? h('div', { className: 'rd-muted', style: { marginTop: '3px' } }, part.summary || only.summary)
+                    : null,
+                  (only.keyPoints || []).length
+                    ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginTop: '4px' } }, only.keyPoints.join(' · '))
+                    : null,
+                )
+              }
+              return h(
                 'div',
                 { key: part.id, className: 'rd-part' },
-                h('div', { className: 'rd-part-title' }, part.title),
+                h(
+                  'div',
+                  {
+                    className: 'rd-part-title',
+                    'data-activate': '1',
+                    tabIndex: 0,
+                    role: 'button',
+                    style: { cursor: 'pointer' },
+                    onClick: () => sections[0] && jumpToSection(sections[0]),
+                  },
+                  part.title,
+                ),
                 part.summary ? h('div', { className: 'rd-part-summary' }, part.summary) : null,
-                (part.sectionIds || []).map((id) => {
-                  const section = byId.get(id)
-                  return section ? sectionRow(section) : null
-                }),
-              ),
-            )
+                sections.map((section) => sectionRow(section)),
+              )
+            })
           })(),
         )
         body = h(
@@ -2697,7 +2739,7 @@ export function ReaderView(props) {
     }
     return h(
       'div',
-      { className: 'rd-drawer' },
+      { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
       h(
         'div',
         { className: 'rd-drawer-head' },

@@ -38,9 +38,10 @@ export const READER_CSS = `
 .rd-term:hover{background:var(--dsw-alias-bg-layer-2)}
 .rd-term:focus-visible,.rd-hl:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .rd-hl{background:color-mix(in srgb,var(--hl,#f2c94c) 38%,transparent);border-radius:3px;padding:0 1px;cursor:pointer}
-.rd-drawer{flex:0 0 320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
+.rd-drawer.rd-drawer-wide{flex-basis:min(760px,62vw);max-width:min(760px,62vw)}
+.rd-drawer{flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
 .rd-drawer-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-drawer-body{flex:1;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
+.rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
 .rd-drawer-item:hover{background:var(--dsw-alias-bg-layer-1)}
 .rd-drawer-item .rd-muted{color:var(--dsw-alias-label-secondary);font-size:11.5px}
@@ -90,7 +91,7 @@ export const READER_CSS = `
 .rd-theme-sepia .rd-main{background:#f5ecd9;color:#3d2f24}
 .rd-theme-sepia .rd-page{color:#3d2f24}
 .rd-relink{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 12px;font-size:12px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-map-scroll{max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base)}
+.rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base)}
 .rd-web-toggle{display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary)}
 .rd-qa-src{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;margin-top:3px}
 .rd-qa-src a{color:var(--dsw-alias-brand-primary);text-decoration:none}

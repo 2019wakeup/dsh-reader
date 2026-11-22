@@ -655,6 +655,11 @@ async function main() {
     await page.waitForSelector('.rd-guide-synopsis', { timeout: 8000 })
     const guideText = await page.evaluate(() => document.querySelector('.rd-drawer-body').textContent)
     record('guide synopsis renders', guideText.includes('分布式系统'), guideText.slice(0, 40))
+    const partRows = await page.evaluate(() => ({
+      parts: document.querySelectorAll('.rd-part').length,
+      singleTitleCount: (document.querySelector('.rd-drawer-body').textContent.match(/第二部分 · 直觉/g) || []).length,
+    }))
+    record('single-section parts are not duplicated', partRows.parts === 1 && partRows.singleTitleCount === 1, JSON.stringify(partRows))
     await shot('04-guide')
 
     await page.setViewport({ width: 1280, height: 300, deviceScaleFactor: 1 })
@@ -729,6 +734,37 @@ async function main() {
     const nodes = await page.$$eval('.rdm-label', (items) => items.length)
     record('mindmap renders nodes', mapClicked && nodes >= 3, `${nodes} nodes`)
     await shot('05-mindmap')
+    const baseMapWidth = await page.$eval('.rd-map-scroll svg', (node) => Number(node.getAttribute('width')))
+    await page.evaluate(() => {
+      const plus = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '+')
+      for (let index = 0; index < 5; index += 1) plus.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const zoomedMap = await page.evaluate(() => {
+      const svg = document.querySelector('.rd-map-scroll svg')
+      const scroll = document.querySelector('.rd-map-scroll')
+      const rect = svg.getBoundingClientRect()
+      return {
+        width: Number(svg.getAttribute('width')),
+        rectWidth: Math.round(rect.width),
+        scrollWidth: scroll.scrollWidth,
+        clientWidth: scroll.clientWidth,
+        overflow: getComputedStyle(scroll).overflowX,
+        scrollable: scroll.scrollWidth > scroll.clientWidth,
+      }
+    })
+    record(
+      'mindmap zoom grows the canvas and scrolls',
+      zoomedMap.width > baseMapWidth && zoomedMap.scrollable,
+      `${baseMapWidth} -> ${zoomedMap.width} rect=${zoomedMap.rectWidth} scroll=${zoomedMap.scrollWidth}/${zoomedMap.clientWidth} overflow=${zoomedMap.overflow}`,
+    )
+    await page.evaluate(() => {
+      const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
+      reset.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const resetMapWidth = await page.$eval('.rd-map-scroll svg', (node) => Number(node.getAttribute('width')))
+    record('mindmap zoom resets to 1:1', resetMapWidth === baseMapWidth, `${resetMapWidth}px`)
 
     await clickAny('.rd-toolbar button', ['概念', 'Concepts'])
     await page.waitForSelector('[data-scope="doc"]', { timeout: 8000 })

@@ -641,9 +641,10 @@ const READER_CSS = `
 .rd-term:hover{background:var(--dsw-alias-bg-layer-2)}
 .rd-term:focus-visible,.rd-hl:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .rd-hl{background:color-mix(in srgb,var(--hl,#f2c94c) 38%,transparent);border-radius:3px;padding:0 1px;cursor:pointer}
-.rd-drawer{flex:0 0 320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
+.rd-drawer.rd-drawer-wide{flex-basis:min(760px,62vw);max-width:min(760px,62vw)}
+.rd-drawer{flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
 .rd-drawer-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-drawer-body{flex:1;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
+.rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
 .rd-drawer-item:hover{background:var(--dsw-alias-bg-layer-1)}
 .rd-drawer-item .rd-muted{color:var(--dsw-alias-label-secondary);font-size:11.5px}
@@ -693,7 +694,7 @@ const READER_CSS = `
 .rd-theme-sepia .rd-main{background:#f5ecd9;color:#3d2f24}
 .rd-theme-sepia .rd-page{color:#3d2f24}
 .rd-relink{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 12px;font-size:12px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-map-scroll{max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base)}
+.rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base)}
 .rd-web-toggle{display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary)}
 .rd-qa-src{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;margin-top:3px}
 .rd-qa-src a{color:var(--dsw-alias-brand-primary);text-decoration:none}
@@ -2397,8 +2398,18 @@ function buildGuideTree(title, guide) {
         id: section.id,
         title: section.title || '',
         summary: section.summary || '',
+        page: section.page,
+        chapter: section.chapter,
         children: [],
       })
+    }
+    if (node.children.length === 1) {
+      const only = node.children[0]
+      // A single-section part and its section are the same reading unit; keep
+      // one node (the part) and inherit the section's jump target.
+      node.page = only.page
+      node.chapter = only.chapter
+      node.children = []
     }
     root.children.push(node)
   }
@@ -2783,7 +2794,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.9.1'
+const READER_VERSION = '0.9.2'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -4183,22 +4194,31 @@ function ReaderView(props) {
   const jumpToSection = (section) => {
     if (!section) return
     if (doc?.ext === '.epub') {
-      const index = Number(String(section.id).replace('c', ''))
-      if (Number.isFinite(index)) goChapter(index, 'top')
+      const match = String(section.id || '').match(/^(?:e|c)(\d+)/i)
+      const index = Number.isFinite(section.chapter) ? section.chapter : match ? Number(match[1]) : NaN
+      if (Number.isFinite(index) && doc.epub.chapters[index]) goChapter(index, 'top')
       return
     }
     if (doc?.ext === '.pdf') {
-      if (Number.isFinite(section.page)) setPage(section.page)
+      let page = Number.isFinite(section.page) ? section.page : null
+      if (!page) {
+        const match = String(section.id || '').match(/^(?:p|d)(\d+)/i)
+        if (match) page = Number(match[1])
+      }
+      if (Number.isFinite(page) && page >= 1) setPage(page)
       return
     }
     const root = contentRef.current
     if (!root) return
+    const base = String(section.title || '')
+      .replace(/[（(]\d+[）)]\s*$/, '')
+      .trim()
+    if (!base) return
     const headings = Array.from(root.querySelectorAll('h1,h2,h3'))
-    const target = headings.find(
-      (element) =>
-        (element.textContent || '').trim() === section.title ||
-        (element.textContent || '').trim().startsWith(section.title.replace(/ \(\d+\)$/, '')),
-    )
+    const target = headings.find((element) => {
+      const text = (element.textContent || '').trim()
+      return text === base || text.startsWith(base.slice(0, 12))
+    })
     if (target) target.scrollIntoView({ block: 'start' })
   }
 
@@ -4259,6 +4279,8 @@ function ReaderView(props) {
     const byId = new Map(guideLayout.nodes.map((node) => [node.id, node]))
     const width = guideLayout.width + 60
     const height = guideLayout.height + 60
+    const canvasWidth = Math.round(width * mapScale)
+    const canvasHeight = Math.round(height * mapScale)
     return h(
       'div',
       null,
@@ -4268,6 +4290,7 @@ function ReaderView(props) {
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
         h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
+        h('button', { className: 'rd-btn ghost', onClick: () => setMapScale(1) }, '1:1'),
         h('button', { className: 'rd-btn', onClick: exportGuideSvg }, 'SVG'),
         h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
         h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
@@ -4279,9 +4302,9 @@ function ReaderView(props) {
           'svg',
           {
             ref: svgRef,
-            width: Math.round(width),
-            height: Math.round(height),
-            viewBox: `0 0 ${width} ${height}`,
+            width: canvasWidth,
+            height: canvasHeight,
+            viewBox: `0 0 ${canvasWidth} ${canvasHeight}`,
             xmlns: 'http://www.w3.org/2000/svg',
           },
           h(
@@ -4691,7 +4714,7 @@ function ReaderView(props) {
           body = h('div', { className: 'rd-empty' }, t('label.analyzingOutline'))
           return h(
             'div',
-            { className: 'rd-drawer' },
+            { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
             h(
               'div',
               { className: 'rd-drawer-head' },
@@ -5078,18 +5101,48 @@ function ReaderView(props) {
             const parts = guide.parts || []
             if (parts.length === 0) return (guide.sections || []).map(sectionRow)
             const byId = new Map((guide.sections || []).map((section) => [section.id, section]))
-            return parts.map((part) =>
-              h(
+            return parts.map((part) => {
+              const sections = (part.sectionIds || []).map((id) => byId.get(id)).filter(Boolean)
+              if (sections.length === 1) {
+                const only = sections[0]
+                return h(
+                  'div',
+                  {
+                    key: part.id,
+                    className: 'rd-drawer-item',
+                    'data-activate': '1',
+                    tabIndex: 0,
+                    role: 'button',
+                    onClick: () => jumpToSection(only),
+                  },
+                  h('div', { style: { fontWeight: 600 } }, part.title || only.title),
+                  part.summary || only.summary
+                    ? h('div', { className: 'rd-muted', style: { marginTop: '3px' } }, part.summary || only.summary)
+                    : null,
+                  (only.keyPoints || []).length
+                    ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginTop: '4px' } }, only.keyPoints.join(' · '))
+                    : null,
+                )
+              }
+              return h(
                 'div',
                 { key: part.id, className: 'rd-part' },
-                h('div', { className: 'rd-part-title' }, part.title),
+                h(
+                  'div',
+                  {
+                    className: 'rd-part-title',
+                    'data-activate': '1',
+                    tabIndex: 0,
+                    role: 'button',
+                    style: { cursor: 'pointer' },
+                    onClick: () => sections[0] && jumpToSection(sections[0]),
+                  },
+                  part.title,
+                ),
                 part.summary ? h('div', { className: 'rd-part-summary' }, part.summary) : null,
-                (part.sectionIds || []).map((id) => {
-                  const section = byId.get(id)
-                  return section ? sectionRow(section) : null
-                }),
-              ),
-            )
+                sections.map((section) => sectionRow(section)),
+              )
+            })
           })(),
         )
         body = h(
@@ -5300,7 +5353,7 @@ function ReaderView(props) {
     }
     return h(
       'div',
-      { className: 'rd-drawer' },
+      { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
       h(
         'div',
         { className: 'rd-drawer-head' },

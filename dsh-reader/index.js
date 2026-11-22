@@ -677,6 +677,8 @@ async function guideRoute(ctx, req, res) {
           id,
           title: String(input.title || cached.title || ''),
           level: Number.isFinite(input.level) ? input.level : cached.level || 1,
+          ...(Number.isFinite(input.page) ? { page: input.page } : Number.isFinite(cached.page) ? { page: cached.page } : {}),
+          ...(Number.isFinite(input.chapter) ? { chapter: input.chapter } : Number.isFinite(cached.chapter) ? { chapter: cached.chapter } : {}),
           hash,
           summary: cached.summary,
           keyPoints: cached.keyPoints || [],
@@ -711,6 +713,8 @@ async function guideRoute(ctx, req, res) {
           id,
           title: String(input.title || ''),
           level: Number.isFinite(input.level) ? input.level : 1,
+          ...(Number.isFinite(input.page) ? { page: input.page } : {}),
+          ...(Number.isFinite(input.chapter) ? { chapter: input.chapter } : {}),
           hash,
           ...parsed,
         })

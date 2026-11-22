@@ -48,8 +48,18 @@ export function buildGuideTree(title, guide) {
         id: section.id,
         title: section.title || '',
         summary: section.summary || '',
+        page: section.page,
+        chapter: section.chapter,
         children: [],
       })
+    }
+    if (node.children.length === 1) {
+      const only = node.children[0]
+      // A single-section part and its section are the same reading unit; keep
+      // one node (the part) and inherit the section's jump target.
+      node.page = only.page
+      node.chapter = only.chapter
+      node.children = []
     }
     root.children.push(node)
   }
