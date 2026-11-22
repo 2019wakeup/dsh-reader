@@ -8,6 +8,7 @@ export function defaultPrefs() {
     pdfSpread: false,
     pageKeys: 'arrows',
     model: null,
+    translateFrom: 'en',
     translateTo: 'zh',
     guideDepth: 'standard',
   }

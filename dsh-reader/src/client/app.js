@@ -1,4 +1,6 @@
 const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
+const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
+const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
 
 function decodeText(bytes) {
   return new TextDecoder('utf-8').decode(bytes)
@@ -1503,6 +1505,7 @@ export function ReaderView(props) {
   }
 
   const translationLang = prefs.translateTo || 'zh'
+  const translationFrom = prefs.translateFrom || 'en'
   const storeTranslations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.translations?.[translationLang] || {} : {}),
     [store.docs, docKey, translationLang],
@@ -1511,11 +1514,39 @@ export function ReaderView(props) {
     () => ({ ...storeTranslations, ...(translationCache[translationLang] || {}) }),
     [storeTranslations, translationCache, translationLang],
   )
+  const translationCacheRef = React.useRef(translationCache)
+  const translationMapRef = React.useRef(translationMap)
+  const translationLangRef = React.useRef(translationLang)
+  const translationFromRef = React.useRef(translationFrom)
+  const translationQueueRef = React.useRef(new Map())
+  const translationQueuedRef = React.useRef(new Set())
+  const translationRunningRef = React.useRef(false)
+  const [translationPending, setTranslationPending] = React.useState(0)
+  const [translationTick, setTranslationTick] = React.useState(0)
+  const translationPendingRef = React.useRef(0)
 
-  const collectTranslationBlocks = () => {
+  React.useEffect(() => {
+    translationCacheRef.current = translationCache
+  }, [translationCache])
+  React.useEffect(() => {
+    translationMapRef.current = translationMap
+  }, [translationMap])
+  React.useEffect(() => {
+    translationLangRef.current = translationLang
+    translationFromRef.current = translationFrom
+  }, [translationLang, translationFrom])
+
+  React.useEffect(() => {
+    translationQueueRef.current.clear()
+    translationQueuedRef.current.clear()
+    translationPendingRef.current = 0
+    setTranslationPending(0)
+  }, [docKey, translationLang, translationFrom, translationMode])
+
+  const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4, td, pre')
+    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')
     const blocks = []
     const seen = new Set()
     for (const node of nodes) {
@@ -1526,30 +1557,99 @@ export function ReaderView(props) {
       if (seen.has(hash)) continue
       seen.add(hash)
       blocks.push({ node, text, hash })
-      if (blocks.length >= 80) break
+      if (blocks.length >= limit) break
     }
     return blocks
   }
 
-  const translateChapter = async () => {
-    if (!doc || !docKey || doc.ext === '.pdf' || translationBusy) return
-    const blocks = collectTranslationBlocks()
-    const missing = blocks.filter((block) => !translationFor(translationMap, block.hash))
-    if (missing.length === 0) return
+  const mergeTranslations = (lang, result) => {
+    const merged = { ...(translationCacheRef.current[lang] || {}) }
+    for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
+    translationCacheRef.current = { ...translationCacheRef.current, [lang]: merged }
+    setTranslationCache(translationCacheRef.current)
+    if (result.store) mergeStore(result.store)
+  }
+
+  const enqueueTranslationSegments = (segments) => {
+    let added = 0
+    for (const segment of segments) {
+      if (!segment || !segment.id || !segment.text) continue
+      if (translationFor(translationMapRef.current, segment.id)) continue
+      if (translationQueuedRef.current.has(segment.id)) continue
+      translationQueuedRef.current.add(segment.id)
+      translationQueueRef.current.set(segment.id, segment.text)
+      added += 1
+    }
+    if (added === 0) return
+    translationPendingRef.current = translationQueueRef.current.size
+    setTranslationPending(translationPendingRef.current)
+    void runTranslationQueue()
+  }
+
+  const runTranslationQueue = async () => {
+    if (translationRunningRef.current) return
+    translationRunningRef.current = true
     setTranslationBusy(true)
     try {
-      const segments = missing.slice(0, 40).map((block) => ({ id: block.hash, text: block.text }))
-      const result = await api.translate(sessionId, { docKey, target: translationLang, segments })
-      const merged = { ...(translationCache[translationLang] || {}) }
-      for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
-      setTranslationCache((cache) => ({ ...cache, [translationLang]: merged }))
-      if (result.store) mergeStore(result.store)
-      flash(`${t('label.translated')} ${result.generated}${result.cached ? ` · ${t('label.translationCached')} ${result.cached}` : ''}`)
+      while (translationQueueRef.current.size > 0) {
+        const lang = translationLangRef.current
+        const from = translationFromRef.current
+        const segments = []
+        let chars = 0
+        for (const [id, text] of translationQueueRef.current) {
+          if (translationFor(translationMapRef.current, id)) {
+            translationQueueRef.current.delete(id)
+            translationQueuedRef.current.delete(id)
+            continue
+          }
+          if (segments.length >= 8 || (chars > 0 && chars + text.length > 3200)) break
+          segments.push({ id, text })
+          chars += text.length
+        }
+        if (segments.length === 0) {
+          translationQueueRef.current.clear()
+          translationQueuedRef.current.clear()
+          break
+        }
+        const result = await api.translate(sessionId, {
+          docKey,
+          target: lang,
+          from,
+          segments,
+        })
+        mergeTranslations(lang, result)
+        for (const segment of segments) {
+          translationQueueRef.current.delete(segment.id)
+          translationQueuedRef.current.delete(segment.id)
+        }
+        translationPendingRef.current = translationQueueRef.current.size
+        setTranslationPending(translationPendingRef.current)
+        setTranslationTick((tick) => tick + 1)
+      }
     } catch (error) {
+      translationQueueRef.current.clear()
+      translationQueuedRef.current.clear()
+      translationPendingRef.current = 0
+      setTranslationPending(0)
       reportError(error)
     } finally {
+      translationRunningRef.current = false
       setTranslationBusy(false)
     }
+  }
+
+  const translateVisibleNow = () => {
+    const blocks = collectTranslationBlocks(120)
+    const root = contentRef.current
+    if (!root) return
+    const scroller = root.closest('.rd-main')
+    const viewport = scroller ? scroller.getBoundingClientRect() : null
+    const visible = blocks.filter((block) => {
+      if (!viewport) return true
+      const rect = block.node.getBoundingClientRect()
+      return rect.bottom > viewport.top - 200 && rect.top < viewport.bottom + 200
+    })
+    enqueueTranslationSegments(visible.map((block) => ({ id: block.hash, text: block.text })))
   }
 
   const toggleTranslation = () => {
@@ -1562,7 +1662,11 @@ export function ReaderView(props) {
     }
     const next = translationMode === 'off' ? 'dual' : translationMode === 'dual' ? 'only' : 'off'
     setTranslationMode(next)
-    if (next !== 'off') void translateChapter()
+    if (next !== 'off') {
+      // The IntersectionObserver effect will translate the visible blocks;
+      // this immediate pass makes the first screen respond without waiting.
+      setTimeout(translateVisibleNow, 0)
+    }
   }
 
   const translatePdfPage = async () => {
@@ -1571,14 +1675,19 @@ export function ReaderView(props) {
     try {
       const blocks = await pdfPageBlocks(doc.pdf, page)
       setPdfBlocks(blocks)
-      const missing = blocks.filter((block) => !translationFor(translationMap, blockHash(block.text)))
-      if (missing.length > 0) {
-        const segments = missing.slice(0, 40).map((block) => ({ id: blockHash(block.text), text: block.text }))
-        const result = await api.translate(sessionId, { docKey, target: translationLang, segments })
-        const merged = { ...(translationCache[translationLang] || {}) }
-        for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
-        setTranslationCache((cache) => ({ ...cache, [translationLang]: merged }))
-        if (result.store) mergeStore(result.store)
+      const missing = blocks.filter(
+        (block) => !translationFor(translationMapRef.current, blockHash(block.text)),
+      )
+      for (let index = 0; index < missing.length; index += 8) {
+        const group = missing.slice(index, index + 8)
+        const segments = group.map((block) => ({ id: blockHash(block.text), text: block.text }))
+        const result = await api.translate(sessionId, {
+          docKey,
+          target: translationLangRef.current,
+          from: translationFromRef.current,
+          segments,
+        })
+        mergeTranslations(translationLangRef.current, result)
       }
     } catch (error) {
       reportError(error)
@@ -1590,7 +1699,7 @@ export function ReaderView(props) {
   React.useEffect(() => {
     if (drawer !== 'translate' || !doc || doc.ext !== '.pdf') return
     void translatePdfPage()
-  }, [drawer, page, translationLang])
+  }, [drawer, page, translationLang, translationFrom])
 
   const translateSelection = async () => {
     if (!menu) return
@@ -1603,6 +1712,7 @@ export function ReaderView(props) {
       const hash = blockHash(text)
       const result = await api.translate(sessionId, {
         target: translationLang,
+        from: translationFrom,
         segments: [{ id: hash, text }],
       })
       setSelectionTranslation({
@@ -1617,11 +1727,64 @@ export function ReaderView(props) {
     }
   }
 
+  const renderLanguageControls = (className = '') =>
+    h(
+      'div',
+      { className: `rd-lang-controls ${className}`.trim() },
+      h(
+        'label',
+        { className: 'rd-lang-field' },
+        h('span', null, t('label.translateFrom')),
+        h(
+          'select',
+          {
+            className: 'rd-select',
+            value: translationFrom,
+            onChange: (event) => changePrefs({ translateFrom: event.target.value }),
+          },
+          TRANSLATE_SOURCES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+        ),
+      ),
+      h('span', { className: 'rd-lang-arrow' }, '→'),
+      h(
+        'label',
+        { className: 'rd-lang-field' },
+        h('span', null, t('label.translateTo')),
+        h(
+          'select',
+          {
+            className: 'rd-select',
+            value: translationLang,
+            onChange: (event) => changePrefs({ translateTo: event.target.value }),
+          },
+          TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+        ),
+      ),
+    )
+
+  const renderTranslateBar = () =>
+    h(
+      'div',
+      { className: 'rd-translate-bar' },
+      renderLanguageControls(),
+      h('span', { className: 'rd-spacer' }),
+      translationBusy || translationPending > 0
+        ? h('span', { className: 'rd-muted rd-translate-status' }, t('label.translatingVisible'))
+        : null,
+      h('button', { className: 'rd-btn ghost', onClick: translateVisibleNow }, t('label.translateVisible')),
+      h(
+        'button',
+        { className: 'rd-btn ghost', onClick: () => setTranslationMode('off') },
+        '×',
+      ),
+    )
+
   React.useEffect(() => {
     const root = contentRef.current
     if (!root || !doc || doc.ext === '.pdf') return
-    for (const node of Array.from(root.querySelectorAll('.rd-trans'))) node.remove()
-    if (translationMode !== 'dual') return
+    for (const node of Array.from(root.querySelectorAll('.rd-trans, .rd-trans-pending'))) node.remove()
+    if (translationMode === 'off') return
+    if (translationMode === 'only') return
     for (const block of collectTranslationBlocks()) {
       const text = translationFor(translationMap, block.hash)
       if (!text) continue
@@ -1631,6 +1794,36 @@ export function ReaderView(props) {
       block.node.appendChild(div)
     }
   }, [doc, chapter, translationMode, translationLang, translationMap, layoutTick])
+
+  React.useEffect(() => {
+    if (!doc || doc.ext === '.pdf' || translationMode === 'off') return
+    const root = contentRef.current
+    if (!root) return
+    const scroller = root.closest('.rd-main') || root.parentElement
+    if (typeof IntersectionObserver !== 'function') {
+      const blocks = collectTranslationBlocks(12)
+      enqueueTranslationSegments(blocks.map((block) => ({ id: block.hash, text: block.text })))
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const segments = []
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const text = normalizeBlockText(entry.target.textContent)
+          if (text.length < 2) continue
+          segments.push({ id: blockHash(text), text })
+        }
+        enqueueTranslationSegments(segments)
+      },
+      { root: scroller, rootMargin: '240px 0px', threshold: 0.01 },
+    )
+    for (const node of root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')) {
+      if (node.closest('.rd-trans, .rd-trans-pending, .rd-card')) continue
+      observer.observe(node)
+    }
+    return () => observer.disconnect()
+  }, [doc, chapter, translationMode, translationLang, translationFrom, layoutTick, translationTick])
 
   const generateGuide = async () => {
     if (!doc || !docKey) return
@@ -2319,13 +2512,18 @@ export function ReaderView(props) {
     const html = translationMode === 'only' ? translatedOnlyHtml : renderedHtml
     return h(
       'div',
-      { className: 'rd-main' },
-      h('div', {
-        className: 'rd-page rd-prose',
-        ref: contentRef,
-        onClick: onContentClick,
-        dangerouslySetInnerHTML: { __html: html },
-      }),
+      { className: 'rd-reader-wrap' },
+      translationMode !== 'off' ? renderTranslateBar() : null,
+      h(
+        'div',
+        { className: 'rd-main' },
+        h('div', {
+          className: 'rd-page rd-prose',
+          ref: contentRef,
+          onClick: onContentClick,
+          dangerouslySetInnerHTML: { __html: html },
+        }),
+      ),
     )
   }
 
@@ -2476,11 +2674,15 @@ export function ReaderView(props) {
         body = h(
           'div',
           null,
+          renderLanguageControls('rd-lang-controls-drawer'),
           h(
             'div',
-            { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+            { className: 'rd-actions', style: { marginTop: '8px', marginBottom: '8px' } },
             h('span', { className: 'rd-muted', style: { fontSize: '12px' } }, `${t('label.page')} ${page}`),
             h('span', { className: 'rd-spacer' }),
+            translationPending > 0
+              ? h('span', { className: 'rd-muted', style: { fontSize: '11px' } }, `${t('label.translatePending')} ${translationPending}`)
+              : null,
             h(
               'button',
               { className: 'rd-btn', disabled: pdfTranslating, onClick: translatePdfPage },
@@ -2857,6 +3059,18 @@ export function ReaderView(props) {
           ),
         ),
         row(
+          t('label.translateFrom'),
+          h(
+            'select',
+            {
+              className: 'rd-select',
+              value: translationFrom,
+              onChange: (event) => changePrefs({ translateFrom: event.target.value }),
+            },
+            TRANSLATE_SOURCES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          ),
+        ),
+        row(
           t('label.translateTo'),
           h(
             'select',
@@ -2865,7 +3079,7 @@ export function ReaderView(props) {
               value: translationLang,
               onChange: (event) => changePrefs({ translateTo: event.target.value }),
             },
-            ['zh', 'en', 'ja'].map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+            TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
           ),
         ),
         row(

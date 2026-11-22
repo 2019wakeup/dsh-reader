@@ -26,8 +26,19 @@ test('translate prompt asks for an id-keyed json map', () => {
     segments: [{ id: 's1', text: '你好' }, { id: 's2', text: '世界' }],
   })
   assert.match(system, /English/)
+  assert.match(system, /源语言自动判断/)
   assert.match(system, /JSON/)
   assert.match(user, /\[s1\] 你好/)
+})
+
+test('translate prompt carries an explicit source language', () => {
+  const { system } = buildTranslatePrompt({
+    from: 'en',
+    target: 'zh',
+    segments: [{ id: 's1', text: 'hello' }],
+  })
+  assert.match(system, /源语言：English/)
+  assert.match(system, /简体中文/)
 })
 
 test('parses translations and ignores unknown ids', () => {

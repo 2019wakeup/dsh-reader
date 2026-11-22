@@ -50,6 +50,8 @@ test('normalizes malformed v2 data on read', async () => {
   assert.deepEqual(store.docs.fp.positions, {})
   assert.equal(store.prefs.fontSize, 18)
   assert.equal(store.prefs.cardTrigger, 'hover')
+  assert.equal(store.prefs.translateFrom, 'en')
+  assert.equal(store.prefs.translateTo, 'zh')
 })
 
 test('recovers a corrupt store from the newest backup', async () => {

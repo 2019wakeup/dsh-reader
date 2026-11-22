@@ -7,7 +7,7 @@ import { createDeadline } from './lib/deadline.js'
 import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLatestBackup } from './lib/store.js'
 import { recordSent } from './lib/sent.js'
 import { blockHash } from './src/client/translate.js'
-import { buildTranslatePrompt, parseTranslationReply, TRANSLATE_LANGUAGES } from './lib/translate.js'
+import { buildTranslatePrompt, parseTranslationReply, TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } from './lib/translate.js'
 import { docFingerprint } from './lib/fingerprint.js'
 import { buildExplainPrompt, buildQuickExplainPrompt, parseExplanation, buildContextPrompt, parseContextNote, buildAskPrompt } from './lib/explain.js'
 import { sectionHash, buildSectionPrompt, buildOverviewPrompt, buildPartPrompt, parseSectionReply, parseOverviewReply, parsePartReply } from './lib/guide.js'
@@ -1052,7 +1052,9 @@ async function translateRoute(ctx, req, res) {
     const cwd = await workspaceFor(ctx, url.searchParams.get('sessionId'))
     const body = await readBody(req)
     const target = String(body?.target || 'zh')
+    const from = String(body?.from || 'auto')
     if (!TRANSLATE_LANGUAGES.includes(target)) throw httpError(400, 'invalid target language')
+    if (!TRANSLATE_SOURCES.includes(from)) throw httpError(400, 'invalid source language')
     const docKey = typeof body?.docKey === 'string' ? body.docKey : ''
     const segments = Array.isArray(body?.segments) ? body.segments : []
     if (segments.length === 0) throw httpError(400, 'segments required')
@@ -1104,6 +1106,7 @@ async function translateRoute(ctx, req, res) {
     for (const group of batches) {
       const prompt = buildTranslatePrompt({
         target,
+        from,
         segments: group.map((segment) => ({ id: segment.id, text: segment.text })),
       })
       const chars = group.reduce((sum, segment) => sum + segment.text.length, 0)

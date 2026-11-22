@@ -809,6 +809,15 @@ test('rejects a translation request with an unknown target', async (t) => {
   assert.equal(res.status, 400)
 })
 
+test('rejects a translation request with an unknown source', async (t) => {
+  const { call } = await setup(t)
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ from: 'xx', target: 'zh', segments: [{ id: 'a', text: 'hi' }] }),
+  })
+  assert.equal(res.status, 400)
+})
+
 test('keeps at most ten sent entries', async (t) => {
   const { call } = await setup(t)
   for (let index = 0; index < 12; index += 1) {

@@ -410,6 +410,30 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('.rd-prose .rd-trans').length > 0, { timeout: 15000 })
     const translated = await page.$$eval('.rd-prose .rd-trans', (nodes) => nodes.length)
     record('paragraph translations render inline', translated >= 3, `${translated} blocks`)
+    const languageBar = await page.evaluate(() => {
+      const selects = [...document.querySelectorAll('.rd-translate-bar select')]
+      return {
+        visible: Boolean(document.querySelector('.rd-translate-bar')),
+        values: selects.map((select) => select.value),
+      }
+    })
+    record('translation bar defaults to English to Chinese', languageBar.visible && languageBar.values[0] === 'en' && languageBar.values[1] === 'zh', JSON.stringify(languageBar.values))
+    await page.evaluate(() => {
+      const select = [...document.querySelectorAll('.rd-translate-bar select')][1]
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(select, 'ja')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const changedTarget = await page.evaluate(() => [...document.querySelectorAll('.rd-translate-bar select')].map((select) => select.value))
+    record('translation target can be changed', changedTarget[1] === 'ja', changedTarget.join(' → '))
+    await page.evaluate(() => {
+      const select = [...document.querySelectorAll('.rd-translate-bar select')][1]
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(select, 'zh')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 500))
     await shot('02b-translation')
     await clickAny('.rd-toolbar button', ['翻译', 'Translate'])
     await page.waitForFunction(
@@ -1058,6 +1082,41 @@ async function main() {
       Boolean(markdownImage && markdownImage.width > 0 && markdownImage.src.includes('/api/file')),
       markdownImage ? `${markdownImage.width}px ${markdownImage.src.slice(0, 80)}` : 'missing',
     )
+    await page.evaluate(() => {
+      document.querySelector('.rd-main').scrollTo({ top: 0, behavior: 'instant' })
+    })
+    await clickAny('.rd-toolbar button', ['翻译', 'Translate'])
+    await page.waitForFunction(() => document.querySelectorAll('.rd-prose .rd-trans').length > 0, { timeout: 15000 })
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const lazyTranslation = await page.evaluate(() => ({
+      translated: document.querySelectorAll('.rd-prose .rd-trans').length,
+      total: document.querySelectorAll('.rd-prose p, .rd-prose li, .rd-prose h2, .rd-prose h3, .rd-prose td').length,
+      codeTranslations: document.querySelectorAll('.rd-prose pre .rd-trans').length,
+      bar: Boolean(document.querySelector('.rd-translate-bar')),
+    }))
+    record(
+      'long markdown translates only the visible slice first',
+      lazyTranslation.bar && lazyTranslation.translated > 0 && lazyTranslation.translated < lazyTranslation.total,
+      `${lazyTranslation.translated}/${lazyTranslation.total} blocks`,
+    )
+    await page.evaluate(() => {
+      document.querySelector('.rd-main').scrollTo({ top: 1600, behavior: 'instant' })
+    })
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    const afterScrollTranslation = await page.evaluate(() => document.querySelectorAll('.rd-prose .rd-trans').length)
+    record(
+      'scrolling translates the newly visible slice',
+      afterScrollTranslation > lazyTranslation.translated,
+      `${lazyTranslation.translated} -> ${afterScrollTranslation}`,
+    )
+    await page.evaluate(() => {
+      const close = document.querySelector('.rd-translate-bar button:last-child')
+      if (close) close.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const translationBarClosed = await page.evaluate(() => !document.querySelector('.rd-translate-bar'))
+    record('translation bar closes with its close button', translationBarClosed, '')
+    record('code blocks are left untranslated', lazyTranslation.codeTranslations === 0, `${lazyTranslation.codeTranslations} code translations`)
 
     const enBrowser = await puppeteer.launch({
       executablePath: CHROME,
