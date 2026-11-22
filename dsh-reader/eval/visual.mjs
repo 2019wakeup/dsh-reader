@@ -739,20 +739,69 @@ async function main() {
     }))
     record('mindmap opens as a collapsed chapter outline', mapClicked && mapDefault.nodes === 3 && mapDefault.details === 0, `${mapDefault.nodes} nodes, ${mapDefault.labels} labels`)
     await shot('05-mindmap')
-    const expanded = await page.evaluate(() => {
-      const node = document.querySelector('[data-node-id="part1"] rect')
-      if (!node) return false
-      node.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      return true
+    const fullscreenClicked = await clickAny('.rd-drawer button', ['全屏', 'Fullscreen'])
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const fullscreen = await page.evaluate(() => {
+      const stage = document.querySelector('.rd-map-stage-fullscreen')
+      if (!stage) return null
+      const rect = stage.getBoundingClientRect()
+      const map = document.querySelector('.rd-map-scroll')
+      return {
+        width: rect.width,
+        height: rect.height,
+        left: rect.left,
+        top: rect.top,
+        mapWidth: map?.clientWidth || 0,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }
     })
+    record(
+      'mindmap opens fullscreen',
+      fullscreenClicked && fullscreen && fullscreen.width >= fullscreen.viewportWidth - 1 && fullscreen.height >= fullscreen.viewportHeight - 1 && fullscreen.left <= 1 && fullscreen.top <= 1,
+      JSON.stringify(fullscreen),
+    )
+    await page.keyboard.press('Escape')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const fullscreenClosed = await page.evaluate(() => !document.querySelector('.rd-map-stage-fullscreen'))
+    record('Escape exits mindmap fullscreen', fullscreenClosed, '')
+    const partRect = await page.$eval('[data-node-id="part1"] rect', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.click(partRect.x, partRect.y)
     await new Promise((resolve) => setTimeout(resolve, 300))
     const mapExpanded = await page.evaluate(() => ({
       nodes: document.querySelectorAll('.rdm-node').length,
       detail: document.querySelector('.rd-map-detail-title')?.textContent || '',
       summary: document.querySelector('.rd-map-detail-summary')?.textContent || '',
+      visible: (() => {
+        const detail = document.querySelector('.rd-map-detail')
+        if (!detail) return false
+        const rect = detail.getBoundingClientRect()
+        const drawer = document.querySelector('.rd-drawer').getBoundingClientRect()
+        return rect.top >= drawer.top && rect.bottom <= drawer.bottom
+      })(),
     }))
-    record('clicking a chapter expands its sections', expanded && mapExpanded.nodes > mapDefault.nodes, `${mapDefault.nodes} -> ${mapExpanded.nodes}`)
-    record('selected node shows its summary', mapExpanded.detail.includes('第一部分') && mapExpanded.summary.length > 5, `${mapExpanded.detail}: ${mapExpanded.summary.slice(0, 24)}`)
+    record('clicking a chapter expands its sections', mapExpanded.nodes > mapDefault.nodes, `${mapDefault.nodes} -> ${mapExpanded.nodes}`)
+    record('selected node shows its summary above the map', mapExpanded.detail.includes('第一部分') && mapExpanded.summary.length > 5 && mapExpanded.visible, `${mapExpanded.detail}: ${mapExpanded.summary.slice(0, 24)}`)
+    const chevronRect = await page.$$eval('[data-node-id="part1"] rect', (nodes) => {
+      const node = nodes[nodes.length - 1]
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.click(chevronRect.x, chevronRect.y)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const collapsedAgain = await page.$$eval('.rdm-node', (nodes) => nodes.length)
+    record('chevron toggles the chapter', collapsedAgain === mapDefault.nodes, `${mapExpanded.nodes} -> ${collapsedAgain}`)
+    const partRectAgain = await page.$eval('[data-node-id="part1"] rect', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.click(partRectAgain.x, partRectAgain.y)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const reExpanded = await page.$$eval('.rdm-node', (nodes) => nodes.length)
+    record('chapter can be expanded again', reExpanded > mapDefault.nodes, `${collapsedAgain} -> ${reExpanded}`)
     await page.evaluate(() => {
       const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
       reset.click()
@@ -785,7 +834,18 @@ async function main() {
     const mapBox = await page.$eval('.rd-map-scroll', (node) => {
       const rect = node.getBoundingClientRect()
       node.scrollLeft = 120
-      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, scrolled: node.scrollLeft }
+      return {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        scrolled: node.scrollLeft,
+        client: node.clientWidth,
+        scroll: node.scrollWidth,
+        max: node.scrollWidth - node.clientWidth,
+        svgWidth: document.querySelector('.rd-map-scroll svg')?.getAttribute('width') || '',
+        zoom: [...document.querySelectorAll('.rd-drawer .rd-muted')].map((n) => n.textContent).find((text) => /%$/.test(text)) || '',
+      }
     })
     await page.mouse.move(mapBox.left + mapBox.width / 2, mapBox.top + mapBox.height - 30)
     await page.mouse.down()
@@ -793,7 +853,7 @@ async function main() {
     await page.mouse.up()
     await new Promise((resolve) => setTimeout(resolve, 200))
     const dragged = await page.$eval('.rd-map-scroll', (node) => node.scrollLeft)
-    record('mindmap can be dragged horizontally', dragged !== mapBox.scrolled, `${mapBox.scrolled} -> ${dragged}`)
+    record('mindmap can be dragged horizontally', dragged !== mapBox.scrolled, `${mapBox.scrolled} -> ${dragged} client=${mapBox.client} scroll=${mapBox.scroll} max=${mapBox.max} box=${Math.round(mapBox.width)}x${Math.round(mapBox.height)} svg=${mapBox.svgWidth} zoom=${mapBox.zoom}`)
     await page.evaluate(() => {
       const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
       reset.click()

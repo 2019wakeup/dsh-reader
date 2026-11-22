@@ -119,7 +119,7 @@ pnpm install
 pnpm build            # 生成 client.js
 pnpm test             # 236 条单元/DOM 测试
 pnpm eval             # 10 项产品级 eval
-pnpm eval:visual      # 91 项视觉检查（需要 DSH GUI + Chrome）
+pnpm eval:visual      # 95 项视觉检查（需要 DSH GUI + Chrome）
 pnpm release:check    # 11 项发布门禁
 ```
 

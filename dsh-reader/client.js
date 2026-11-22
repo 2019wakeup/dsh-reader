@@ -232,6 +232,8 @@ const ZH = {
   'label.chunk': '分片',
   'label.expandAll': '展开全部',
   'label.collapseAll': '收起全部',
+  'label.fullscreen': '全屏',
+  'label.exitFullscreen': '退出全屏',
   'label.jumpOriginal': '跳到原文',
   'label.timeout': '模型没有响应，已超时；请重试，或在设置里调高解释超时',
   'label.traversal': '路径不合法',
@@ -438,6 +440,8 @@ const EN = {
   'label.chunk': 'Part',
   'label.expandAll': 'Expand all',
   'label.collapseAll': 'Collapse all',
+  'label.fullscreen': 'Fullscreen',
+  'label.exitFullscreen': 'Exit fullscreen',
   'label.jumpOriginal': 'Jump to text',
   'label.timeout': 'The model did not answer in time; retry, or raise the explanation timeout',
   'label.sessionLost': 'Session or workspace unavailable; reopen from a session',
@@ -756,6 +760,10 @@ const READER_CSS = `
 .rd-theme-sepia .rd-main{background:#f5ecd9;color:#3d2f24}
 .rd-theme-sepia .rd-page{color:#3d2f24}
 .rd-relink{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 12px;font-size:12px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.rd-map-stage{display:flex;flex-direction:column;min-height:0}
+.rd-map-stage-fullscreen{position:fixed;inset:0;z-index:130;display:flex;flex-direction:column;min-height:0;padding:14px 16px;background:var(--dsw-alias-bg-base)}
+.rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
+.rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
 .rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
 .rd-map-scroll:active{cursor:grabbing}
 .rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}
@@ -3313,7 +3321,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.9.7'
+const READER_VERSION = '0.9.8'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3411,6 +3419,7 @@ function ReaderView(props) {
   const [collapsedIds, setCollapsedIds] = React.useState(() => new Set())
   const [mapScale, setMapScale] = React.useState(1)
   const [selectedNodeId, setSelectedNodeId] = React.useState(null)
+  const [mapFullscreen, setMapFullscreen] = React.useState(false)
   const mapScrollRef = React.useRef(null)
   const mapDragRef = React.useRef(null)
   const suppressMapClick = React.useRef(false)
@@ -3469,6 +3478,20 @@ function ReaderView(props) {
     setCollapsedIds(new Set((guideTree.children || []).filter((node) => (node.children || []).length > 0).map((node) => node.id)))
     setSelectedNodeId(null)
   }, [guideTree])
+
+  React.useEffect(() => {
+    if (drawer !== 'guide' || guideView !== 'map') setMapFullscreen(false)
+  }, [drawer, guideView])
+
+  React.useEffect(() => {
+    if (!mapFullscreen) return
+    const node = mapScrollRef.current
+    if (!node) return
+    requestAnimationFrame(() => {
+      node.scrollLeft = 0
+      node.scrollTop = 0
+    })
+  }, [mapFullscreen])
 
   React.useEffect(() => {
     if (guideView !== 'map' || !guideLayout) return
@@ -3714,6 +3737,10 @@ function ReaderView(props) {
         return
       }
       if (event.key === 'Escape') {
+        if (mapFullscreen) {
+          setMapFullscreen(false)
+          return
+        }
         if (selectionTranslation) {
           setSelectionTranslation(null)
           return
@@ -3783,7 +3810,7 @@ function ReaderView(props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [doc, searchOpen, prefs.pageKeys])
+  }, [doc, searchOpen, prefs.pageKeys, mapFullscreen])
 
   React.useEffect(() => {
     const onPointerDown = (event) => {
@@ -4849,12 +4876,15 @@ function ReaderView(props) {
     const canvasWidth = Math.round(width * mapScale)
     const canvasHeight = Math.round(height * mapScale)
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
-    const labelOf = (node) => {
+    const nodeLines = (node) => {
       if (node.chunkIndex) {
         const suffix = Number.isFinite(node.page) && node.page > 0 ? ` · p${node.page}` : ''
-        return `${t('label.chunk')} ${node.chunkIndex}${suffix}`
+        const head = `${t('label.chunk')} ${node.chunkIndex}${suffix}`
+        const summary = String(node.summary || '').replace(/\s+/g, ' ').trim()
+        if (!summary) return [head]
+        return [head, summary.slice(0, 18) + (summary.length > 18 ? '…' : '')]
       }
-      return node.title || ''
+      return splitNodeTitle(node.title)
     }
 
     const activateNode = (node) => {
@@ -4871,15 +4901,24 @@ function ReaderView(props) {
         left: event.currentTarget.scrollLeft,
         top: event.currentTarget.scrollTop,
         moved: false,
+        captured: false,
       }
-      event.currentTarget.setPointerCapture?.(event.pointerId)
     }
     const onMapPointerMove = (event) => {
       const drag = mapDragRef.current
       if (!drag) return
       const dx = event.clientX - drag.x
       const dy = event.clientY - drag.y
-      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
+      if (!drag.moved && Math.abs(dx) + Math.abs(dy) <= 4) return
+      if (!drag.moved) {
+        // Capture only after the pointer actually moves: capturing on
+        // pointerdown retargets the click and makes node clicks do nothing.
+        drag.moved = true
+      }
+      if (!drag.captured) {
+        drag.captured = true
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+      }
       event.currentTarget.scrollLeft = drag.left - dx
       event.currentTarget.scrollTop = drag.top - dy
     }
@@ -4896,10 +4935,15 @@ function ReaderView(props) {
 
     return h(
       'div',
-      null,
+      { className: `rd-map-stage${mapFullscreen ? ' rd-map-stage-fullscreen' : ''}` },
       h(
         'div',
         { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+        h(
+          'button',
+          { className: 'rd-btn', onClick: () => setMapFullscreen((value) => !value) },
+          mapFullscreen ? t('label.exitFullscreen') : t('label.fullscreen'),
+        ),
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
         h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
         h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
@@ -4918,6 +4962,22 @@ function ReaderView(props) {
         h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
         h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
       ),
+      selected
+        ? h(
+            'div',
+            { className: 'rd-map-detail' },
+            h('div', { className: 'rd-map-detail-title' }, selected.title),
+            selected.summary ? h('div', { className: 'rd-map-detail-summary' }, selected.summary) : null,
+            (selected.keyPoints || []).length
+              ? h('ul', { className: 'rd-map-detail-points' }, selected.keyPoints.map((point, index) => h('li', { key: index }, point)))
+              : null,
+            h(
+              'button',
+              { className: 'rd-btn', onClick: () => jumpToSection(selected) },
+              t('label.jumpOriginal'),
+            ),
+          )
+        : null,
       h(
         'div',
         {
@@ -4960,7 +5020,7 @@ function ReaderView(props) {
               })
             }),
             guideLayout.nodes.map((node) => {
-              const lines = splitNodeTitle(labelOf(node))
+              const lines = nodeLines(node)
               const isSelected = node.id === selectedNodeId
               return h(
                 'g',
@@ -4982,29 +5042,20 @@ function ReaderView(props) {
                   x: 12,
                   y: lines.length > 1 ? 17 : 25,
                   className: 'rdm-label',
-                  onClick: () => {
-                    setSelectedNodeId(node.id)
-                    jumpToSection(node)
-                  },
+                  style: { pointerEvents: 'none' },
                 }, lines[0]),
                 lines[1]
                   ? h('text', {
                       x: 12,
                       y: 32,
                       className: 'rdm-label',
-                      onClick: () => {
-                        setSelectedNodeId(node.id)
-                        jumpToSection(node)
-                      },
+                      style: { pointerEvents: 'none' },
                     }, lines[1])
                   : null,
                 node.hasChildren
                   ? h(
-                      'text',
+                      'g',
                       {
-                        x: MAP_NODE_WIDTH - 18,
-                        y: MAP_NODE_HEIGHT / 2 + 4,
-                        className: 'rdm-sub',
                         style: { cursor: 'pointer' },
                         onClick: (event) => {
                           event.stopPropagation()
@@ -5012,7 +5063,23 @@ function ReaderView(props) {
                           toggleCollapse(node.id)
                         },
                       },
-                      node.collapsed ? '▸' : '▾',
+                      h('rect', {
+                        x: MAP_NODE_WIDTH - 30,
+                        y: 0,
+                        width: 30,
+                        height: MAP_NODE_HEIGHT,
+                        fill: 'transparent',
+                      }),
+                      h(
+                        'text',
+                        {
+                          x: MAP_NODE_WIDTH - 18,
+                          y: MAP_NODE_HEIGHT / 2 + 4,
+                          className: 'rdm-sub',
+                          style: { pointerEvents: 'none' },
+                        },
+                        node.collapsed ? '▸' : '▾',
+                      ),
                     )
                   : null,
               )
@@ -5020,22 +5087,6 @@ function ReaderView(props) {
           ),
         ),
       ),
-      selected
-        ? h(
-            'div',
-            { className: 'rd-map-detail' },
-            h('div', { className: 'rd-map-detail-title' }, selected.title),
-            selected.summary ? h('div', { className: 'rd-map-detail-summary' }, selected.summary) : null,
-            (selected.keyPoints || []).length
-              ? h('ul', { className: 'rd-map-detail-points' }, selected.keyPoints.map((point, index) => h('li', { key: index }, point)))
-              : null,
-            h(
-              'button',
-              { className: 'rd-btn', onClick: () => jumpToSection(selected) },
-              t('label.jumpOriginal'),
-            ),
-          )
-        : null,
     )
   }
 
