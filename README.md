@@ -70,7 +70,6 @@ Markdown 和 EPUB 支持「关 / 段落对照 / 仅译文」三态；PDF 使用�
 | 外文 | 段落对照、仅译文或 PDF 译文抽屉 |
 | 收尾 | 标注 Markdown、导图 SVG/PNG/MD、JSON 备份与迁移 |
 
-![Markdown 表格](dsh-reader/eval/visual/baseline/15-markdown-tables.png)
 
 ## 适合与不适合
 
