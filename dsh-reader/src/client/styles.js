@@ -85,7 +85,7 @@ export const READER_CSS = `
 .rd-card::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent);border:2px solid transparent;background-clip:padding-box;border-radius:999px}
 .rd-card::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 30%,transparent);border:2px solid transparent;background-clip:padding-box}
 @keyframes rd-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
-.rd-card h3{position:sticky;top:-14px;z-index:3;margin:-14px 0 8px;padding:14px 0 8px;background:var(--dsw-alias-bg-overlay);font-size:15px;display:flex;align-items:center;gap:6px}
+.rd-card h3{position:sticky;top:-14px;z-index:3;margin:-14px 0 8px;padding:14px 0 8px;background:var(--dsw-alias-bg-overlay);font-size:15px;display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;touch-action:none}
 .rd-card .rd-def{font-size:13.5px;line-height:1.62}
 .rd-card .rd-sec{font-size:12.5px;line-height:1.6;color:var(--dsw-alias-label-secondary);margin-top:8px}
 .rd-card .rd-sec b{color:var(--dsw-alias-label-primary);font-weight:600}
@@ -157,7 +157,8 @@ export const READER_CSS = `
 .rd-pdf-page canvas{display:block;max-width:100%}
 .rd-text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;opacity:1}
 .rd-text-layer span{position:absolute;color:transparent;white-space:pre;cursor:text;transform-origin:0 0}
-.rd-text-layer span::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 35%,transparent)}
+.rd-text-layer span::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}
+.rd-prose ::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent)}
 .rd-pdf-hl{position:absolute;background:color-mix(in srgb,var(--hl,#f2c94c) 30%,transparent);pointer-events:none;border-radius:2px}
 .rd-note-mask{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
 .rd-note-box{width:min(420px,90vw);background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:16px;box-shadow:0 16px 48px rgba(0,0,0,.28)}

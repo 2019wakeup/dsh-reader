@@ -578,6 +578,78 @@ async function main() {
     record('card survives moving onto it', Boolean(await page.$('.rd-card')), '')
     await shot('03b-card-hover')
 
+    await page.evaluate(() => document.querySelector('.rd-card-pin')?.click())
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const cardBeforeDrag = await page.$eval('.rd-card', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { left: rect.left, top: rect.top }
+    })
+    const headerPoint = await page.$eval('.rd-card h3', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + 12 }
+    })
+    await page.mouse.move(headerPoint.x, headerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(headerPoint.x + 90, headerPoint.y + 40, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const cardAfterDrag = await page.$eval('.rd-card', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { left: rect.left, top: rect.top }
+    })
+    record(
+      'concept card can be dragged by its header',
+      Math.abs(cardAfterDrag.left - cardBeforeDrag.left) > 30 && Math.abs(cardAfterDrag.top - cardBeforeDrag.top) > 10,
+      `${Math.round(cardBeforeDrag.left)},${Math.round(cardBeforeDrag.top)} -> ${Math.round(cardAfterDrag.left)},${Math.round(cardAfterDrag.top)}`,
+    )
+    const readerBounds = await page.$eval('.rd-root', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
+    })
+    const headerPoint2 = await page.$eval('.rd-card h3', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + 12 }
+    })
+    await page.mouse.move(headerPoint2.x, headerPoint2.y)
+    await page.mouse.down()
+    await page.mouse.move(readerBounds.right - 8, readerBounds.bottom - 8, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const clampedCard = await page.$eval('.rd-card', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
+    })
+    record(
+      'dragged card stays inside reader bounds',
+      clampedCard.left >= readerBounds.left && clampedCard.right <= readerBounds.right + 1 && clampedCard.top >= readerBounds.top + 40,
+      `${Math.round(clampedCard.left)},${Math.round(clampedCard.top)}-${Math.round(clampedCard.right)},${Math.round(clampedCard.bottom)}`,
+    )
+    const childMenuSelection = await page.evaluate(() => {
+      const def = document.querySelector('.rd-card .rd-def')
+      if (!def || !def.firstChild) return 0
+      const range = document.createRange()
+      range.selectNodeContents(def)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      document.querySelector('.rd-card').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      return selection.toString().trim().length
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const childMenu = await page.evaluate(() => ({
+      text: document.querySelector('.rd-child-menu')?.textContent || '',
+      card: Boolean(document.querySelector('.rd-card')),
+      mini: document.querySelectorAll('.rd-mini').length,
+    }))
+    record('selecting text inside a card shows the child explain action', childMenuSelection > 0 && childMenu.text.includes('再解释'), `sel=${childMenuSelection} menu=${JSON.stringify(childMenu)}`)
+    await new Promise((resolve) => setTimeout(resolve, 4300))
+    const childMenuGone = await page.evaluate(() => !document.querySelector('.rd-child-menu'))
+    const childMenuLeft = await page.evaluate(() => document.querySelector('.rd-child-menu')?.textContent || '')
+    record('child explain action dismisses itself', childMenuGone, childMenuLeft)
+    await page.evaluate(() => {
+      window.getSelection()?.removeAllRanges()
+      document.querySelector('.rd-card-pin')?.click()
+    })
     await page.mouse.move(4, 4)
     await new Promise((resolve) => setTimeout(resolve, 950))
     record('card closes after leaving', (await page.$('.rd-card')) === null, '')

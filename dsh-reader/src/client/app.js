@@ -281,6 +281,8 @@ export function ReaderView(props) {
   const [menu, setMenu] = React.useState(null)
   const [childMenu, setChildMenu] = React.useState(null)
   const [cards, setCards] = React.useState([])
+  const [cardDrag, setCardDrag] = React.useState({ id: null, x: 0, y: 0 })
+  const cardDragRef = React.useRef(null)
   const [noteDraft, setNoteDraft] = React.useState(null)
   const [editing, setEditing] = React.useState(null)
   const [toast, setToast] = React.useState(null)
@@ -456,6 +458,38 @@ export function ReaderView(props) {
     },
     [],
   )
+
+  React.useEffect(() => {
+    if (!childMenu) return
+    const timer = setTimeout(() => setChildMenu(null), 4000)
+    const onDown = (event) => {
+      if (event.target && event.target.closest && event.target.closest('.rd-mini')) return
+      setChildMenu(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('pointerdown', onDown, true)
+    }
+  }, [childMenu])
+
+  const cardSignature = cards.map((entry) => entry.id).join('|')
+  React.useEffect(() => {
+    setChildMenu(null)
+    if (!cardDragRef.current) setCardDrag({ id: null, x: 0, y: 0 })
+  }, [cardSignature])
+
+  React.useEffect(() => {
+    const end = () => {
+      cardDragRef.current = null
+    }
+    window.addEventListener('pointerup', end, true)
+    window.addEventListener('pointercancel', end, true)
+    return () => {
+      window.removeEventListener('pointerup', end, true)
+      window.removeEventListener('pointercancel', end, true)
+    }
+  }, [])
 
   React.useEffect(() => {
     const root = contentRef.current
@@ -3567,14 +3601,65 @@ export function ReaderView(props) {
     const editingInCard = cards.some((entry) => conceptEdit && conceptEdit.id === entry.id)
     const style = placePanel(base, editingInCard ? 540 : 480)
     const pinned = cards.some((entry) => entry.pinned)
+    const topCard = cards[cards.length - 1]
+    const drag = cardDrag.id === topCard.id ? cardDrag : { x: 0, y: 0 }
+    const bounds = rootBounds()
+    const width = style.width + 32
+    const minLeft = bounds.left + 4
+    const maxLeft = Math.max(minLeft, bounds.right - width - 4)
+    const left = Math.min(Math.max(style.left - 16 + drag.x, minLeft), maxLeft)
+    const minTop = bounds.top + 52
+    const heightLimit = Number(style.maxHeight) || 480
+    const maxTop = Math.max(minTop, bounds.bottom - heightLimit - 8)
+    const top = Math.min(Math.max(style.top - 16 + drag.y, minTop), maxTop)
+    const startDrag = (event, id) => {
+      if (event.button !== 0) return
+      if (event.target && event.target.closest && event.target.closest('button, input, textarea, select, a')) return
+      setChildMenu(null)
+      cardDragRef.current = {
+        id,
+        startX: event.clientX,
+        startY: event.clientY,
+        baseX: cardDrag.id === id ? cardDrag.x : 0,
+        baseY: cardDrag.id === id ? cardDrag.y : 0,
+      }
+      // Capture the pointer so fast drags keep moving the card even when the
+      // cursor temporarily leaves the header.
+      try {
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+      } catch {
+        /* pointer capture is best-effort */
+      }
+    }
+    const moveDrag = (event) => {
+      const current = cardDragRef.current
+      if (!current) return
+      const dx = event.clientX - current.startX
+      const dy = event.clientY - current.startY
+      if (Math.abs(dx) + Math.abs(dy) <= 3) return
+      event.preventDefault()
+      setCardDrag({ id: current.id, x: current.baseX + dx, y: current.baseY + dy })
+    }
+    const endDrag = (event) => {
+      const wasDragging = Boolean(cardDragRef.current)
+      cardDragRef.current = null
+      if (!wasDragging || pinned || !event) return
+      const rect = event.currentTarget.getBoundingClientRect()
+      const inside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      if (!inside) closeCardsSoon(0)
+    }
     return h(
       'div',
       {
         className: 'rd-hover-zone',
-        style: { left: style.left - 16, top: style.top - 16, width: style.width + 32, maxWidth: style.width + 32 },
+        style: { left, top, width, maxWidth: width },
         onMouseEnter: () => clearTimeout(hideTimer.current),
         onMouseLeave: () => {
-          if (pinned) return
+          if (pinned || cardDragRef.current) return
           closeCardsSoon()
         },
       },
@@ -3593,6 +3678,12 @@ export function ReaderView(props) {
               width: style.width,
               maxHeight: style.maxHeight,
             },
+            onPointerDown: (event) => {
+              if (event.target && event.target.closest && event.target.closest('h3')) startDrag(event, entry.id)
+            },
+            onPointerMove: moveDrag,
+            onPointerUp: endDrag,
+            onPointerCancel: endDrag,
           },
           renderCardBody(entry),
         ),
@@ -3665,7 +3756,7 @@ export function ReaderView(props) {
     return h(
       'div',
       {
-        className: 'rd-mini',
+        className: 'rd-mini rd-child-menu',
         style: (() => {
           const bounds = rootBounds()
           return {

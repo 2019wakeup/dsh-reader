@@ -791,7 +791,7 @@ const READER_CSS = `
 .rd-card::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent);border:2px solid transparent;background-clip:padding-box;border-radius:999px}
 .rd-card::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 30%,transparent);border:2px solid transparent;background-clip:padding-box}
 @keyframes rd-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
-.rd-card h3{position:sticky;top:-14px;z-index:3;margin:-14px 0 8px;padding:14px 0 8px;background:var(--dsw-alias-bg-overlay);font-size:15px;display:flex;align-items:center;gap:6px}
+.rd-card h3{position:sticky;top:-14px;z-index:3;margin:-14px 0 8px;padding:14px 0 8px;background:var(--dsw-alias-bg-overlay);font-size:15px;display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;touch-action:none}
 .rd-card .rd-def{font-size:13.5px;line-height:1.62}
 .rd-card .rd-sec{font-size:12.5px;line-height:1.6;color:var(--dsw-alias-label-secondary);margin-top:8px}
 .rd-card .rd-sec b{color:var(--dsw-alias-label-primary);font-weight:600}
@@ -863,7 +863,8 @@ const READER_CSS = `
 .rd-pdf-page canvas{display:block;max-width:100%}
 .rd-text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;opacity:1}
 .rd-text-layer span{position:absolute;color:transparent;white-space:pre;cursor:text;transform-origin:0 0}
-.rd-text-layer span::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 35%,transparent)}
+.rd-text-layer span::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}
+.rd-prose ::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent)}
 .rd-pdf-hl{position:absolute;background:color-mix(in srgb,var(--hl,#f2c94c) 30%,transparent);pointer-events:none;border-radius:2px}
 .rd-note-mask{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
 .rd-note-box{width:min(420px,90vw);background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:16px;box-shadow:0 16px 48px rgba(0,0,0,.28)}
@@ -3412,7 +3413,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.11.2'
+const READER_VERSION = '0.11.3'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3479,6 +3480,8 @@ function ReaderView(props) {
   const [menu, setMenu] = React.useState(null)
   const [childMenu, setChildMenu] = React.useState(null)
   const [cards, setCards] = React.useState([])
+  const [cardDrag, setCardDrag] = React.useState({ id: null, x: 0, y: 0 })
+  const cardDragRef = React.useRef(null)
   const [noteDraft, setNoteDraft] = React.useState(null)
   const [editing, setEditing] = React.useState(null)
   const [toast, setToast] = React.useState(null)
@@ -3654,6 +3657,38 @@ function ReaderView(props) {
     },
     [],
   )
+
+  React.useEffect(() => {
+    if (!childMenu) return
+    const timer = setTimeout(() => setChildMenu(null), 4000)
+    const onDown = (event) => {
+      if (event.target && event.target.closest && event.target.closest('.rd-mini')) return
+      setChildMenu(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('pointerdown', onDown, true)
+    }
+  }, [childMenu])
+
+  const cardSignature = cards.map((entry) => entry.id).join('|')
+  React.useEffect(() => {
+    setChildMenu(null)
+    if (!cardDragRef.current) setCardDrag({ id: null, x: 0, y: 0 })
+  }, [cardSignature])
+
+  React.useEffect(() => {
+    const end = () => {
+      cardDragRef.current = null
+    }
+    window.addEventListener('pointerup', end, true)
+    window.addEventListener('pointercancel', end, true)
+    return () => {
+      window.removeEventListener('pointerup', end, true)
+      window.removeEventListener('pointercancel', end, true)
+    }
+  }, [])
 
   React.useEffect(() => {
     const root = contentRef.current
@@ -6765,14 +6800,65 @@ function ReaderView(props) {
     const editingInCard = cards.some((entry) => conceptEdit && conceptEdit.id === entry.id)
     const style = placePanel(base, editingInCard ? 540 : 480)
     const pinned = cards.some((entry) => entry.pinned)
+    const topCard = cards[cards.length - 1]
+    const drag = cardDrag.id === topCard.id ? cardDrag : { x: 0, y: 0 }
+    const bounds = rootBounds()
+    const width = style.width + 32
+    const minLeft = bounds.left + 4
+    const maxLeft = Math.max(minLeft, bounds.right - width - 4)
+    const left = Math.min(Math.max(style.left - 16 + drag.x, minLeft), maxLeft)
+    const minTop = bounds.top + 52
+    const heightLimit = Number(style.maxHeight) || 480
+    const maxTop = Math.max(minTop, bounds.bottom - heightLimit - 8)
+    const top = Math.min(Math.max(style.top - 16 + drag.y, minTop), maxTop)
+    const startDrag = (event, id) => {
+      if (event.button !== 0) return
+      if (event.target && event.target.closest && event.target.closest('button, input, textarea, select, a')) return
+      setChildMenu(null)
+      cardDragRef.current = {
+        id,
+        startX: event.clientX,
+        startY: event.clientY,
+        baseX: cardDrag.id === id ? cardDrag.x : 0,
+        baseY: cardDrag.id === id ? cardDrag.y : 0,
+      }
+      // Capture the pointer so fast drags keep moving the card even when the
+      // cursor temporarily leaves the header.
+      try {
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+      } catch {
+        /* pointer capture is best-effort */
+      }
+    }
+    const moveDrag = (event) => {
+      const current = cardDragRef.current
+      if (!current) return
+      const dx = event.clientX - current.startX
+      const dy = event.clientY - current.startY
+      if (Math.abs(dx) + Math.abs(dy) <= 3) return
+      event.preventDefault()
+      setCardDrag({ id: current.id, x: current.baseX + dx, y: current.baseY + dy })
+    }
+    const endDrag = (event) => {
+      const wasDragging = Boolean(cardDragRef.current)
+      cardDragRef.current = null
+      if (!wasDragging || pinned || !event) return
+      const rect = event.currentTarget.getBoundingClientRect()
+      const inside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      if (!inside) closeCardsSoon(0)
+    }
     return h(
       'div',
       {
         className: 'rd-hover-zone',
-        style: { left: style.left - 16, top: style.top - 16, width: style.width + 32, maxWidth: style.width + 32 },
+        style: { left, top, width, maxWidth: width },
         onMouseEnter: () => clearTimeout(hideTimer.current),
         onMouseLeave: () => {
-          if (pinned) return
+          if (pinned || cardDragRef.current) return
           closeCardsSoon()
         },
       },
@@ -6791,6 +6877,12 @@ function ReaderView(props) {
               width: style.width,
               maxHeight: style.maxHeight,
             },
+            onPointerDown: (event) => {
+              if (event.target && event.target.closest && event.target.closest('h3')) startDrag(event, entry.id)
+            },
+            onPointerMove: moveDrag,
+            onPointerUp: endDrag,
+            onPointerCancel: endDrag,
           },
           renderCardBody(entry),
         ),
@@ -6863,7 +6955,7 @@ function ReaderView(props) {
     return h(
       'div',
       {
-        className: 'rd-mini',
+        className: 'rd-mini rd-child-menu',
         style: (() => {
           const bounds = rootBounds()
           return {
