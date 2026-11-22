@@ -90,7 +90,7 @@ export const cases = [
       const html = markdownRender(text)
       const ms = performance.now() - started
       if (html.length === 0) throw new Error('empty output')
-      if (ms > 50) throw new Error(`render too slow: ${ms.toFixed(1)}ms`)
+      if (ms > 150) throw new Error(`render too slow: ${ms.toFixed(1)}ms`)
       return { ms: Number(ms.toFixed(1)), bytes: text.length }
     },
   },

@@ -41,10 +41,10 @@ export const READER_CSS = `
 .rd-prose th,.rd-prose td{border-bottom:1px solid var(--dsw-alias-border-l1);border-right:1px solid var(--dsw-alias-border-l1);padding:8px 11px;text-align:left;vertical-align:top}
 .rd-prose th:last-child,.rd-prose td:last-child{border-right:0}
 .rd-prose tr:last-child td{border-bottom:0}
-.rd-prose thead th{background:var(--dsw-alias-bg-layer-2);font-weight:600;white-space:nowrap}
-.rd-prose tbody tr:nth-child(even) td{background:var(--dsw-alias-bg-layer-1)}
+.rd-prose thead th{background:color-mix(in srgb,var(--dsw-alias-label-primary) 7%,transparent);font-weight:600;white-space:nowrap}
+.rd-prose tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,transparent)}
 .rd-prose .rd-task{list-style:none;margin-left:-1.2em}
-.rd-prose .rd-task input{margin-right:6px;vertical-align:-1px}
+.rd-prose .rd-task input{width:14px;height:14px;margin-right:7px;vertical-align:-2px;accent-color:var(--dsw-alias-brand-primary);opacity:1}
 .rd-term{text-decoration:underline dashed var(--dsw-alias-border-l2);text-underline-offset:3px;cursor:help;border-radius:3px}
 .rd-term:hover{background:var(--dsw-alias-bg-layer-2)}
 .rd-term:focus-visible,.rd-hl:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
