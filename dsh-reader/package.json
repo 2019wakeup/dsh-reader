@@ -49,10 +49,5 @@
     "release:check": "node scripts/release-check.mjs",
     "make:demo": "node scripts/make-demo-epub.mjs",
     "eval:visual": "node eval/visual.mjs"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }
