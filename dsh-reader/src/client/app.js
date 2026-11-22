@@ -1,0 +1,3088 @@
+const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
+
+function decodeText(bytes) {
+  return new TextDecoder('utf-8').decode(bytes)
+}
+
+function headingsOf(text) {
+  const out = []
+  let inFence = false
+  for (const line of String(text || '').split('\n')) {
+    if (/^```/.test(line.trim())) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const match = line.match(/^(#{1,3})\s+(.*)$/)
+    if (match) out.push({ level: match[1].length, label: match[2].trim() })
+  }
+  return out
+}
+
+function conceptFormOf(concept) {
+  return {
+    term: concept.term || '',
+    definition: concept.definition || '',
+    intuition: concept.intuition || '',
+    context: concept.context || '',
+    examples: (concept.examples || []).join('\n'),
+    aliases: (concept.aliases || []).join(', '),
+    related: (concept.related || []).join(', '),
+  }
+}
+
+function positionCard(rect, estimatedHeight = 260, bounds = null) {
+  const area = bounds || {
+    left: 0,
+    top: 0,
+    right: window.innerWidth,
+    bottom: window.innerHeight,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }
+  return panelPosition({ anchor: rect, height: estimatedHeight, bounds: area })
+}
+
+function IconUndo() {
+  return h(
+    'svg',
+    { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'M9 14 4 9l5-5' }),
+    h('path', { d: 'M4 9h10a6 6 0 0 1 0 12h-3' }),
+  )
+}
+
+function IconRedo() {
+  return h(
+    'svg',
+    { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'm15 14 5-5-5-5' }),
+    h('path', { d: 'M20 9H10a6 6 0 0 0 0 12h3' }),
+  )
+}
+
+function IconSearch() {
+  return h(
+    'svg',
+    { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('circle', { cx: 11, cy: 11, r: 7 }),
+    h('path', { d: 'm20 20-3.6-3.6' }),
+  )
+}
+
+function IconSettings() {
+  return h(
+    'svg',
+    { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('circle', { cx: 12, cy: 12, r: 3 }),
+    h('path', {
+      d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z',
+    }),
+  )
+}
+
+function PdfPageView(props) {
+  const { doc, page, zoom, annotations, concepts, contentRef } = props
+  const canvasRef = React.useRef(null)
+  const layerRef = React.useRef(null)
+  const pageRef = React.useRef(null)
+  const [error, setError] = React.useState('')
+  const conceptsRef = React.useRef(concepts)
+  conceptsRef.current = concepts
+
+  React.useEffect(() => {
+    let alive = true
+    let task = null
+    setError('')
+    ;(async () => {
+      try {
+        await pdfRenderPage(doc.pdf, page, canvasRef.current, layerRef.current, zoom, (t) => {
+          task = t
+        })
+        if (alive && pageRef.current) markTerms(pageRef.current, conceptsRef.current)
+      } catch (e) {
+        if (alive) setError(String(e.message || e))
+      }
+    })()
+    return () => {
+      alive = false
+      try {
+        if (task) task.cancel()
+      } catch {
+        /* already settled */
+      }
+    }
+  }, [doc, page, zoom])
+
+  React.useEffect(() => {
+    if (pageRef.current) markTerms(pageRef.current, concepts)
+  }, [concepts])
+
+  const marks = annotations.filter((annotation) => annotation.kind === 'pdf' && annotation.page === page)
+
+  return h(
+    'div',
+    {
+      className: 'rd-pdf-page',
+      'data-page': page,
+      ref: (node) => {
+        pageRef.current = node
+        if (contentRef) contentRef.current = node
+      },
+    },
+    h('canvas', { ref: canvasRef }),
+    h('div', { className: 'rd-text-layer', ref: layerRef }),
+    marks.map((annotation) =>
+      (annotation.rects || []).map((rect, index) =>
+        h('div', {
+          key: annotation.id + '-' + index,
+          className: 'rd-pdf-hl',
+          'data-anno': annotation.id,
+          style: {
+            left: rect.x * 100 + '%',
+            top: rect.y * 100 + '%',
+            width: rect.w * 100 + '%',
+            height: rect.h * 100 + '%',
+            '--hl': annotation.color,
+          },
+        }),
+      ),
+    ),
+    error ? h('div', { className: 'rd-error' }, error) : null,
+  )
+}
+
+function PdfPane(props) {
+  const { doc, page, zoom, annotations, concepts, contentRef, spread } = props
+  const pages = spread ? [page, page + 1].filter((number) => number <= doc.pdf.numPages) : [page]
+  return h(
+    'div',
+    { className: 'rd-main' },
+    h(
+      'div',
+      { className: 'rd-pdf' + (pages.length > 1 ? ' rd-pdf-spread' : '') },
+      pages.map((number, index) =>
+        h(PdfPageView, {
+          key: number,
+          doc,
+          page: number,
+          zoom,
+          annotations,
+          concepts,
+          contentRef: index === 0 ? contentRef : null,
+        }),
+      ),
+    ),
+  )
+}
+
+const READER_VERSION = '__READER_VERSION__'
+
+class ReaderBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return h(
+        'div',
+        { className: 'rd-root' },
+        h(
+          'div',
+          { className: 'rd-empty' },
+          t('label.readerError'),
+          h(
+            'div',
+            { style: { marginTop: '6px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } },
+            String(this.state.error?.message || this.state.error),
+          ),
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              style: { marginTop: '10px' },
+              onClick: () => {
+                const text = diagnosticsText({
+                  version: READER_VERSION,
+                  message: this.state.error?.message,
+                  stack: this.state.error?.stack,
+                })
+                if (navigator.clipboard) navigator.clipboard.writeText(text)
+              },
+            },
+            t('action.copyDiagnostics'),
+          ),
+        ),
+      )
+    }
+    return this.props.children
+  }
+}
+
+function ReaderRoot(props) {
+  return h(ReaderBoundary, null, h(ReaderView, props))
+}
+
+export function ReaderView(props) {
+  const sessionId = props.sessionId || null
+  const [entries, setEntries] = React.useState([])
+  const [dir, setDir] = React.useState('.')
+  const [doc, setDoc] = React.useState(null)
+  const [store, setStore] = React.useState({ version: 1, concepts: {}, annotations: {}, positions: {} })
+  const [chapter, setChapter] = React.useState(0)
+  const [page, setPage] = React.useState(1)
+  const [zoom, setZoom] = React.useState(1.2)
+  const [fontSize, setFontSize] = React.useState(18)
+  const [drawer, setDrawer] = React.useState(null)
+  const [menu, setMenu] = React.useState(null)
+  const [childMenu, setChildMenu] = React.useState(null)
+  const [cards, setCards] = React.useState([])
+  const [noteDraft, setNoteDraft] = React.useState(null)
+  const [editing, setEditing] = React.useState(null)
+  const [toast, setToast] = React.useState(null)
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const [query, setQuery] = React.useState('')
+  const [lostMarks, setLostMarks] = React.useState([])
+  const [scrollTarget, setScrollTarget] = React.useState(null)
+  const [occurrencesOpen, setOccurrencesOpen] = React.useState(null)
+  const [conceptEdit, setConceptEdit] = React.useState(null)
+  const [focusConcept, setFocusConcept] = React.useState(null)
+  const [showHelp, setShowHelp] = React.useState(false)
+  const [pendingAnchor, setPendingAnchor] = React.useState(null)
+  const [relink, setRelink] = React.useState(null)
+  const [mergeTarget, setMergeTarget] = React.useState('')
+  const [conceptSort, setConceptSort] = React.useState('recent')
+  const [conceptScope, setConceptScope] = React.useState(null)
+  const [searchOpen, setSearchOpen] = React.useState(false)
+  const [searchQuery, setSearchQuery] = React.useState('')
+  const [searchResults, setSearchResults] = React.useState([])
+  const [searchBusy, setSearchBusy] = React.useState(false)
+  const [searchDone, setSearchDone] = React.useState(false)
+  const [modelCatalog, setModelCatalog] = React.useState(null)
+  const [modelBusy, setModelBusy] = React.useState(false)
+  const [guideBusy, setGuideBusy] = React.useState(false)
+  const [guideError, setGuideError] = React.useState('')
+  const [guideProgress, setGuideProgress] = React.useState(null)
+  const [guideView, setGuideView] = React.useState('list')
+  const [collapsedIds, setCollapsedIds] = React.useState(() => new Set())
+  const [mapScale, setMapScale] = React.useState(1)
+  const [askText, setAskText] = React.useState('')
+  const [askBusy, setAskBusy] = React.useState(false)
+  const [askWeb, setAskWeb] = React.useState(false)
+  const [upgradingId, setUpgradingId] = React.useState(null)
+  const [translationMode, setTranslationMode] = React.useState('off')
+  const [translationCache, setTranslationCache] = React.useState({})
+  const [translationBusy, setTranslationBusy] = React.useState(false)
+  const [pdfBlocks, setPdfBlocks] = React.useState([])
+  const [pdfTranslating, setPdfTranslating] = React.useState(false)
+  const [selectionTranslation, setSelectionTranslation] = React.useState(null)
+  const card = topCard(cards)
+  const prefs = store.prefs || {}
+
+  const contentRef = React.useRef(null)
+  const rootRef = React.useRef(null)
+  const [layoutTick, setLayoutTick] = React.useState(0)
+  const [historyTick, setHistoryTick] = React.useState(0)
+  const marksState = React.useRef({ root: null, view: '', concepts: '', annotations: '' })
+  const hoverTimer = React.useRef(null)
+  const hideTimer = React.useRef(null)
+  const toastTimer = React.useRef(null)
+  const svgRef = React.useRef(null)
+  const importInputRef = React.useRef(null)
+  const guideAbortRef = React.useRef(null)
+  const historyRef = React.useRef(null)
+
+  const docKey = doc ? doc.fingerprint || doc.path : null
+  const concepts = React.useMemo(() => Object.values(store.concepts || {}), [store.concepts])
+  const sentLog = (store.debug && Array.isArray(store.debug.lastSent) ? store.debug.lastSent : []).slice(-10).reverse()
+  const guide = docKey ? store.docs?.[docKey]?.guide : null
+  const guideTree = React.useMemo(
+    () => (guide ? buildGuideTree(doc ? doc.name : '', guide) : null),
+    [guide, doc],
+  )
+  const guideLayout = React.useMemo(
+    () => (guideTree ? layoutTree(guideTree, collapsedIds) : null),
+    [guideTree, collapsedIds],
+  )
+  const docAnnotations = React.useMemo(
+    () => (docKey ? store.docs?.[docKey]?.annotations || [] : []),
+    [store.docs, docKey],
+  )
+
+  const reportError = (error) => flash(t('label.error') + ': ' + errorText(error?.message || error))
+
+  const flash = (message, action) => {
+    setToast({ message: String(message), action: action || null })
+    clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 4000)
+  }
+
+  const mergeStore = (next) => {
+    if (!next) return
+    setStore((current) => (Number(next.revision || 0) >= Number(current.revision || 0) ? next : current))
+  }
+
+  const applyMutation = async (op) => {
+    const result = await api.mutate(sessionId, op)
+    if (result && result.store) mergeStore(result.store)
+    return result
+  }
+
+  React.useEffect(() => {
+    if (Number.isFinite(store.prefs?.fontSize)) setFontSize(store.prefs.fontSize)
+  }, [store.prefs?.fontSize])
+
+  React.useEffect(() => {
+    if (!sessionId) return
+    api
+      .getStore(sessionId)
+      .then((result) => setStore(result.store))
+      .catch(() => {})
+    api
+      .list(sessionId, '.')
+      .then((result) => setEntries(result.entries))
+      .catch((e) => setError(String(e.message || e)))
+  }, [sessionId])
+
+  React.useEffect(
+    () => () => {
+      clearTimeout(hoverTimer.current)
+      clearTimeout(hideTimer.current)
+      clearTimeout(toastTimer.current)
+    },
+    [],
+  )
+
+  React.useEffect(() => {
+    const root = contentRef.current
+    if (!root || !doc || doc.ext === '.pdf') return
+    if (translationMode === 'only') {
+      setLostMarks([])
+      marksState.current = { root, view: '', concepts: '', annotations: '' }
+      return
+    }
+    const view = `${doc.path}:${doc.fingerprint || ''}:${chapter}`
+    const conceptSig = conceptSignature(concepts)
+    const annotationSig = annotationSignature(docAnnotations, chapter)
+    const previous = marksState.current
+    const force = previous.root !== root || previous.view !== view
+    if (force || previous.annotations !== annotationSig) {
+      setLostMarks(applyHighlights(root, docAnnotations, chapter))
+    }
+    if (force || previous.concepts !== conceptSig) {
+      markTerms(root, concepts)
+    }
+    marksState.current = { root, view, concepts: conceptSig, annotations: annotationSig }
+  }, [doc, chapter, docAnnotations, concepts, translationMode])
+
+  React.useEffect(() => {
+    if (!doc) return
+    const timer = setTimeout(() => {
+      if (!docKey) return
+      const previous = store.docs?.[docKey]?.positions
+      if (previous && previous.chapter === chapter && previous.page === page) return
+      applyMutation({ op: 'position/set', docKey, position: { chapter, page } }).catch(() => {})
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [doc, chapter, page])
+
+  React.useEffect(() => {
+    const onResize = () => setLayoutTick((tick) => tick + 1)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const rootBounds = () => {
+    void layoutTick
+    const node = rootRef.current
+    if (!node) {
+      return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight }
+    }
+    const rect = node.getBoundingClientRect()
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
+  }
+  const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
+
+  React.useEffect(() => {
+    const onKey = (event) => {
+      const action = shortcutFor(event, { editable: isEditableTarget(event.target) })
+      if (action === 'undo' || action === 'redo') {
+        event.preventDefault()
+        runHistory(action)
+        return
+      }
+      if (action === 'help') {
+        event.preventDefault()
+        setShowHelp((current) => !current)
+        return
+      }
+      if (action === 'search') {
+        event.preventDefault()
+        setSearchOpen(true)
+        return
+      }
+      if (event.key === 'Escape') {
+        if (selectionTranslation) {
+          setSelectionTranslation(null)
+          return
+        }
+        if (searchOpen) {
+          setSearchOpen(false)
+          return
+        }
+        setShowHelp(false)
+        setCards([])
+        setMenu(null)
+        setChildMenu(null)
+        setNoteDraft(null)
+        setEditing(null)
+        setConceptEdit(null)
+        return
+      }
+      if (!doc) return
+      const interactive = event.target && event.target.closest
+        ? event.target.closest('button, a, select, input, textarea, [role="button"]')
+        : null
+      if (action === 'next' || action === 'prev') {
+        if (interactive) return
+        event.preventDefault()
+        const delta = action === 'next' ? 1 : -1
+        if (doc.ext === '.pdf') {
+          const step = prefs.pdfSpread ? 2 : 1
+          setPage((current) => Math.min(doc.pdf.numPages, Math.max(1, current + delta * step)))
+        } else if (doc.ext === '.epub') {
+          setChapter((current) => Math.min(doc.epub.chapters.length - 1, Math.max(0, current + delta)))
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [doc, searchOpen, prefs.pageKeys])
+
+  React.useEffect(() => {
+    const onPointerDown = (event) => {
+      if (!shouldDismissOnPointerDown(event.target)) return
+      setMenu(null)
+      setChildMenu(null)
+      setEditing(null)
+      setConceptEdit(null)
+      setCards((current) => (current.some((entry) => entry.pinned) ? [] : current))
+      dismissSelection(window)
+    }
+    const onScroll = () => {
+      setMenu(null)
+      setChildMenu(null)
+      setEditing(null)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [])
+
+  const revokeAssets = (target) => {
+    for (const url of (target && target.epub && target.epub.assetUrls) || []) {
+      try {
+        URL.revokeObjectURL(url)
+      } catch {
+        /* already revoked */
+      }
+    }
+  }
+
+  const openDoc = async (entry, options = {}) => {
+    revokeAssets(doc)
+    setBusy(true)
+    setError('')
+    try {
+      const opened = await api.fetchBytes(sessionId, entry.path)
+      const ext = entry.ext || extOf(entry.name)
+      const next = { path: entry.path, name: entry.name, ext, bytes: opened.bytes, fingerprint: opened.fingerprint || '' }
+      if (ext === '.epub') {
+        next.epub = await epubOpen(opened.bytes)
+        if (next.epub.fixedLayout) throw new Error(t('label.fxlUnsupported'))
+      }
+      if (ext === '.pdf') {
+        next.pdf = await pdfOpen(opened.bytes)
+        next.pdf.structure = null
+        next.pdf.structureReady = false
+        next.pdf.toc = []
+        next.pdf.tocReliable = false
+      }
+      const key = next.fingerprint || entry.path
+      setRelink(staleDocFor(store.docs, entry.path, key))
+      if (next.fingerprint) {
+        api
+          .mutate(sessionId, {
+            op: 'doc/upsert',
+            docKey: next.fingerprint,
+            path: entry.path,
+            size: opened.bytes.byteLength,
+            mtime: 0,
+          })
+          .catch(() => {})
+      }
+      const position = options.position || store.docs?.[key]?.positions || {}
+      historyRef.current = createHistory(30)
+      setHistoryTick((tick) => tick + 1)
+      setDoc(next)
+      setChapter(Number.isFinite(position.chapter) ? Math.max(0, position.chapter) : 0)
+      setPage(Number.isFinite(position.page) ? Math.max(1, position.page) : 1)
+      setDrawer(null)
+      setCards([])
+      setMenu(null)
+      setEditing(null)
+      setConceptEdit(null)
+      if (ext === '.pdf') {
+        const targetPath = next.path
+        next.pdf.structurePromise = new Promise((resolve) => setTimeout(resolve, 150))
+          .then(() => pdfGuideStructure(next.pdf))
+          .then((structure) => {
+            next.pdf.structure = structure
+            next.pdf.toc = structure.toc
+            next.pdf.tocReliable = structure.tocReliable
+            next.pdf.structureReady = true
+            setDoc((current) =>
+              current && current.path === targetPath
+                ? {
+                    ...current,
+                    pdf: {
+                      ...current.pdf,
+                      structure,
+                      toc: structure.toc,
+                      tocReliable: structure.tocReliable,
+                      structureReady: true,
+                    },
+                  }
+                : current,
+            )
+            return structure
+          })
+          .catch(() => {
+            next.pdf.structureReady = true
+            setDoc((current) =>
+              current && current.path === targetPath
+                ? { ...current, pdf: { ...current.pdf, structureReady: true } }
+                : current,
+            )
+            return null
+          })
+      }
+    } catch (e) {
+      setError(String(e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const back = () => {
+    revokeAssets(doc)
+    historyRef.current = null
+    setRelink(null)
+    setDoc(null)
+    setDrawer(null)
+    setCards([])
+    setEditing(null)
+    setConceptEdit(null)
+    setError('')
+    api
+      .list(sessionId, dir)
+      .then((result) => setEntries(result.entries))
+      .catch(() => {})
+  }
+
+  const navigate = (nextDir) => {
+    api
+      .list(sessionId, nextDir)
+      .then((result) => {
+        setDir(nextDir)
+        setEntries(result.entries)
+      })
+      .catch((e) => setError(String(e.message || e)))
+  }
+
+  const addAnnotation = (annotation) => {
+    if (!doc) return Promise.resolve()
+    return applyMutation({ op: 'annotation/add', docKey, annotation })
+      .then(() => {
+        historyRef.current?.push({
+          label: t('label.addedMark'),
+          undo: { op: 'annotation/remove', docKey, id: annotation.id },
+          redo: { op: 'annotation/add', docKey, annotation },
+        })
+        setHistoryTick((tick) => tick + 1)
+        flash(t('label.addedMark'), { label: t('action.undo'), run: () => runHistory('undo') })
+      })
+      .catch((e) => reportError(e))
+  }
+
+  const runHistory = async (direction) => {
+    const history = historyRef.current
+    if (!history) return
+    const entry = direction === 'undo' ? history.undo() : history.redo()
+    if (!entry) {
+      flash(t('label.nothingToUndo'))
+      return
+    }
+    try {
+      await applyMutation(direction === 'undo' ? entry.undo : entry.redo)
+      setHistoryTick((tick) => tick + 1)
+      flash(direction === 'undo' ? t('label.undo') : t('label.redo'), {
+        label: direction === 'undo' ? t('action.redo') : t('action.undo'),
+        run: () => runHistory(direction === 'undo' ? 'redo' : 'undo'),
+      })
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const contextFor = (range) => {
+    if (!range) return { sentence: '', paragraph: '' }
+    const node = range.startContainer
+    const element = node.nodeType === 3 ? node.parentElement : node
+    const block = element && element.closest ? element.closest('p,li,blockquote,pre,h1,h2,h3,h4,h5,h6,div') : null
+    const paragraph = (block ? block.textContent : '') || ''
+    const term = range.toString().trim()
+    const at = paragraph.indexOf(term)
+    const sentence =
+      at >= 0 ? paragraph.slice(Math.max(0, at - 80), at + term.length + 80) : paragraph.slice(0, 200)
+    return { sentence: sentence.trim(), paragraph: paragraph.slice(0, 600).trim() }
+  }
+
+  const createConcept = async (term, range, parentId) => {
+    setMenu(null)
+    setChildMenu(null)
+    if (!term) return
+    const parent = parentId ? store.concepts[parentId] : null
+    if (parent && conceptChain(store.concepts, parentId).length >= 3) {
+      flash(t('label.nestLimit'))
+      return
+    }
+    const rect = range ? range.getBoundingClientRect() : { left: 220, top: 220, right: 220, bottom: 220 }
+    const pendingId = 'pending-' + uid()
+    setCards((current) =>
+      parentId
+        ? pushCard(current, { id: pendingId, term, pending: true, pinned: true, rect })
+        : [{ id: pendingId, term, pending: true, pinned: true, rect }],
+    )
+    const { sentence, paragraph } = contextFor(range)
+    const inContent = Boolean(
+      range && contentRef.current && contentRef.current.contains(range.commonAncestorContainer),
+    )
+    let occurrence = 0
+    let pageNumber
+    if (inContent && doc?.ext === '.pdf') pageNumber = pdfPageFromRange(range)
+    else if (inContent && range) {
+      occurrence = occurrenceBefore(contentRef.current, range).split(term).length - 1
+    }
+    try {
+      const result = await api.explain(sessionId, {
+        term,
+        sentence,
+        paragraph,
+        docTitle: doc ? doc.name : '',
+        parentId: parentId || null,
+        depth: 'quick',
+        ...(inContent ? { docKey, chapter, page: pageNumber, quote: term, occurrence } : {}),
+      })
+      const concept = result.concept
+      if (result.store) mergeStore(result.store)
+      setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect }))
+      flash(`${t('label.conceptSaved')}：${concept.term}`)
+    } catch (e) {
+      setCards((current) =>
+        replaceTop(current, { id: pendingId, term, pending: false, error: String(e.message || e), pinned: true, rect }),
+      )
+    }
+  }
+
+  const addHighlight = (color) => {
+    if (!menu || !doc) return
+    const quote = menu.range.toString()
+    if (!quote) return
+    if (doc.ext === '.pdf') {
+      const pageElement = menu.range.startContainer.parentElement?.closest('.rd-pdf-page')
+      if (!pageElement) return
+      const base = pageElement.getBoundingClientRect()
+      const rects = Array.from(menu.range.getClientRects()).map((rect) => ({
+        x: (rect.left - base.left) / base.width,
+        y: (rect.top - base.top) / base.height,
+        w: rect.width / base.width,
+        h: rect.height / base.height,
+      }))
+      const pageNumber = Number(pageElement.dataset.page) || page
+      addAnnotation({ id: uid(), kind: 'pdf', page: pageNumber, quote, rects, color, createdAt: Date.now() })
+    } else {
+      const root = contentRef.current
+      if (!root) return
+      const occurrence = occurrenceBefore(root, menu.range).split(quote).length - 1
+      addAnnotation({ id: uid(), kind: 'text', chapter, quote, occurrence, color, createdAt: Date.now() })
+    }
+    setMenu(null)
+  }
+
+  const startNote = () => {
+    if (!menu || !doc) return
+    const quote = menu.range.toString()
+    if (!quote) return
+    if (doc.ext === '.pdf') {
+      setNoteDraft({ quote, page: pdfPageFromRange(menu.range), pdf: true, text: '', color: '#f2c94c' })
+      setMenu(null)
+      return
+    }
+    const root = contentRef.current
+    if (!root) return
+    const occurrence = occurrenceBefore(root, menu.range).split(quote).length - 1
+    setNoteDraft({ quote, occurrence, text: '', color: '#f2c94c' })
+    setMenu(null)
+  }
+
+  const saveNote = () => {
+    if (!noteDraft || !doc) return
+    const text = String(noteDraft.text || '').trim()
+    if (!text) return
+    const base = noteDraft.pdf
+      ? { id: uid(), kind: 'pdf', page: noteDraft.page || page, quote: noteDraft.quote, rects: [], note: text, color: noteDraft.color, createdAt: Date.now() }
+      : {
+          id: uid(),
+          kind: 'text',
+          chapter,
+          quote: noteDraft.quote,
+          occurrence: noteDraft.occurrence,
+          note: text,
+          color: noteDraft.color,
+          createdAt: Date.now(),
+        }
+    addAnnotation(base)
+    setNoteDraft(null)
+  }
+
+  const removeAnnotation = (id) => applyMutation({ op: 'annotation/remove', docKey, id }).catch(() => {})
+
+  const removeConcept = (id) => {
+    applyMutation({ op: 'concept/delete', id }).catch((e) => reportError(e))
+    setConceptEdit(null)
+    setCards((current) => current.filter((entry) => entry.id !== id))
+  }
+
+  const changePrefs = (patch) => {
+    if (Number.isFinite(patch.fontSize)) setFontSize(patch.fontSize)
+    applyMutation({ op: 'prefs/set', prefs: patch }).catch((e) =>
+      reportError(e),
+    )
+  }
+
+  const saveConceptEdit = async () => {
+    if (!conceptEdit) return
+    const result = conceptPatch(conceptEdit.form)
+    if (!result.ok) {
+      flash(t('label.termRequired'))
+      return
+    }
+    try {
+      await applyMutation({
+        op: 'concept/upsert',
+        concept: { id: conceptEdit.id, ...result.patch, source: 'user', updatedAt: Date.now() },
+      })
+      setConceptEdit(null)
+      flash(t('label.updatedConcept'))
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const onContentClick = (event) => {
+    const anchor = event.target.closest ? event.target.closest('a[href]') : null
+    if (!anchor) return
+    const href = anchor.getAttribute('href') || ''
+    if (!href) return
+    event.preventDefault()
+    if (href.startsWith('#')) {
+      const target = contentRef.current && contentRef.current.querySelector(href)
+      if (target) target.scrollIntoView({ block: 'start' })
+      return
+    }
+    if (/^(https?:|mailto:)/i.test(href)) {
+      window.open(href, '_blank', 'noopener')
+      return
+    }
+    if (doc && doc.ext === '.epub') {
+      const [pathPart, fragment] = href.split('#')
+      const clean = pathPart.replace(/^\.\//, '')
+      if (!clean && fragment) {
+        const local = document.getElementById(decodeURIComponent(fragment))
+        if (local && local.scrollIntoView) local.scrollIntoView({ block: 'start' })
+        return
+      }
+      const index = doc.epub.chapters.findIndex((item) => item.path.endsWith(clean))
+      if (index >= 0) {
+        setChapter(index)
+        if (fragment) setPendingAnchor(fragment)
+      }
+    }
+  }
+
+  const updateAnnotation = async (id, patch) => {
+    if (!doc) return
+    const previous = docAnnotations.find((item) => item.id === id)
+    const next = { ...(previous || { id }), ...patch }
+    try {
+      await applyMutation({ op: 'annotation/update', docKey, annotation: next })
+      if (previous) {
+        historyRef.current?.push({
+          label: t('label.updatedMark'),
+          undo: { op: 'annotation/update', docKey, annotation: previous },
+          redo: { op: 'annotation/update', docKey, annotation: next },
+        })
+        setHistoryTick((tick) => tick + 1)
+      }
+      flash(t('label.updatedMark'), { label: t('action.undo'), run: () => runHistory('undo') })
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const saveEditing = () => {
+    if (!editing) return
+    updateAnnotation(editing.id, { note: String(editing.note || '').trim() })
+    setEditing(null)
+  }
+
+  const deleteEditing = async () => {
+    if (!editing || !doc) return
+    const annotation = editing.annotation
+    setEditing(null)
+    try {
+      await applyMutation({ op: 'annotation/remove', docKey, id: annotation.id })
+      historyRef.current?.push({
+        label: t('label.deletedMark'),
+        undo: { op: 'annotation/add', docKey, annotation },
+        redo: { op: 'annotation/remove', docKey, id: annotation.id },
+      })
+      setHistoryTick((tick) => tick + 1)
+      flash(t('label.deletedMark'), { label: t('action.undo'), run: () => runHistory('undo') })
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const onRootClick = (event) => {
+    if (selectionTranslation && event.target && event.target.closest && !event.target.closest('.rd-trans-card')) {
+      setSelectionTranslation(null)
+    }
+    const root = contentRef.current
+    if (!root) return
+    const selection = window.getSelection()
+    const collapsed = !selection || selection.isCollapsed
+    const id = shouldOpenEditor(event.target, root, collapsed)
+    if (id) {
+      const annotation = docAnnotations.find((item) => item.id === id)
+      if (!annotation) return
+      const element = event.target.closest('[data-anno]')
+      const rect = element ? element.getBoundingClientRect() : { left: 200, top: 200, right: 200, bottom: 200 }
+      setMenu(null)
+      setCards([])
+      setEditing({ id, annotation, rect, note: annotation.note || '' })
+      return
+    }
+    if (doc?.ext === '.pdf' && docAnnotations.length > 0) {
+      const pageElement = event.target.closest ? event.target.closest('.rd-pdf-page') : null
+      const box = pageElement ? pageElement.getBoundingClientRect() : null
+      if (box && box.width > 0 && box.height > 0) {
+        const pageNumber = Number(pageElement.dataset.page) || page
+        const hit = hitAnnotationAtPoint(
+          docAnnotations,
+          pageNumber,
+          (event.clientX - box.left) / box.width,
+          (event.clientY - box.top) / box.height,
+        )
+        if (hit) {
+          const point = { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY }
+          setMenu(null)
+          setCards([])
+          setEditing({ id: hit.id, annotation: hit, rect: point, note: hit.note || '' })
+          return
+        }
+      }
+    }
+    if (prefs.cardTrigger === 'click') {
+      const term = event.target.closest ? event.target.closest('.rd-term') : null
+      if (term && term.dataset.id && store.concepts[term.dataset.id]) {
+        setMenu(null)
+        setCards([{ id: term.dataset.id, rect: term.getBoundingClientRect(), pinned: false }])
+      }
+    }
+  }
+
+  const onRootKeyDown = (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    const target = event.target
+    if (!target || !target.classList) return
+    if (target.dataset && target.dataset.activate === '1') {
+      event.preventDefault()
+      target.click()
+      return
+    }
+    if (event.key !== 'Enter') return
+    if (target.classList.contains('rd-term') && target.dataset.id) {
+      event.preventDefault()
+      setCards([{ id: target.dataset.id, rect: target.getBoundingClientRect(), pinned: false }])
+      return
+    }
+    if (target.classList.contains('rd-hl') && target.dataset.anno) {
+      event.preventDefault()
+      const annotation = docAnnotations.find((item) => item.id === target.dataset.anno)
+      if (annotation) {
+        setEditing({
+          id: annotation.id,
+          annotation,
+          rect: target.getBoundingClientRect(),
+          note: annotation.note || '',
+        })
+      }
+    }
+  }
+
+  const onPointerUp = (event) => {
+    if (isToolbarTarget(event && event.target)) return
+    if (translationMode === 'only' && doc && doc.ext !== '.pdf') {
+      flash(t('label.translateOnlyNoAnnotate'))
+      return
+    }
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
+    const range = selection.getRangeAt(0)
+    const text = selection.toString().trim()
+    if (!text) return
+    const node = range.commonAncestorContainer
+    const element = node.nodeType === 3 ? node.parentElement : node
+    if (element && element.closest && element.closest('.rd-card')) {
+      if (text.length <= 80 && card) {
+        const rect = range.getBoundingClientRect()
+        setCards((current) =>
+          current.map((entry, index) => (index === current.length - 1 ? { ...entry, pinned: true } : entry)),
+        )
+        setChildMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top })
+      }
+      return
+    }
+    const root = contentRef.current
+    if (!root || !root.contains(range.commonAncestorContainer)) {
+      setMenu(null)
+      return
+    }
+    if (text.length > 160) {
+      setMenu(null)
+      return
+    }
+    const rect = range.getBoundingClientRect()
+    setMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top })
+  }
+
+  const closeCardsSoon = (delay = 600) => {
+    clearTimeout(hideTimer.current)
+    hideTimer.current = setTimeout(() => {
+      const hovering = document.querySelector(
+        '.rd-term:hover, .rd-hover-zone:hover, .rd-card:hover, .rd-mini:hover',
+      )
+      if (hovering) return
+      setCards([])
+    }, delay)
+  }
+
+  const onTermOver = (event) => {
+    if (prefs.cardTrigger === 'click' || prefs.cardTrigger === 'off') return
+    const element = event.target.closest ? event.target.closest('.rd-term') : null
+    if (!element || !element.dataset.id) return
+    if (cards.some((entry) => entry.pinned)) return
+    if (cards.some((entry) => entry.id === element.dataset.id)) {
+      clearTimeout(hideTimer.current)
+      return
+    }
+    clearTimeout(hideTimer.current)
+    clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => {
+      const rect = element.getBoundingClientRect()
+      setCards([{ id: element.dataset.id, rect, pinned: false }])
+    }, prefs.hoverDelay || 150)
+  }
+
+  const onTermOut = (event) => {
+    if (cards.some((entry) => entry.pinned)) return
+    const inside = (node) =>
+      node && node.closest && node.closest('.rd-card, .rd-hover-zone, .rd-mini')
+    // Moving inside or out of the card, its hover halo, or the child menu is
+    // not leaving the concept; the zone's own mouseleave decides that.
+    if (inside(event.target) || inside(event.relatedTarget)) return
+    clearTimeout(hoverTimer.current)
+    closeCardsSoon()
+  }
+
+  const focusAnnotation = (annotation) => {
+    if (annotation.kind === 'pdf') {
+      setPage(annotation.page)
+      return
+    }
+    const root = contentRef.current
+    const element = root && root.querySelector(`[data-anno="${annotation.id}"]`)
+    if (element) element.scrollIntoView({ block: 'center' })
+  }
+
+  const upgradeConcept = async (concept) => {
+    if (!concept || upgradingId) return
+    setUpgradingId(concept.id)
+    try {
+      const sentence = (concept.evidence && concept.evidence.sentence) || ''
+      const result = await api.explain(sessionId, {
+        term: concept.term,
+        sentence,
+        paragraph: sentence,
+        docTitle: doc ? doc.name : '',
+        depth: 'full',
+      })
+      if (result.store) mergeStore(result.store)
+      flash(t('label.deepenDone'))
+    } catch (e) {
+      reportError(e)
+    } finally {
+      setUpgradingId(null)
+    }
+  }
+
+  const askConcept = async (concept) => {
+    const question = askText.trim()
+    if (!question || askBusy || !concept) return
+    setAskBusy(true)
+    try {
+      const result = await api.ask(sessionId, { conceptId: concept.id, question, web: askWeb })
+      if (result.store) mergeStore(result.store)
+      setAskText('')
+    } catch (e) {
+      reportError(e)
+    } finally {
+      setAskBusy(false)
+    }
+  }
+
+  const exportStore = async () => {
+    try {
+      const blob = await api.exportStore(sessionId)
+      downloadBlob(blob, 'dsh-reader-export.json')
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const restoreLatest = async () => {
+    if (!window.confirm(t('label.restoreConfirm'))) return
+    try {
+      const result = await api.restore(sessionId)
+      if (result.store) mergeStore(result.store)
+      flash(t('label.restored'))
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const onImportFile = async (event) => {
+    const file = event.target.files && event.target.files[0]
+    event.target.value = ''
+    if (!file) return
+    try {
+      const parsed = JSON.parse(await file.text())
+      const incoming = parsed.store || parsed
+      const incomingCount = Object.keys((incoming && incoming.concepts) || {}).length
+      const currentCount = Object.keys(store.concepts || {}).length
+      if (!window.confirm(`${t('label.importConfirm')} (${incomingCount} → ${currentCount})`)) return
+      const result = await api.importStore(sessionId, incoming)
+      if (result.store) mergeStore(result.store)
+      flash(t('label.imported'))
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const mergeConcept = async (fromId, toId) => {
+    if (!fromId || !toId || !window.confirm(t('label.mergeConfirm'))) return
+    try {
+      await applyMutation({ op: 'concept/merge', fromId, toId })
+      setConceptEdit(null)
+      setMergeTarget('')
+      flash(t('label.merged'))
+    } catch (e) {
+      reportError(e)
+    }
+  }
+
+  const exportMarks = () => {
+    downloadBlob(new Blob([annotationsMarkdown(store)], { type: 'text/markdown' }), 'dsh-reader-annotations.md')
+  }
+
+  const runSearch = async () => {
+    const query = searchQuery.trim()
+    if (!query || !doc) {
+      setSearchResults([])
+      setSearchDone(true)
+      return
+    }
+    setSearchBusy(true)
+    setSearchDone(false)
+    try {
+      if (doc.ext === '.pdf' && doc.pdf) {
+        const results = []
+        for (let pageNumber = 1; pageNumber <= doc.pdf.numPages && results.length < 50; pageNumber += 1) {
+          const page = await doc.pdf.doc.getPage(pageNumber)
+          const content = await page.getTextContent()
+          const text = content.items.map((item) => item.str).join(' ')
+          for (const hit of searchText(text, query, 50 - results.length)) {
+            results.push({ ...hit, page: pageNumber })
+          }
+        }
+        setSearchResults(results)
+      } else {
+        const root = contentRef.current
+        const text = root ? root.textContent : ''
+        const lowerQuery = query.toLowerCase()
+        setSearchResults(
+          searchText(text, query).map((hit) => ({
+            ...hit,
+            occurrence: text.slice(0, hit.index).toLowerCase().split(lowerQuery).length - 1,
+          })),
+        )
+      }
+    } catch (e) {
+      reportError(e)
+    } finally {
+      setSearchBusy(false)
+      setSearchDone(true)
+    }
+  }
+
+  const jumpToSearchResult = (result) => {
+    if (doc?.ext === '.pdf') {
+      if (Number.isFinite(result.page)) setPage(result.page)
+      return
+    }
+    const root = contentRef.current
+    if (!root) return
+    const found = findQuoteRange(root, searchQuery.trim(), result.occurrence || 0)
+    if (found) {
+      const node = found.range.startContainer
+      const element = node.nodeType === 3 ? node.parentElement : node
+      if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+    }
+  }
+
+  const renderSelectionTranslation = () => {
+    if (!selectionTranslation) return null
+    const style = placePanel(selectionTranslation.rect, 220)
+    return h(
+      'div',
+      {
+        className: 'rd-trans-card',
+        style: { left: style.left, top: style.top, width: style.width, maxHeight: style.maxHeight },
+        onClick: (event) => event.stopPropagation(),
+      },
+      h(
+        'div',
+        { className: 'rd-muted', style: { fontSize: '11px' } },
+        `${t('label.translateTo')}：${t(`lang.${translationLang}`)}`,
+      ),
+      h(
+        'div',
+        { className: 'rd-muted', style: { fontSize: '11.5px', marginTop: '4px', lineHeight: 1.5 } },
+        '“' + selectionTranslation.text.slice(0, 90) + '”',
+      ),
+      h(
+        'div',
+        { style: { marginTop: '6px', fontSize: '13.5px', lineHeight: 1.6 } },
+        selectionTranslation.loading
+          ? t('label.translating')
+          : selectionTranslation.translation || t('label.noTranslation'),
+      ),
+      h(
+        'div',
+        { className: 'rd-actions' },
+        h('button', { className: 'rd-btn ghost', onClick: () => setSelectionTranslation(null) }, t('action.close')),
+      ),
+    )
+  }
+
+  const renderSearch = () => {
+    if (!searchOpen) return null
+    return h(
+      'div',
+      { className: 'rd-search' },
+      h(
+        'div',
+        { className: 'rd-search-head' },
+        h('input', {
+          autoFocus: true,
+          className: 'rd-input',
+          style: { flex: 1 },
+          placeholder: t('label.searchInDoc'),
+          value: searchQuery,
+          onChange: (event) => setSearchQuery(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Enter') runSearch()
+          },
+        }),
+        h('button', { className: 'rd-btn', onClick: runSearch }, t('action.search')),
+        h('button', { className: 'rd-btn ghost', onClick: () => setSearchOpen(false) }, '×'),
+      ),
+      searchBusy
+        ? h('div', { className: 'rd-empty' }, t('label.searching'))
+        : !searchDone
+          ? h('div', { className: 'rd-empty' }, t('label.searchHint'))
+          : searchResults.length === 0
+            ? h('div', { className: 'rd-empty' }, t('label.noMatches'))
+            : searchResults.map((result, index) =>
+                h(
+                  'div',
+                  { key: index, className: 'rd-drawer-item', 'data-activate': '1', tabIndex: 0, role: 'button', onClick: () => jumpToSearchResult(result) },
+                  h(
+                    'div',
+                    { className: 'rd-muted', style: { fontSize: '11px' } },
+                    result.page ? `${t('label.page')} ${result.page}` : `${t('label.match')} ${index + 1}`,
+                  ),
+                  h('div', null, result.snippet),
+                ),
+              ),
+    )
+  }
+
+  const translationLang = prefs.translateTo || 'zh'
+  const storeTranslations = React.useMemo(
+    () => (docKey ? store.docs?.[docKey]?.translations?.[translationLang] || {} : {}),
+    [store.docs, docKey, translationLang],
+  )
+  const translationMap = React.useMemo(
+    () => ({ ...storeTranslations, ...(translationCache[translationLang] || {}) }),
+    [storeTranslations, translationCache, translationLang],
+  )
+
+  const collectTranslationBlocks = () => {
+    const root = contentRef.current
+    if (!root) return []
+    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4, td, pre')
+    const blocks = []
+    const seen = new Set()
+    for (const node of nodes) {
+      if (node.closest('.rd-trans, .rd-card')) continue
+      const text = normalizeBlockText(node.textContent)
+      if (text.length < 2) continue
+      const hash = blockHash(text)
+      if (seen.has(hash)) continue
+      seen.add(hash)
+      blocks.push({ node, text, hash })
+      if (blocks.length >= 80) break
+    }
+    return blocks
+  }
+
+  const translateChapter = async () => {
+    if (!doc || !docKey || doc.ext === '.pdf' || translationBusy) return
+    const blocks = collectTranslationBlocks()
+    const missing = blocks.filter((block) => !translationFor(translationMap, block.hash))
+    if (missing.length === 0) return
+    setTranslationBusy(true)
+    try {
+      const segments = missing.slice(0, 40).map((block) => ({ id: block.hash, text: block.text }))
+      const result = await api.translate(sessionId, { docKey, target: translationLang, segments })
+      const merged = { ...(translationCache[translationLang] || {}) }
+      for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
+      setTranslationCache((cache) => ({ ...cache, [translationLang]: merged }))
+      if (result.store) mergeStore(result.store)
+      flash(`${t('label.translated')} ${result.generated}${result.cached ? ` · ${t('label.translationCached')} ${result.cached}` : ''}`)
+    } catch (error) {
+      reportError(error)
+    } finally {
+      setTranslationBusy(false)
+    }
+  }
+
+  const toggleTranslation = () => {
+    if (!doc) return
+    if (doc.ext === '.pdf') {
+      const next = drawer === 'translate' ? null : 'translate'
+      setDrawer(next)
+      if (next) void translatePdfPage()
+      return
+    }
+    const next = translationMode === 'off' ? 'dual' : translationMode === 'dual' ? 'only' : 'off'
+    setTranslationMode(next)
+    if (next !== 'off') void translateChapter()
+  }
+
+  const translatePdfPage = async () => {
+    if (!doc || !doc.pdf || pdfTranslating) return
+    setPdfTranslating(true)
+    try {
+      const blocks = await pdfPageBlocks(doc.pdf, page)
+      setPdfBlocks(blocks)
+      const missing = blocks.filter((block) => !translationFor(translationMap, blockHash(block.text)))
+      if (missing.length > 0) {
+        const segments = missing.slice(0, 40).map((block) => ({ id: blockHash(block.text), text: block.text }))
+        const result = await api.translate(sessionId, { docKey, target: translationLang, segments })
+        const merged = { ...(translationCache[translationLang] || {}) }
+        for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
+        setTranslationCache((cache) => ({ ...cache, [translationLang]: merged }))
+        if (result.store) mergeStore(result.store)
+      }
+    } catch (error) {
+      reportError(error)
+    } finally {
+      setPdfTranslating(false)
+    }
+  }
+
+  React.useEffect(() => {
+    if (drawer !== 'translate' || !doc || doc.ext !== '.pdf') return
+    void translatePdfPage()
+  }, [drawer, page, translationLang])
+
+  const translateSelection = async () => {
+    if (!menu) return
+    const text = normalizeBlockText(menu.text)
+    if (!text) return
+    const rect = menu.range.getBoundingClientRect()
+    setMenu(null)
+    setSelectionTranslation({ text, loading: true, translation: '', rect })
+    try {
+      const hash = blockHash(text)
+      const result = await api.translate(sessionId, {
+        target: translationLang,
+        segments: [{ id: hash, text }],
+      })
+      setSelectionTranslation({
+        text,
+        loading: false,
+        translation: (result.translations || {})[hash] || '',
+        rect,
+      })
+    } catch (error) {
+      reportError(error)
+      setSelectionTranslation({ text, loading: false, translation: '', rect })
+    }
+  }
+
+  React.useEffect(() => {
+    const root = contentRef.current
+    if (!root || !doc || doc.ext === '.pdf') return
+    for (const node of Array.from(root.querySelectorAll('.rd-trans'))) node.remove()
+    if (translationMode !== 'dual') return
+    for (const block of collectTranslationBlocks()) {
+      const text = translationFor(translationMap, block.hash)
+      if (!text) continue
+      const div = document.createElement('div')
+      div.className = 'rd-trans'
+      div.textContent = text
+      block.node.appendChild(div)
+    }
+  }, [doc, chapter, translationMode, translationLang, translationMap, layoutTick])
+
+  const generateGuide = async () => {
+    if (!doc || !docKey) return
+    setGuideBusy(true)
+    setGuideError('')
+    setGuideProgress(null)
+    const controller = new AbortController()
+    guideAbortRef.current = controller
+    try {
+      setGuideProgress({ phase: 'structure', done: 0, total: 1, title: t('label.guideAnalyzing') })
+      const quickGuide = prefs.guideDepth === 'quick'
+      const structureOptions = quickGuide ? { maxSections: 32, maxParts: 24, oneSectionPerPart: true } : {}
+      let structure = null
+      if (doc.ext === '.epub' && doc.epub) structure = epubGuideStructure(doc.epub, structureOptions)
+      else if (doc.ext === '.pdf' && doc.pdf) {
+        if (quickGuide) structure = await pdfGuideStructure(doc.pdf, structureOptions)
+        else if (doc.pdf.structure) structure = doc.pdf.structure
+        else if (doc.pdf.structurePromise) structure = (await doc.pdf.structurePromise) || (await pdfGuideStructure(doc.pdf, structureOptions))
+        else structure = await pdfGuideStructure(doc.pdf, structureOptions)
+      } else structure = markdownGuideStructure(decodeText(doc.bytes), structureOptions)
+      const sections = (structure && structure.sections) || []
+      const parts = (structure && structure.parts) || []
+      if (sections.length === 0) throw new Error(t('label.noTextLayer'))
+      const chars = sections.reduce((sum, section) => sum + String(section.text || '').length, 0)
+      const tokens = Math.ceil(chars / 4)
+      const steps = sections.length + parts.filter((part) => (part.sectionIds || []).length > 1).length + 1
+      if (
+        steps >= 5 &&
+        !window.confirm(`${t('label.guideEstimate')} ${sections.length} 段 · ${parts.length} 篇 · ~${tokens} tokens`)
+      ) {
+        return
+      }
+      setGuideProgress({ phase: 'section', done: 0, total: sections.length, title: '' })
+      const result = await api.guideStream(
+        sessionId,
+        { docKey, title: doc.name, sections, parts },
+        { signal: controller.signal, onProgress: (event) => setGuideProgress(event) },
+      )
+      if (result.store) mergeStore(result.store)
+      flash(`${t('label.guideDone')} · ${t('label.guideReused')} ${result.reused}`)
+    } catch (e) {
+      if (e && e.name === 'AbortError') flash(t('label.guideCancelled'))
+      else setGuideError(String(e.message || e))
+    } finally {
+      setGuideBusy(false)
+      setGuideProgress(null)
+      guideAbortRef.current = null
+    }
+  }
+
+  const jumpToSection = (section) => {
+    if (!section) return
+    if (doc?.ext === '.epub') {
+      const index = Number(String(section.id).replace('c', ''))
+      if (Number.isFinite(index)) setChapter(index)
+      return
+    }
+    if (doc?.ext === '.pdf') {
+      if (Number.isFinite(section.page)) setPage(section.page)
+      return
+    }
+    const root = contentRef.current
+    if (!root) return
+    const headings = Array.from(root.querySelectorAll('h1,h2,h3'))
+    const target = headings.find(
+      (element) =>
+        (element.textContent || '').trim() === section.title ||
+        (element.textContent || '').trim().startsWith(section.title.replace(/ \(\d+\)$/, '')),
+    )
+    if (target) target.scrollIntoView({ block: 'start' })
+  }
+
+  const downloadBlob = (blob, name) => {
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = name
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const guideBaseName = () => (doc?.name || 'guide').replace(/\.[^.]+$/, '')
+
+  const exportGuideMd = () => {
+    if (!guide) return
+    downloadBlob(new Blob([guideMarkdown({ title: doc?.name || t('tab.guide'), guide })], { type: 'text/markdown' }), `${guideBaseName()}.guide.md`)
+  }
+
+  const exportGuideSvg = () => {
+    if (!svgRef.current) return
+    const xml = new XMLSerializer().serializeToString(svgRef.current)
+    downloadBlob(new Blob([xml], { type: 'image/svg+xml' }), `${guideBaseName()}.mindmap.svg`)
+  }
+
+  const exportGuidePng = () => {
+    const svg = svgRef.current
+    if (!svg) return
+    const xml = new XMLSerializer().serializeToString(svg)
+    const blob = new Blob([xml], { type: 'image/svg+xml' })
+    const url = URL.createObjectURL(blob)
+    const image = new Image()
+    image.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = Number(svg.getAttribute('width')) || 800
+      canvas.height = Number(svg.getAttribute('height')) || 600
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(image, 0, 0)
+      URL.revokeObjectURL(url)
+      canvas.toBlob((png) => png && downloadBlob(png, `${guideBaseName()}.mindmap.png`), 'image/png')
+    }
+    image.src = url
+  }
+
+  const toggleCollapse = (id) => {
+    setCollapsedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const renderMindmap = () => {
+    if (!guideLayout || !guide) return null
+    const byId = new Map(guideLayout.nodes.map((node) => [node.id, node]))
+    const width = guideLayout.width + 60
+    const height = guideLayout.height + 60
+    return h(
+      'div',
+      null,
+      h(
+        'div',
+        { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+        h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
+        h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
+        h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
+        h('button', { className: 'rd-btn', onClick: exportGuideSvg }, 'SVG'),
+        h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
+        h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
+      ),
+      h(
+        'div',
+        { className: 'rd-map-scroll' },
+        h(
+          'svg',
+          {
+            ref: svgRef,
+            width: Math.round(width),
+            height: Math.round(height),
+            viewBox: `0 0 ${width} ${height}`,
+            xmlns: 'http://www.w3.org/2000/svg',
+          },
+          h(
+            'style',
+            null,
+            '.rdm-label{font-size:12px;fill:var(--dsw-alias-label-primary,#1f2937);font-family:system-ui,sans-serif}.rdm-sub{font-size:11px;fill:var(--dsw-alias-label-secondary,#6b7280)}.rdm-node{fill:var(--dsw-alias-bg-layer-1,#f8fafc);stroke:var(--dsw-alias-border-l1,#d1d5db)}.rdm-root{fill:var(--dsw-alias-bg-layer-2,#eef2f7)}.rdm-edge{stroke:var(--dsw-alias-border-l2,#9ca3af);stroke-width:1.4;fill:none}',
+          ),
+          h('g', { transform: `translate(30,30) scale(${mapScale})` },
+            guideLayout.edges.map((edge) => {
+              const from = byId.get(edge.from)
+              const to = byId.get(edge.to)
+              if (!from || !to) return null
+              const x1 = from.x + 190
+              const y1 = from.y + 14
+              const x2 = to.x
+              const y2 = to.y + 14
+              const mid = (x1 + x2) / 2
+              return h('path', {
+                key: `${edge.from}-${edge.to}`,
+                className: 'rdm-edge',
+                d: `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`,
+              })
+            }),
+            guideLayout.nodes.map((node) =>
+              h(
+                'g',
+                { key: node.id, transform: `translate(${node.x},${node.y})` },
+                h('rect', {
+                  width: 190,
+                  height: 30,
+                  rx: 8,
+                  className: node.depth === 0 ? 'rdm-node rdm-root' : 'rdm-node',
+                  onClick: () => (node.hasChildren ? toggleCollapse(node.id) : jumpToSection(node)),
+                }),
+                h('text', { x: 10, y: 19, className: 'rdm-label', onClick: () => jumpToSection(node) }, String(node.title || '').slice(0, 18)),
+                node.hasChildren
+                  ? h(
+                      'text',
+                      {
+                        x: 172,
+                        y: 19,
+                        className: 'rdm-sub',
+                        style: { cursor: 'pointer' },
+                        onClick: (event) => {
+                          event.stopPropagation()
+                          toggleCollapse(node.id)
+                        },
+                      },
+                      node.collapsed ? '▸' : '▾',
+                    )
+                  : null,
+              ),
+            ),
+          ),
+        ),
+      ),
+    )
+  }
+
+  const jumpToOccurrence = async (occurrence) => {
+    if (!occurrence) return
+    if (occurrence.docKey !== docKey) {
+      const target = store.docs?.[occurrence.docKey]
+      const extension = target && target.path ? extOf(target.path) : ''
+      if (!target || !target.path || !READABLE.has(extension)) {
+        flash(t('label.occurrenceMissing'))
+        return
+      }
+      await openDoc(
+        { name: basename(target.path), path: target.path, ext: extension },
+        { position: { chapter: occurrence.chapter, page: occurrence.page } },
+      )
+      setScrollTarget({ quote: occurrence.quote, occurrence: occurrence.occurrence || 0 })
+      return
+    }
+    if (doc?.ext === '.pdf') {
+      if (Number.isFinite(occurrence.page)) setPage(occurrence.page)
+      return
+    }
+    setChapter(occurrence.chapter || 0)
+    setScrollTarget({ quote: occurrence.quote, occurrence: occurrence.occurrence || 0 })
+  }
+
+  React.useEffect(() => {
+    if (!pendingAnchor) return
+    const target = document.getElementById(decodeURIComponent(pendingAnchor))
+    if (target && target.scrollIntoView) target.scrollIntoView({ block: 'start' })
+    setPendingAnchor(null)
+  }, [pendingAnchor, chapter, doc])
+
+  React.useEffect(() => {
+    if (!scrollTarget) return
+    if (!doc || doc.ext === '.pdf') {
+      setScrollTarget(null)
+      return
+    }
+    const root = contentRef.current
+    if (!root) return
+    const found = findQuoteRange(root, scrollTarget.quote, scrollTarget.occurrence)
+    if (found) {
+      const node = found.range.startContainer
+      const element = node.nodeType === 3 ? node.parentElement : node
+      if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+    }
+    setScrollTarget(null)
+  }, [scrollTarget, doc, chapter])
+
+  React.useEffect(() => {
+    if (drawer !== 'settings' || modelCatalog || !sessionId) return
+    setModelBusy(true)
+    api
+      .models(sessionId)
+      .then((catalog) => setModelCatalog(catalog))
+      .catch(() => {})
+      .finally(() => setModelBusy(false))
+  }, [drawer, modelCatalog, sessionId])
+
+  React.useEffect(() => {
+    if (drawer !== 'concepts' || !focusConcept) return
+    const row = document.querySelector(`[data-concept-id="${focusConcept}"]`)
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' })
+  }, [drawer, focusConcept])
+
+  const renderToolbar = () => {
+    const buttons = []
+    if (doc) {
+      buttons.push(
+        h('button', { key: 'back', className: 'rd-btn ghost', onClick: back, title: t('action.back') }, '←'),
+        h('span', { key: 'title', className: 'rd-title' }, doc.name),
+        h(
+          'button',
+          {
+            key: 'undo',
+            className: 'rd-btn ghost rd-icon-btn',
+            title: t('action.undo'),
+            'aria-label': t('action.undo'),
+            disabled: !historyRef.current || !historyRef.current.canUndo(),
+            onClick: () => runHistory('undo'),
+          },
+          h(IconUndo),
+        ),
+        h(
+          'button',
+          {
+            key: 'redo',
+            className: 'rd-btn ghost rd-icon-btn',
+            title: t('action.redo'),
+            'aria-label': t('action.redo'),
+            disabled: !historyRef.current || !historyRef.current.canRedo(),
+            onClick: () => runHistory('redo'),
+          },
+          h(IconRedo),
+        ),
+      )
+      if (doc.ext === '.pdf') {
+        const step = prefs.pdfSpread ? 2 : 1
+        const shown = prefs.pdfSpread && page + 1 <= doc.pdf.numPages ? `${page}-${page + 1}` : `${page}`
+        buttons.push(
+          h('button', { key: 'prev', className: 'rd-btn ghost', onClick: () => setPage((p) => Math.max(1, p - step)) }, '‹'),
+          h('span', { key: 'page', className: 'rd-muted', style: { fontSize: '12px' } }, `${shown} / ${doc.pdf.numPages}`),
+          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => setPage((p) => Math.min(doc.pdf.numPages, p + step)) }, '›'),
+        )
+      }
+      if (doc.ext === '.epub') {
+        buttons.push(
+          h('button', { key: 'prev', className: 'rd-btn ghost', onClick: () => setChapter((c) => Math.max(0, c - 1)) }, '‹'),
+          h('span', { key: 'chapter', className: 'rd-muted', style: { fontSize: '12px' } }, `${chapter + 1} / ${doc.epub.chapters.length}`),
+          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => setChapter((c) => Math.min(doc.epub.chapters.length - 1, c + 1)) }, '›'),
+        )
+      }
+      buttons.push(h('span', { key: 'spacer', className: 'rd-spacer' }))
+      if (doc.ext !== '.pdf') {
+        buttons.push(
+          h(
+            'button',
+            {
+              key: 'font-',
+              className: 'rd-btn ghost',
+              onClick: () => changePrefs({ fontSize: Math.max(14, (prefs.fontSize || fontSize) - 1) }),
+            },
+            'A−',
+          ),
+          h(
+            'button',
+            {
+              key: 'font+',
+              className: 'rd-btn ghost',
+              onClick: () => changePrefs({ fontSize: Math.min(26, (prefs.fontSize || fontSize) + 1) }),
+            },
+            'A+',
+          ),
+        )
+      } else {
+        buttons.push(
+          h('button', { key: 'zoom-', className: 'rd-btn ghost', onClick: () => setZoom((z) => Math.max(0.6, +(z - 0.15).toFixed(2))) }, '−'),
+          h('button', { key: 'zoom+', className: 'rd-btn ghost', onClick: () => setZoom((z) => Math.min(2.5, +(z + 0.15).toFixed(2))) }, '+'),
+        )
+      }
+      buttons.push(
+        h('button', { key: 'toc', className: 'rd-btn', 'aria-pressed': drawer === 'toc', onClick: () => setDrawer(drawer === 'toc' ? null : 'toc') }, t('tab.toc')),
+        h('button', { key: 'anno', className: 'rd-btn', 'aria-pressed': drawer === 'anno', onClick: () => setDrawer(drawer === 'anno' ? null : 'anno') }, t('tab.anno')),
+        h(
+          'button',
+          {
+            key: 'concepts',
+            className: 'rd-btn',
+            'aria-pressed': drawer === 'concepts',
+            onClick: () => {
+              setDrawer(drawer === 'concepts' ? null : 'concepts')
+              setQuery('')
+              setFocusConcept(null)
+            },
+          },
+          t('tab.concepts'),
+        ),
+        h(
+          'button',
+          {
+            key: 'translate',
+            className: 'rd-btn ghost',
+            title: `${t('action.translate')} · ${t(`translation.mode.${translationMode}`)}`,
+            'aria-label': t('action.translate'),
+            'aria-pressed': doc && doc.ext === '.pdf' ? drawer === 'translate' : translationMode !== 'off',
+            onClick: toggleTranslation,
+          },
+          translationBusy ? '…' : t('action.translateShort'),
+        ),
+        h(
+          'button',
+          {
+            key: 'search',
+            className: 'rd-btn ghost',
+            title: t('action.search'),
+            'aria-label': t('action.search'),
+            onClick: () => setSearchOpen(true),
+            className: 'rd-btn ghost rd-icon-btn',
+          },
+          h(IconSearch),
+        ),
+        h(
+          'button',
+          {
+            key: 'guide',
+            className: 'rd-btn',
+            'aria-pressed': drawer === 'guide',
+            onClick: () => setDrawer(drawer === 'guide' ? null : 'guide'),
+          },
+          t('tab.guide'),
+        ),
+        h(
+          'button',
+          {
+            key: 'settings',
+            className: 'rd-btn ghost rd-icon-btn',
+            title: t('label.settings'),
+            'aria-label': t('label.settings'),
+            'aria-pressed': drawer === 'settings',
+            onClick: () => setDrawer(drawer === 'settings' ? null : 'settings'),
+          },
+          h(IconSettings),
+        ),
+      )
+    } else {
+      buttons.push(h('span', { key: 'title', className: 'rd-title' }, t('library.title')))
+      buttons.push(h('span', { key: 'spacer', className: 'rd-spacer' }))
+    }
+    return h('div', { className: 'rd-toolbar' }, buttons)
+  }
+
+  const renderLibrary = () => {
+    const parts = dir === '.' ? [] : dir.split('/')
+    const trail = [{ label: '…', path: '.' }]
+    let acc = ''
+    for (const part of parts) {
+      acc = acc ? acc + '/' + part : part
+      trail.push({ label: part, path: acc })
+    }
+    const readable = entries.filter((entry) => entry.type === 'dir' || READABLE.has(extOf(entry.name)))
+    return h(
+      'div',
+      { className: 'rd-main' },
+      h(
+        'div',
+        { className: 'rd-library' },
+        h('h2', null, t('library.title')),
+        h('div', { className: 'rd-muted', style: { fontSize: '12.5px' } }, t('library.hint')),
+        h(
+          'div',
+          { className: 'rd-crumb' },
+          trail.map((item, i) =>
+            h(
+              'span',
+              { key: item.path + i },
+              i > 0 ? h('span', { className: 'rd-muted' }, ' / ') : null,
+              h('button', { onClick: () => navigate(item.path) }, item.label),
+            ),
+          ),
+        ),
+        readable.length === 0
+          ? h('div', { className: 'rd-empty' }, t('library.empty'))
+          : h(
+              'div',
+              { className: 'rd-list' },
+              readable.map((entry) =>
+                h(
+                  'div',
+                  {
+                    key: entry.path,
+                    className: 'rd-entry',
+                    'data-activate': '1',
+                    tabIndex: 0,
+                    role: 'button',
+                    onClick: () => (entry.type === 'dir' ? navigate(entry.path) : openDoc(entry)),
+                  },
+                  h('span', { className: 'rd-ext' }, entry.type === 'dir' ? 'DIR' : extOf(entry.name).slice(1)),
+                  h('span', { className: 'rd-name' }, entry.name),
+                ),
+              ),
+            ),
+      ),
+    )
+  }
+
+  const renderedHtml = React.useMemo(() => {
+    if (!doc || doc.ext === '.pdf') return ''
+    if (doc.ext === '.epub') return (doc.epub.chapters[chapter] || {}).html || ''
+    return markdownRender(decodeText(doc.bytes))
+  }, [doc, chapter])
+
+  const translatedOnlyHtml = React.useMemo(() => {
+    if (!doc || doc.ext === '.pdf' || translationMode !== 'only') return ''
+    return buildTranslatedHtml(renderedHtml, (text) => translationFor(translationMap, blockHash(text)))
+  }, [doc, chapter, renderedHtml, translationMode, translationMap])
+
+  const renderContent = () => {
+    if (!doc) return renderLibrary()
+    if (doc.ext === '.pdf') {
+      return h(PdfPane, {
+        doc,
+        page,
+        zoom,
+        annotations: docAnnotations,
+        concepts,
+        contentRef,
+        spread: Boolean(prefs.pdfSpread),
+      })
+    }
+    const html = translationMode === 'only' ? translatedOnlyHtml : renderedHtml
+    return h(
+      'div',
+      { className: 'rd-main' },
+      h('div', {
+        className: 'rd-page rd-prose',
+        ref: contentRef,
+        onClick: onContentClick,
+        dangerouslySetInnerHTML: { __html: html },
+      }),
+    )
+  }
+
+  const renderDrawer = () => {
+    if (!drawer || !doc) return null
+    let body = null
+    if (drawer === 'toc') {
+      if (doc.ext === '.epub') {
+        body = doc.epub.chapters.map((item, index) =>
+          h(
+            'div',
+            {
+              key: index,
+              className: 'rd-drawer-item',
+              'data-activate': '1',
+              tabIndex: 0,
+              role: 'button',
+              style: index === chapter ? { borderColor: 'var(--dsw-alias-brand-primary)' } : undefined,
+              onClick: () => setChapter(index),
+            },
+            item.label || `${t('label.chapter')} ${index + 1}`,
+          ),
+        )
+      } else if (doc.ext === '.pdf') {
+        if (doc.pdf.structureReady === false) {
+          body = h('div', { className: 'rd-empty' }, t('label.analyzingOutline'))
+          return h(
+            'div',
+            { className: 'rd-drawer' },
+            h(
+              'div',
+              { className: 'rd-drawer-head' },
+              h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, t('tab.toc')),
+              h('span', { className: 'rd-spacer' }),
+              h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
+            ),
+            h('div', { className: 'rd-drawer-body' }, body),
+          )
+        }
+        const outline = doc.pdf.tocReliable ? doc.pdf.toc || [] : []
+        const fallbackChapters = !doc.pdf.tocReliable && doc.pdf.structure ? doc.pdf.structure.chapters || [] : []
+        if (outline.length > 0) {
+          body = outline.map((entry, index) =>
+            h(
+              'div',
+              {
+                key: index,
+                className: 'rd-drawer-item',
+                'data-activate': '1',
+                tabIndex: 0,
+                role: 'button',
+                style: {
+                  paddingLeft: 10 + (Math.max(1, entry.level) - 1) * 12,
+                  ...(entry.page === page ? { borderColor: 'var(--dsw-alias-brand-primary)' } : {}),
+                },
+                onClick: () => entry.page && setPage(entry.page),
+              },
+              h('span', null, entry.title),
+              entry.page ? h('span', { className: 'rd-muted', style: { marginLeft: '8px', fontSize: '11px' } }, entry.page) : null,
+            ),
+          )
+        } else if (fallbackChapters.length > 0) {
+          body = fallbackChapters.map((chapter, index) =>
+            h(
+              'div',
+              {
+                key: index,
+                className: 'rd-drawer-item',
+                'data-activate': '1',
+                tabIndex: 0,
+                role: 'button',
+                style:
+                  page >= chapter.page && page <= (chapter.end || chapter.page)
+                    ? { borderColor: 'var(--dsw-alias-brand-primary)' }
+                    : undefined,
+                onClick: () => setPage(chapter.page),
+              },
+              h('span', null, chapter.title),
+              chapter.page
+                ? h('span', { className: 'rd-muted', style: { marginLeft: '8px', fontSize: '11px' } }, chapter.page)
+                : null,
+            ),
+          )
+        } else {
+          const groups = []
+          for (let start = 1; start <= doc.pdf.numPages; start += 20) {
+            groups.push({ start, end: Math.min(doc.pdf.numPages, start + 19) })
+          }
+          body = groups.map((group, index) =>
+            h(
+              'div',
+              {
+                key: index,
+                className: 'rd-drawer-item',
+                'data-activate': '1',
+                tabIndex: 0,
+                role: 'button',
+                style: page >= group.start && page <= group.end ? { borderColor: 'var(--dsw-alias-brand-primary)' } : undefined,
+                onClick: () => setPage(group.start),
+              },
+              `${group.start}-${group.end}`,
+            ),
+          )
+        }
+      } else {
+        const heads = headingsOf(decodeText(doc.bytes))
+        body = heads.length
+          ? heads.map((head, index) =>
+              h(
+                'div',
+                {
+                  key: index,
+                  className: 'rd-drawer-item',
+                  'data-activate': '1',
+                  tabIndex: 0,
+                  role: 'button',
+                  style: { paddingLeft: 10 + (head.level - 1) * 10 },
+                  onClick: () => {
+                    const root = contentRef.current
+                    const elements = root ? root.querySelectorAll('h1,h2,h3') : []
+                    if (elements[index]) elements[index].scrollIntoView({ block: 'start' })
+                  },
+                },
+                head.label,
+              ),
+            )
+          : h('div', { className: 'rd-empty' }, '—')
+      }
+    }
+    if (drawer === 'translate') {
+      if (doc.ext !== '.pdf') {
+        body = h(
+          'div',
+          { className: 'rd-empty' },
+          t('label.translateMarkdownHint'),
+        )
+      } else {
+        body = h(
+          'div',
+          null,
+          h(
+            'div',
+            { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+            h('span', { className: 'rd-muted', style: { fontSize: '12px' } }, `${t('label.page')} ${page}`),
+            h('span', { className: 'rd-spacer' }),
+            h(
+              'button',
+              { className: 'rd-btn', disabled: pdfTranslating, onClick: translatePdfPage },
+              pdfTranslating ? t('label.translating') : t('action.translatePage'),
+            ),
+          ),
+          pdfBlocks.length === 0
+            ? h('div', { className: 'rd-empty' }, t('label.translating'))
+            : pdfBlocks.map((block) => {
+                const translated = translationFor(translationMap, blockHash(block.text))
+                return h(
+                  'div',
+                  { key: block.id, className: 'rd-drawer-item' },
+                  h(
+                    'div',
+                    { className: 'rd-muted', style: { fontSize: '11.5px', lineHeight: 1.55 } },
+                    block.text.slice(0, 260),
+                  ),
+                  h(
+                    'div',
+                    { style: { marginTop: '5px', fontSize: '13px', lineHeight: 1.6 } },
+                    translated || t('label.untranslated'),
+                  ),
+                )
+              }),
+        )
+      }
+    }
+    if (drawer === 'anno') {
+      body = docAnnotations.length
+        ? docAnnotations.map((annotation) =>
+            h(
+              'div',
+              { key: annotation.id, className: 'rd-drawer-item', 'data-activate': '1', tabIndex: 0, role: 'button', onClick: () => focusAnnotation(annotation) },
+              h('div', { className: 'rd-muted' }, '“' + String(annotation.quote || '').slice(0, 70) + '”'),
+              annotation.note ? h('div', { style: { marginTop: '4px' } }, annotation.note) : null,
+              lostMarks.includes(annotation.id)
+                ? h('div', { className: 'rd-error', style: { marginTop: '4px', fontSize: '11.5px' } }, t('label.anchorLost'))
+                : null,
+              h(
+                'div',
+                { style: { marginTop: '6px' } },
+                h(
+                  'button',
+                  {
+                    className: 'rd-btn ghost',
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      removeAnnotation(annotation.id)
+                    },
+                  },
+                  t('action.delete'),
+                ),
+              ),
+            ),
+          )
+        : h('div', { className: 'rd-empty' }, t('label.noAnnotations'))
+    }
+    if (drawer === 'concepts') {
+      const docConcepts = conceptsForDoc(concepts, docKey)
+      const effectiveScope = conceptScope || (docConcepts.length > 0 ? 'doc' : 'all')
+      const source = effectiveScope === 'doc' ? docConcepts : concepts
+      const list = source
+        .filter((concept) => !query || (concept.term + ' ' + (concept.definition || '')).toLowerCase().includes(query.toLowerCase()))
+        .sort((a, b) =>
+          conceptSort === 'alpha'
+            ? String(a.term || '').localeCompare(String(b.term || ''), 'zh')
+            : (b.createdAt || 0) - (a.createdAt || 0),
+        )
+      body = h(
+        'div',
+        null,
+        h(
+          'div',
+          { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              'data-scope': 'doc',
+              'aria-pressed': effectiveScope === 'doc',
+              onClick: () => setConceptScope('doc'),
+            },
+            `${t('label.scopeDoc')} (${docConcepts.length})`,
+          ),
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              'data-scope': 'all',
+              'aria-pressed': effectiveScope === 'all',
+              onClick: () => setConceptScope('all'),
+            },
+            `${t('label.scopeAll')} (${concepts.length})`,
+          ),
+        ),
+        h(
+          'select',
+          {
+            className: 'rd-select',
+            style: { marginBottom: '8px' },
+            value: conceptSort,
+            onChange: (event) => setConceptSort(event.target.value),
+          },
+          h('option', { value: 'recent' }, t('label.sortRecent')),
+          h('option', { value: 'alpha' }, t('label.sortAlpha')),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', gap: '6px', marginBottom: '10px' } },
+          h('input', {
+            className: 'rd-input',
+            style: { flex: 1 },
+            placeholder: t('label.search'),
+            value: query,
+            onChange: (event) => setQuery(event.target.value),
+          }),
+          query
+            ? h('button', { className: 'rd-btn', 'data-action': 'clear-filter', onClick: () => setQuery('') }, '×')
+            : null,
+        ),
+        list.length === 0 && effectiveScope === 'doc'
+          ? h('div', { className: 'rd-empty' }, t('label.scopeEmpty'))
+          : list.length
+          ? list.map((concept) =>
+              h(
+                'div',
+                {
+                  key: concept.id,
+                  'data-concept-id': concept.id,
+                  className: 'rd-drawer-item',
+                  'data-activate': '1',
+                  tabIndex: 0,
+                  role: 'button',
+                  style:
+                    concept.id === focusConcept
+                      ? { borderColor: 'var(--dsw-alias-brand-primary)' }
+                      : undefined,
+                  onClick: () =>
+                    setCards([
+                      { id: concept.id, pinned: true, rect: { left: 260, top: 140, right: 260, bottom: 140 } },
+                    ]),
+                },
+                h('div', { style: { fontWeight: 600 } }, concept.term),
+                h('div', { className: 'rd-muted', style: { marginTop: '3px' } }, String(concept.definition || '').slice(0, 90)),
+                h(
+                  'button',
+                  {
+                    className: 'rd-btn ghost',
+                    style: { marginTop: '6px', paddingLeft: 0 },
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      setOccurrencesOpen(occurrencesOpen === concept.id ? null : concept.id)
+                    },
+                  },
+                  `${t('label.occurrences')} · ${(concept.occurrences || []).length}`,
+                ),
+                occurrencesOpen === concept.id
+                  ? (concept.occurrences || []).map((occurrence, index) =>
+                      h(
+                        'div',
+                        {
+                          key: index,
+                          className: 'rd-muted',
+                          style: { fontSize: '11.5px', marginTop: '4px', cursor: 'pointer' },
+                          onClick: (event) => {
+                            event.stopPropagation()
+                            jumpToOccurrence(occurrence)
+                          },
+                        },
+                        `${store.docs?.[occurrence.docKey]?.path || occurrence.docKey} · ${t('label.chapter')} ${(occurrence.chapter || 0) + 1}`,
+                      ),
+                    )
+                  : null,
+              ),
+            )
+          : h(
+              'div',
+              { className: 'rd-empty' },
+              h('div', null, query ? t('label.noMatch') : t('label.noConcepts')),
+              query
+                ? h(
+                    'button',
+                    { className: 'rd-btn', 'data-action': 'clear-filter', onClick: () => setQuery('') },
+                    t('action.clearFilter'),
+                  )
+                : null,
+            ),
+      )
+    }
+    if (drawer === 'guide') {
+      if (guideBusy) {
+        body = h(
+          'div',
+          { className: 'rd-empty' },
+          guideProgress
+            ? `${
+                guideProgress.phase === 'structure'
+                  ? t('label.guideAnalyzing')
+                  : guideProgress.phase === 'part'
+                    ? t('label.guidePart')
+                    : t('label.guideSection')
+              } ${guideProgress.done}/${guideProgress.total}${
+                guideProgress.title ? ` · ${guideProgress.title}` : ''
+              }`
+            : t('label.guideBusy'),
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              style: { marginTop: '10px' },
+              onClick: () => guideAbortRef.current && guideAbortRef.current.abort(),
+            },
+            t('action.stop'),
+          ),
+        )
+      } else if (guideError) {
+        body = h(
+          'div',
+          { className: 'rd-empty' },
+          h('div', { className: 'rd-error' }, guideError),
+          h('button', { className: 'rd-btn', onClick: generateGuide }, t('action.retry')),
+        )
+      } else if (!guide) {
+        body = h(
+          'div',
+          { className: 'rd-empty' },
+          h('div', null, t('label.guideEmpty')),
+          h('button', { className: 'rd-btn', onClick: generateGuide, style: { marginTop: '10px' } }, t('action.generateGuide')),
+        )
+      } else {
+        const list = h(
+          'div',
+          null,
+          h('div', { className: 'rd-guide-synopsis' }, guide.synopsis),
+          (guide.questions || []).length
+            ? h(
+                'ul',
+                { className: 'rd-guide-questions' },
+                guide.questions.map((question) => h('li', { key: question }, question)),
+              )
+            : null,
+          (() => {
+            const sectionRow = (section) =>
+              h(
+                'div',
+                { key: section.id, className: 'rd-drawer-item', 'data-activate': '1', tabIndex: 0, role: 'button', onClick: () => jumpToSection(section) },
+                h('div', { style: { fontWeight: 600 } }, section.title),
+                h('div', { className: 'rd-muted', style: { marginTop: '3px' } }, section.summary),
+                (section.keyPoints || []).length
+                  ? h(
+                      'div',
+                      { className: 'rd-muted', style: { fontSize: '11px', marginTop: '4px' } },
+                      section.keyPoints.join(' · '),
+                    )
+                  : null,
+              )
+            const parts = guide.parts || []
+            if (parts.length === 0) return (guide.sections || []).map(sectionRow)
+            const byId = new Map((guide.sections || []).map((section) => [section.id, section]))
+            return parts.map((part) =>
+              h(
+                'div',
+                { key: part.id, className: 'rd-part' },
+                h('div', { className: 'rd-part-title' }, part.title),
+                part.summary ? h('div', { className: 'rd-part-summary' }, part.summary) : null,
+                (part.sectionIds || []).map((id) => {
+                  const section = byId.get(id)
+                  return section ? sectionRow(section) : null
+                }),
+              ),
+            )
+          })(),
+        )
+        body = h(
+          'div',
+          null,
+          h(
+            'div',
+            { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+            h(
+              'button',
+              { className: 'rd-btn', 'aria-pressed': guideView === 'list', onClick: () => setGuideView('list') },
+              t('label.listView'),
+            ),
+            h(
+              'button',
+              { className: 'rd-btn', 'aria-pressed': guideView === 'map', onClick: () => setGuideView('map') },
+              t('label.mapView'),
+            ),
+            h('span', { className: 'rd-spacer' }),
+            h('button', { className: 'rd-btn', onClick: generateGuide }, t('action.regenerateGuide')),
+          ),
+          guideView === 'map' ? renderMindmap() : list,
+        )
+      }
+    }
+    if (drawer === 'settings') {
+      const row = (label, control) =>
+        h('div', { className: 'rd-setting-row' }, h('span', null, label), control)
+      body = h(
+        'div',
+        null,
+        row(
+          t('label.fontSize'),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: 0 } },
+            h('button', { className: 'rd-btn', onClick: () => changePrefs({ fontSize: Math.max(14, (prefs.fontSize || 18) - 1) }) }, 'A−'),
+            h('span', { className: 'rd-muted' }, String(prefs.fontSize || 18)),
+            h('button', { className: 'rd-btn', onClick: () => changePrefs({ fontSize: Math.min(26, (prefs.fontSize || 18) + 1) }) }, 'A+'),
+          ),
+        ),
+        row(
+          t('label.lineHeight'),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: 0 } },
+            h('button', { className: 'rd-btn', onClick: () => changePrefs({ lineHeight: Math.max(1.2, Number(((prefs.lineHeight || 1.85) - 0.05).toFixed(2))) }) }, '−'),
+            h('span', { className: 'rd-muted' }, String(prefs.lineHeight || 1.85)),
+            h('button', { className: 'rd-btn', onClick: () => changePrefs({ lineHeight: Math.min(2.4, Number(((prefs.lineHeight || 1.85) + 0.05).toFixed(2))) }) }, '+'),
+          ),
+        ),
+        row(
+          t('label.hoverDelay'),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: 0 } },
+            h('button', { className: 'rd-btn', onClick: () => changePrefs({ hoverDelay: Math.max(80, (prefs.hoverDelay || 150) - 40) }) }, '−'),
+            h('span', { className: 'rd-muted' }, `${prefs.hoverDelay || 150}ms`),
+            h('button', { className: 'rd-btn', onClick: () => changePrefs({ hoverDelay: Math.min(600, (prefs.hoverDelay || 150) + 40) }) }, '+'),
+          ),
+        ),
+        row(
+          t('label.guideDepth'),
+          h(
+            'select',
+            {
+              className: 'rd-select',
+              value: prefs.guideDepth || 'standard',
+              onChange: (event) => changePrefs({ guideDepth: event.target.value }),
+            },
+            ['quick', 'standard'].map((value) => h('option', { key: value, value }, t(`guideDepth.${value}`))),
+          ),
+        ),
+        row(
+          t('label.translateTo'),
+          h(
+            'select',
+            {
+              className: 'rd-select',
+              value: translationLang,
+              onChange: (event) => changePrefs({ translateTo: event.target.value }),
+            },
+            ['zh', 'en', 'ja'].map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          ),
+        ),
+        row(
+          t('label.explainModel'),
+          modelBusy
+            ? h('span', { className: 'rd-muted' }, '…')
+            : h(
+                'select',
+                {
+                  className: 'rd-select',
+                  value: prefs.model ? `${prefs.model.provider}\u0000${prefs.model.model}` : '',
+                  onChange: (event) => {
+                    const value = event.target.value
+                    if (!value) {
+                      changePrefs({ model: null })
+                      return
+                    }
+                    const [provider, model] = value.split('\u0000')
+                    changePrefs({ model: { provider, model } })
+                  },
+                },
+                h('option', { value: '' }, t('label.defaultModel')),
+                (modelCatalog?.providers || []).flatMap((provider) =>
+                  (provider.models || []).map((model) =>
+                    h(
+                      'option',
+                      { key: `${provider.id}-${model.id}`, value: `${provider.id}\u0000${model.id}` },
+                      `${provider.name} · ${model.name}`,
+                    ),
+                  ),
+                ),
+              ),
+        ),
+        row(
+          t('label.theme'),
+          h(
+            'select',
+            {
+              className: 'rd-select',
+              value: prefs.theme || 'system',
+              onChange: (event) => changePrefs({ theme: event.target.value }),
+            },
+            ['system', 'light', 'dark', 'sepia'].map((value) =>
+              h('option', { key: value, value }, t(`theme.${value}`)),
+            ),
+          ),
+        ),
+        row(
+          t('label.pageKeys'),
+          h(
+            'select',
+            {
+              className: 'rd-select',
+              value: prefs.pageKeys || 'arrows',
+              onChange: (event) => changePrefs({ pageKeys: event.target.value }),
+            },
+            ['arrows', 'jk'].map((value) => h('option', { key: value, value }, t(`keys.${value}`))),
+          ),
+        ),
+        row(
+          t('label.pdfSpread'),
+          h('input', {
+            type: 'checkbox',
+            checked: Boolean(prefs.pdfSpread),
+            onChange: (event) => changePrefs({ pdfSpread: event.target.checked }),
+          }),
+        ),
+        row(
+          t('label.recentSent'),
+          sentLog.length === 0
+            ? h('span', { className: 'rd-muted' }, t('label.noSent'))
+            : h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '11px' } },
+                sentLog.map((entry, index) =>
+                  h(
+                    'div',
+                    { key: index, className: 'rd-muted' },
+                    `${new Date(entry.at).toLocaleTimeString()} · ${entry.kind} · ${entry.preview}`,
+                  ),
+                ),
+              ),
+        ),
+        row(
+          t('label.data'),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: 0 } },
+            h('button', { className: 'rd-btn', onClick: exportStore }, t('action.exportJson')),
+            h('button', { className: 'rd-btn', onClick: () => importInputRef.current && importInputRef.current.click() }, t('action.importJson')),
+            h('button', { className: 'rd-btn', onClick: exportMarks }, t('action.exportMarks')),
+            h('button', { className: 'rd-btn', onClick: restoreLatest }, t('action.restore')),
+            h('input', {
+              type: 'file',
+              accept: 'application/json',
+              ref: importInputRef,
+              style: { display: 'none' },
+              onChange: onImportFile,
+            }),
+          ),
+        ),
+        row(
+          t('label.cardTrigger'),
+          h(
+            'select',
+            {
+              className: 'rd-select',
+              value: prefs.cardTrigger || 'hover',
+              onChange: (event) => changePrefs({ cardTrigger: event.target.value }),
+            },
+            ['hover', 'click', 'off'].map((value) =>
+              h('option', { key: value, value }, t(`trigger.${value}`)),
+            ),
+          ),
+        ),
+      )
+    }
+    const titles = {
+      toc: t('tab.toc'),
+      anno: t('tab.anno'),
+      concepts: `${t('tab.concepts')} · ${concepts.length}`,
+      guide: t('tab.guide'),
+      translate: t('tab.translate'),
+      settings: t('label.settings'),
+    }
+    return h(
+      'div',
+      { className: 'rd-drawer' },
+      h(
+        'div',
+        { className: 'rd-drawer-head' },
+        h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, titles[drawer]),
+        h('span', { className: 'rd-spacer' }),
+        h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
+      ),
+      h('div', { className: 'rd-drawer-body' }, body),
+    )
+  }
+
+  const renderEditor = () => {
+    if (!editing) return null
+    const style = placePanel(editing.rect, 540)
+    return h(
+      'div',
+      {
+        className: 'rd-card rd-editor',
+        style: { ...style, width: style.width, maxHeight: style.maxHeight },
+        onMouseEnter: () => clearTimeout(hideTimer.current),
+        onClick: (event) => event.stopPropagation(),
+      },
+      h('h3', null, t('label.editAnnotation')),
+      h('div', { className: 'rd-quote' }, '“' + String(editing.annotation.quote || '').slice(0, 160) + '”'),
+      h(
+        'div',
+        { className: 'rd-actions', style: { marginTop: 0 } },
+        COLORS.map((color) =>
+          h('button', {
+            key: color,
+            type: 'button',
+            'aria-label': t('action.highlight'),
+            className: 'rd-swatch',
+            style: {
+              background: color,
+              outline: color === editing.annotation.color ? '2px solid var(--dsw-alias-brand-primary)' : 'none',
+              outlineOffset: '2px',
+            },
+            onClick: () => updateAnnotation(editing.id, { color }),
+          }),
+        ),
+      ),
+      h('textarea', {
+        autoFocus: true,
+        value: editing.note,
+        placeholder: t('label.notePlaceholder'),
+        onChange: (event) => setEditing({ ...editing, note: event.target.value }),
+      }),
+      h(
+        'div',
+        { className: 'rd-actions' },
+        h('button', { className: 'rd-btn', onClick: saveEditing }, t('action.save')),
+        h('button', { className: 'rd-btn', onClick: deleteEditing }, t('action.delete')),
+        h('button', { className: 'rd-btn ghost', onClick: () => setEditing(null) }, t('action.close')),
+      ),
+    )
+  }
+
+  const renderCardBody = (card) => {
+    const concept = card.id ? store.concepts[card.id] : null
+    const chain = concept ? conceptChain(store.concepts, concept.id).slice(0, -1) : []
+    const editingThis = conceptEdit && conceptEdit.id === card.id
+    let body = null
+    if (editingThis) {
+      const form = conceptEdit.form
+      const setField = (key, value) => setConceptEdit({ ...conceptEdit, form: { ...form, [key]: value } })
+      body = h(
+        'div',
+        { className: 'rd-editor' },
+        h('h3', null, t('label.editConcept')),
+        h('input', {
+          autoFocus: true,
+          className: 'rd-input',
+          placeholder: t('label.term'),
+          value: form.term,
+          onChange: (event) => setField('term', event.target.value),
+        }),
+        h('textarea', {
+          placeholder: t('label.definition'),
+          value: form.definition,
+          onChange: (event) => setField('definition', event.target.value),
+        }),
+        h('textarea', {
+          placeholder: t('label.intuition'),
+          value: form.intuition,
+          onChange: (event) => setField('intuition', event.target.value),
+        }),
+        h('textarea', {
+          placeholder: t('label.context'),
+          value: form.context,
+          onChange: (event) => setField('context', event.target.value),
+        }),
+        h('textarea', {
+          placeholder: t('label.examples'),
+          value: form.examples,
+          onChange: (event) => setField('examples', event.target.value),
+        }),
+        h('input', {
+          className: 'rd-input',
+          placeholder: t('label.aliases'),
+          value: form.aliases,
+          onChange: (event) => setField('aliases', event.target.value),
+        }),
+        h('input', {
+          className: 'rd-input',
+          placeholder: t('label.related'),
+          value: form.related,
+          onChange: (event) => setField('related', event.target.value),
+        }),
+        h(
+          'div',
+          { className: 'rd-actions rd-sticky-actions' },
+          h('button', { className: 'rd-btn', onClick: saveConceptEdit }, t('action.save')),
+          h('button', { className: 'rd-btn ghost', onClick: () => setConceptEdit(null) }, t('action.cancel')),
+        ),
+        h(
+          'div',
+          { className: 'rd-actions' },
+          h(
+            'select',
+            { className: 'rd-select', value: mergeTarget, onChange: (event) => setMergeTarget(event.target.value) },
+            h('option', { value: '' }, t('label.mergeTarget')),
+            concepts
+              .filter((item) => item.id !== concept.id)
+              .map((item) => h('option', { key: item.id, value: item.id }, item.term)),
+          ),
+          h(
+            'button',
+            { className: 'rd-btn', disabled: !mergeTarget, onClick: () => mergeConcept(concept.id, mergeTarget) },
+            t('action.merge'),
+          ),
+        ),
+      )
+    } else if (card.pending) {
+      body = h(
+        'div',
+        null,
+        h('h3', null, card.term, h('span', { className: 'rd-badge' }, t('label.thinking'))),
+        h('div', { className: 'rd-skeleton', style: { width: '86%' } }),
+        h('div', { className: 'rd-skeleton', style: { width: '64%' } }),
+        h('div', { className: 'rd-skeleton', style: { width: '74%' } }),
+      )
+    } else if (card.error) {
+      body = h(
+        'div',
+        null,
+        h('h3', null, card.term),
+        h('div', { className: 'rd-error' }, card.error),
+        h(
+          'div',
+          { className: 'rd-actions' },
+          h('button', { className: 'rd-btn', onClick: () => createConcept(card.term, null, null) }, t('action.retry')),
+        ),
+      )
+    } else if (concept) {
+      body = h(
+        'div',
+        null,
+        h(
+          'h3',
+          null,
+          concept.term,
+          card.pinned ? h('span', { className: 'rd-badge' }, t('label.pinned')) : null,
+          concept.depth !== 'full' && concept.source !== 'user'
+            ? h('span', { className: 'rd-badge' }, t('label.quick'))
+            : null,
+          h('span', { className: 'rd-spacer' }),
+          h('button', { className: 'rd-btn ghost', onClick: () => setCards(popCard) }, '×'),
+        ),
+        chain.length
+          ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, chain.map((item) => item.term).join(' › '))
+          : null,
+        h('div', { className: 'rd-def' }, concept.definition || ''),
+        concept.intuition
+          ? h('div', { className: 'rd-sec' }, h('b', null, t('label.intuition') + '  '), concept.intuition)
+          : null,
+        concept.context ? h('div', { className: 'rd-sec' }, h('b', null, t('label.context') + '  '), concept.context) : null,
+        (concept.contexts || []).length
+          ? h(
+              'div',
+              { className: 'rd-sec' },
+              h('b', null, t('label.bookUsage') + '  '),
+              concept.contexts.map((entry, index) =>
+                h(
+                  'div',
+                  { key: index, style: { marginTop: '3px' } },
+                  (store.docs?.[entry.docKey]?.path ? basename(store.docs[entry.docKey].path) + '：' : '') + entry.note,
+                ),
+              ),
+            )
+          : null,
+        concept.examples && concept.examples.length
+          ? h('div', { className: 'rd-sec' }, h('b', null, t('label.examplesTitle') + '  '), concept.examples.join('；'))
+          : null,
+        concept.related && concept.related.length
+          ? h('div', { className: 'rd-sec' }, h('b', null, t('label.related') + '  '), concept.related.join(' · '))
+          : null,
+        concept.evidence && (concept.evidence.sentence || concept.evidence.quote)
+          ? h(
+              'details',
+              { className: 'rd-sec' },
+              h('summary', { style: { cursor: 'pointer' } }, t('label.evidence')),
+              h('div', { style: { marginTop: '4px' } }, concept.evidence.sentence || concept.evidence.quote),
+            )
+          : null,
+        (concept.qa || []).length
+          ? h(
+              'div',
+              { className: 'rd-sec' },
+              h('b', null, t('label.qa') + '  '),
+              concept.qa.slice(-3).map((item, index) =>
+                h(
+                  'div',
+                  { key: index, className: 'rd-qa' },
+                  h('div', null, t('label.questionShort') + '：' + item.q),
+                  h('div', { className: 'rd-muted' }, t('label.answerShort') + '：' + item.a),
+                  item.web && item.web.used && item.web.sources && item.web.sources.length
+                    ? h(
+                        'div',
+                        { className: 'rd-qa-src' },
+                        h('span', null, t('label.webSources') + '：'),
+                        item.web.sources.map((source, sourceIndex) =>
+                          h(
+                            'a',
+                            {
+                              key: sourceIndex,
+                              href: source.url,
+                              target: '_blank',
+                              rel: 'noreferrer',
+                              onClick: (event) => event.stopPropagation(),
+                            },
+                            `[${sourceIndex + 1}] ${source.title}`,
+                          ),
+                        ),
+                      )
+                    : item.web && item.web.error
+                      ? h('div', { className: 'rd-muted', style: { fontSize: '11px' } }, t('label.webFailed'))
+                      : null,
+                ),
+              ),
+            )
+          : null,
+        h(
+          'div',
+          { className: 'rd-actions', style: { marginTop: '8px' } },
+          h(
+            'label',
+            { className: 'rd-web-toggle', title: t('label.webAskHint') },
+            h('input', {
+              type: 'checkbox',
+              checked: askWeb,
+              onChange: (event) => setAskWeb(event.target.checked),
+            }),
+            t('label.webAsk'),
+          ),
+          h('input', {
+            className: 'rd-input',
+            style: { flex: 1 },
+            placeholder: t('label.askPlaceholder'),
+            value: askText,
+            onChange: (event) => setAskText(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') askConcept(concept)
+            },
+          }),
+          h(
+            'button',
+            { className: 'rd-btn', disabled: askBusy, onClick: () => askConcept(concept) },
+            askBusy ? t('label.asking') : t('action.ask'),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'rd-actions' },
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              onClick: () => {
+                setCards([])
+                setDrawer('concepts')
+                setQuery('')
+                setFocusConcept(concept.id)
+              },
+            },
+            t('tab.concepts'),
+          ),
+          concept.depth !== 'full' && concept.source !== 'user'
+            ? h(
+                'button',
+                {
+                  className: 'rd-btn',
+                  disabled: upgradingId === concept.id,
+                  onClick: () => upgradeConcept(concept),
+                },
+                upgradingId === concept.id ? t('label.upgrading') : t('action.deepen'),
+              )
+            : null,
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              onClick: () => {
+                setMergeTarget('')
+                setConceptEdit({ id: concept.id, form: conceptFormOf(concept) })
+              },
+            },
+            t('action.edit'),
+          ),
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              onClick: () =>
+                setCards((current) =>
+                  current.map((entry, index) =>
+                    index === current.length - 1 ? { ...entry, pinned: !entry.pinned } : entry,
+                  ),
+                ),
+            },
+            card.pinned ? t('action.unpin') : t('action.pin'),
+          ),
+          h('button', { className: 'rd-btn', onClick: () => removeConcept(concept.id) }, t('action.delete')),
+        ),
+      )
+    }
+    return body
+  }
+
+  const renderCards = () => {
+    if (cards.length === 0) return null
+    const base = cards[0].rect
+    const editingInCard = cards.some((entry) => conceptEdit && conceptEdit.id === entry.id)
+    const style = placePanel(base, editingInCard ? 540 : 360)
+    const pinned = cards.some((entry) => entry.pinned)
+    return h(
+      'div',
+      {
+        className: 'rd-hover-zone',
+        style: { left: style.left - 16, top: style.top - 16, width: style.width + 32, maxWidth: style.width + 32 },
+        onMouseEnter: () => clearTimeout(hideTimer.current),
+        onMouseLeave: () => {
+          if (pinned) return
+          closeCardsSoon()
+        },
+      },
+      cards.map((entry, index) =>
+        h(
+          'div',
+          {
+            key: `${entry.id}-${index}`,
+            className: 'rd-card',
+            role: 'dialog',
+            'aria-label': String(entry.term || (store.concepts[entry.id] && store.concepts[entry.id].term) || ''),
+            style: {
+              zIndex: 80 + index,
+              transform: `translate(${index * 12}px, ${index * 12}px)`,
+              pointerEvents: index === cards.length - 1 ? 'auto' : 'none',
+              width: style.width,
+              maxHeight: style.maxHeight,
+            },
+          },
+          renderCardBody(entry),
+        ),
+      ),
+      childMenu ? renderChildMenu() : null,
+    )
+  }
+
+  const renderMenu = () => {
+    if (!menu) return null
+    const bounds = rootBounds()
+    const left = Math.max(bounds.left + 8, Math.min(bounds.right - 320, menu.x - 150))
+    const rawTop = menu.y > bounds.top + 70 ? menu.y - 46 : menu.y + 26
+    const top = Math.max(bounds.top + 52, Math.min(bounds.bottom - 52, rawTop))
+    return h(
+      'div',
+      { className: 'rd-mini', style: { left, top } },
+      h('button', { className: 'rd-btn', onClick: () => createConcept(menu.text, menu.range, null) }, t('action.explain')),
+      h(
+        'button',
+        {
+          className: 'rd-btn',
+          onClick: (event) => {
+            event.stopPropagation()
+            void translateSelection()
+          },
+        },
+        t('action.translateSelection'),
+      ),
+      h('button', { className: 'rd-btn', onClick: startNote }, t('action.note')),
+      COLORS.map((color) =>
+        h('button', {
+          key: color,
+          type: 'button',
+          className: 'rd-swatch',
+          'aria-label': t('action.highlight'),
+          title: t('action.highlight'),
+          style: { background: color },
+          onClick: () => addHighlight(color),
+        }),
+      ),
+      h(
+        'button',
+        {
+          className: 'rd-btn',
+          onClick: () => {
+            navigator.clipboard.writeText(menu.text)
+            setMenu(null)
+          },
+        },
+        t('action.copy'),
+      ),
+      h(
+        'button',
+        {
+          className: 'rd-btn rd-dismiss',
+          'aria-label': t('action.dismiss'),
+          onClick: () => {
+            setMenu(null)
+            dismissSelection(window)
+          },
+        },
+        '×',
+      ),
+    )
+  }
+
+  const renderChildMenu = () => {
+    if (!childMenu) return null
+    return h(
+      'div',
+      {
+        className: 'rd-mini',
+        style: (() => {
+          const bounds = rootBounds()
+          return {
+            left: Math.max(bounds.left + 8, Math.min(bounds.right - 120, childMenu.x)),
+            top: Math.max(bounds.top + 52, Math.min(bounds.bottom - 52, childMenu.y - 40)),
+          }
+        })(),
+        onMouseEnter: () => clearTimeout(hideTimer.current),
+        onMouseLeave: () => {
+          if (card && !card.pinned) closeCardsSoon()
+        },
+      },
+      h('button', { className: 'rd-btn', onClick: () => createConcept(childMenu.text, childMenu.range, card ? card.id : null) }, t('action.explainChild')),
+    )
+  }
+
+  const renderNote = () => {
+    if (!noteDraft) return null
+    return h(
+      'div',
+      { className: 'rd-note-mask', onClick: () => setNoteDraft(null) },
+      h(
+        'div',
+        { className: 'rd-note-box', onClick: (event) => event.stopPropagation() },
+        h('div', { style: { fontSize: '13px', fontWeight: 600, marginBottom: '8px' } }, t('label.noteTitle')),
+        h('div', { className: 'rd-muted', style: { fontSize: '12px', marginBottom: '8px' } }, '“' + String(noteDraft.quote).slice(0, 90) + '”'),
+        h('textarea', {
+          value: noteDraft.text,
+          autoFocus: true,
+          onChange: (event) => setNoteDraft({ ...noteDraft, text: event.target.value }),
+        }),
+        h(
+          'div',
+          { className: 'rd-actions' },
+          h('button', { className: 'rd-btn', onClick: () => setNoteDraft(null) }, t('action.cancel')),
+          h('button', { className: 'rd-btn', onClick: saveNote }, t('action.save')),
+        ),
+      ),
+    )
+  }
+
+  if (!sessionId) {
+    return h('div', { className: 'rd-root' }, h('div', { className: 'rd-empty' }, t('label.openFromSession')))
+  }
+
+  return h(
+    'div',
+    {
+      className: `rd-root rd-theme-${prefs.theme || 'system'}`,
+      ref: rootRef,
+      style: { '--rd-fs': fontSize + 'px', '--rd-lh': String(prefs.lineHeight || 1.85) },
+      onClick: onRootClick,
+      onKeyDown: onRootKeyDown,
+      onMouseUp: (event) => setTimeout(() => onPointerUp(event), 0),
+      onMouseOver: onTermOver,
+      onMouseOut: onTermOut,
+    },
+    renderToolbar(),
+    busy ? h('div', { className: 'rd-toast' }, t('label.loading')) : null,
+    error ? h('div', { className: 'rd-error', style: { padding: '8px 14px' } }, error) : null,
+    relink
+      ? h(
+          'div',
+          { className: 'rd-relink' },
+          h('span', null, `${t('label.contentChanged')} (${relink.count})`),
+          h(
+            'button',
+            {
+              className: 'rd-btn',
+              onClick: () =>
+                applyMutation({ op: 'doc/relink', fromKey: relink.fromKey, toKey: docKey })
+                  .then(() => {
+                    setRelink(null)
+                    flash(t('label.relinked'))
+                  })
+                  .catch((e) => reportError(e)),
+            },
+            t('action.relink'),
+          ),
+          h('button', { className: 'rd-btn ghost', onClick: () => setRelink(null) }, t('action.dismiss')),
+        )
+      : null,
+    h('div', { className: 'rd-body' }, renderContent(), renderDrawer()),
+    renderEditor(),
+    renderCards(),
+    renderMenu(),
+    renderNote(),
+    renderSearch(),
+    renderSelectionTranslation(),
+    showHelp
+      ? h(
+          'div',
+          { className: 'rd-help-mask', onClick: () => setShowHelp(false) },
+          h(
+            'div',
+            { className: 'rd-help-box', onClick: (event) => event.stopPropagation() },
+            h('h3', { style: { marginTop: 0 } }, t('label.shortcuts')),
+            [['← / →', t('help.paging')], ['⌘Z / ⌘⇧Z', t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
+              ([keys, label]) => h('div', { key: keys, className: 'rd-help-row' }, h('span', null, label), h('b', null, keys)),
+            ),
+          ),
+        )
+      : null,
+    toast
+      ? h(
+          'div',
+          { className: 'rd-toast' },
+          toast.message,
+          toast.action
+            ? h(
+                'button',
+                {
+                  className: 'rd-btn',
+                  onClick: () => {
+                    const action = toast.action
+                    setToast(null)
+                    action.run()
+                  },
+                },
+                toast.action.label,
+              )
+            : null,
+        )
+      : null,
+  )
+}

@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "阅读",
+    "description": "在主区域阅读 PDF、EPUB 与 Markdown，划词高亮或让模型解释概念；保存过的概念在正文中悬停即可浮现，不打断阅读。",
+    "detail": "docs/DETAIL.md"
+  }
+}

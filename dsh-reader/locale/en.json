@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Reader",
+    "description": "Read PDF, EPUB and Markdown in the main area. Highlight text, ask the model to explain a concept, and hover a saved concept to recall it without leaving the page.",
+    "detail": "docs/DETAIL.md"
+  }
+}
