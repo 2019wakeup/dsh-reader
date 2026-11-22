@@ -228,6 +228,8 @@ const ZH = {
   'label.notePlaceholder': '写点备注…',
   'label.error': '出错了',
   'label.noModel': '未配置可用模型，无法生成解释',
+  'label.mapHint': '拖动可平移；点击节点查看摘要并跳到原文',
+  'label.jumpOriginal': '跳到原文',
   'label.timeout': '模型没有响应，已超时；请重试，或在设置里调高解释超时',
   'label.traversal': '路径不合法',
   'label.epubFail': 'EPUB 解析失败',
@@ -429,6 +431,8 @@ const EN = {
   'label.notePlaceholder': 'Add a note…',
   'label.error': 'Something went wrong',
   'label.noModel': 'No model is configured',
+  'label.mapHint': 'Drag to pan; click a node to read its summary and jump to the text',
+  'label.jumpOriginal': 'Jump to text',
   'label.timeout': 'The model did not answer in time; retry, or raise the explanation timeout',
   'label.sessionLost': 'Session or workspace unavailable; reopen from a session',
   'label.docMissing': 'Document not found',
@@ -746,7 +750,13 @@ const READER_CSS = `
 .rd-theme-sepia .rd-main{background:#f5ecd9;color:#3d2f24}
 .rd-theme-sepia .rd-page{color:#3d2f24}
 .rd-relink{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 12px;font-size:12px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base)}
+.rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-scroll:active{cursor:grabbing}
+.rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}
+.rd-map-detail-title{font-weight:600;margin-bottom:4px}
+.rd-map-detail-summary{color:var(--dsw-alias-label-secondary)}
+.rd-map-detail-points{margin:6px 0 0;padding-left:1.2em;color:var(--dsw-alias-label-secondary)}
+.rd-map-detail .rd-btn{margin-top:8px}
 .rd-web-toggle{display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary)}
 .rd-qa-src{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;margin-top:3px}
 .rd-qa-src a{color:var(--dsw-alias-brand-primary);text-decoration:none}
@@ -2705,6 +2715,27 @@ function parsePageInput(value, total) {
 }
 
 
+const MAP_NODE_WIDTH = 230
+const MAP_NODE_HEIGHT = 40
+const MAP_ROW_HEIGHT = 54
+const MAP_COLUMN_WIDTH = 250
+
+function baseTitle(value) {
+  return String(value || '')
+    .replace(/[（(]\s*\d+\s*[）)]\s*$/, '')
+    .trim()
+}
+
+/** Split a long node title into two readable SVG lines. */
+function splitNodeTitle(value, perLine = 17) {
+  const chars = Array.from(String(value || ''))
+  if (chars.length <= perLine) return [chars.join('')]
+  return [
+    chars.slice(0, perLine).join(''),
+    chars.slice(perLine, perLine * 2 - 1).join('') + (chars.length > perLine * 2 - 1 ? '…' : ''),
+  ]
+}
+
 /**
  * Turn flat guide sections into a heading-level tree rooted at the document.
  * @param {string} title root label
@@ -2748,6 +2779,7 @@ function buildGuideTree(title, guide) {
       summary: part.summary || '',
       children: [],
     }
+    node.keyPoints = part.keyPoints || []
     for (const sectionId of part.sectionIds || []) {
       const section = byId.get(sectionId)
       if (!section) continue
@@ -2757,15 +2789,21 @@ function buildGuideTree(title, guide) {
         summary: section.summary || '',
         page: section.page,
         chapter: section.chapter,
+        keyPoints: section.keyPoints || [],
         children: [],
       })
     }
-    if (node.children.length === 1) {
-      const only = node.children[0]
-      // A single-section part and its section are the same reading unit; keep
-      // one node (the part) and inherit the section's jump target.
-      node.page = only.page
-      node.chapter = only.chapter
+    // Chunked sections of one chapter share the chapter title with a （1）/（2）
+    // suffix. They are not semantic child topics; merging them avoids three
+    // identical branches in the map. A single-section part is merged too.
+    const partBase = baseTitle(node.title)
+    const chunked = node.children.length > 0 && node.children.every((child) => baseTitle(child.title) === partBase)
+    if (node.children.length === 1 || chunked) {
+      const first = node.children[0]
+      node.page = first.page
+      node.chapter = first.chapter
+      if (!node.summary) node.summary = first.summary || ''
+      if (!node.keyPoints.length) node.keyPoints = first.keyPoints || []
       node.children = []
     }
     root.children.push(node)
@@ -2779,8 +2817,8 @@ function buildGuideTree(title, guide) {
  * @param {Set<string>} collapsed ids whose children are hidden
  */
 function layoutTree(tree, collapsed = new Set(), options = {}) {
-  const rowHeight = options.rowHeight || 40
-  const columnWidth = options.columnWidth || 220
+  const rowHeight = options.rowHeight || MAP_ROW_HEIGHT
+  const columnWidth = options.columnWidth || MAP_COLUMN_WIDTH
   const nodes = []
   const edges = []
   let cursor = 0
@@ -2802,7 +2840,9 @@ function layoutTree(tree, collapsed = new Set(), options = {}) {
       id: node.id,
       title: node.title,
       summary: node.summary,
+      keyPoints: node.keyPoints || [],
       page: node.page,
+      chapter: node.chapter,
       x: node.x,
       y: node.y,
       depth,
@@ -2817,6 +2857,8 @@ function layoutTree(tree, collapsed = new Set(), options = {}) {
     nodes,
     edges,
     width: (maxDepth + 1) * columnWidth,
+    nodeWidth: options.nodeWidth || MAP_NODE_WIDTH,
+    nodeHeight: options.nodeHeight || MAP_NODE_HEIGHT,
     height: Math.max(cursor, rowHeight),
   }
 }
@@ -3262,7 +3304,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.9.5'
+const READER_VERSION = '0.9.6'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3359,6 +3401,10 @@ function ReaderView(props) {
   const [guideView, setGuideView] = React.useState('list')
   const [collapsedIds, setCollapsedIds] = React.useState(() => new Set())
   const [mapScale, setMapScale] = React.useState(1)
+  const [selectedNodeId, setSelectedNodeId] = React.useState(null)
+  const mapScrollRef = React.useRef(null)
+  const mapDragRef = React.useRef(null)
+  const suppressMapClick = React.useRef(false)
   const [askText, setAskText] = React.useState('')
   const [askBusy, setAskBusy] = React.useState(false)
   const [askWeb, setAskWeb] = React.useState(false)
@@ -3403,6 +3449,26 @@ function ReaderView(props) {
     () => (guideTree ? layoutTree(guideTree, collapsedIds) : null),
     [guideTree, collapsedIds],
   )
+
+  React.useEffect(() => {
+    if (!guideTree) {
+      setCollapsedIds(new Set())
+      setSelectedNodeId(null)
+      return
+    }
+    // The map opens as a chapter outline; expanding a chapter is explicit.
+    setCollapsedIds(new Set((guideTree.children || []).filter((node) => (node.children || []).length > 0).map((node) => node.id)))
+    setSelectedNodeId(null)
+  }, [guideTree])
+
+  React.useEffect(() => {
+    if (guideView !== 'map' || !guideLayout) return
+    const node = mapScrollRef.current
+    if (!node) return
+    const available = Math.max(240, node.clientWidth - 16)
+    const fit = Math.min(1, Math.max(0.55, available / (guideLayout.width + 60)))
+    setMapScale((current) => (Math.abs(current - 1) < 0.001 ? Number(fit.toFixed(2)) : current))
+  }, [guideView, guideLayout])
   const docAnnotations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.annotations || [] : []),
     [store.docs, docKey],
@@ -4773,6 +4839,45 @@ function ReaderView(props) {
     const height = guideLayout.height + 60
     const canvasWidth = Math.round(width * mapScale)
     const canvasHeight = Math.round(height * mapScale)
+    const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
+
+    const activateNode = (node) => {
+      if (suppressMapClick.current) return
+      setSelectedNodeId(node.id)
+      if (node.hasChildren) toggleCollapse(node.id)
+      else jumpToSection(node)
+    }
+    const onMapPointerDown = (event) => {
+      if (event.button !== 0) return
+      mapDragRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        left: event.currentTarget.scrollLeft,
+        top: event.currentTarget.scrollTop,
+        moved: false,
+      }
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    }
+    const onMapPointerMove = (event) => {
+      const drag = mapDragRef.current
+      if (!drag) return
+      const dx = event.clientX - drag.x
+      const dy = event.clientY - drag.y
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
+      event.currentTarget.scrollLeft = drag.left - dx
+      event.currentTarget.scrollTop = drag.top - dy
+    }
+    const onMapPointerUp = () => {
+      const drag = mapDragRef.current
+      mapDragRef.current = null
+      if (drag && drag.moved) {
+        suppressMapClick.current = true
+        setTimeout(() => {
+          suppressMapClick.current = false
+        }, 0)
+      }
+    }
+
     return h(
       'div',
       null,
@@ -4789,7 +4894,15 @@ function ReaderView(props) {
       ),
       h(
         'div',
-        { className: 'rd-map-scroll' },
+        {
+          className: 'rd-map-scroll',
+          ref: mapScrollRef,
+          onPointerDown: onMapPointerDown,
+          onPointerMove: onMapPointerMove,
+          onPointerUp: onMapPointerUp,
+          onPointerCancel: onMapPointerUp,
+          title: t('label.mapHint'),
+        },
         h(
           'svg',
           {
@@ -4802,17 +4915,17 @@ function ReaderView(props) {
           h(
             'style',
             null,
-            '.rdm-label{font-size:12px;fill:var(--dsw-alias-label-primary,#1f2937);font-family:system-ui,sans-serif}.rdm-sub{font-size:11px;fill:var(--dsw-alias-label-secondary,#6b7280)}.rdm-node{fill:var(--dsw-alias-bg-layer-1,#f8fafc);stroke:var(--dsw-alias-border-l1,#d1d5db)}.rdm-root{fill:var(--dsw-alias-bg-layer-2,#eef2f7)}.rdm-edge{stroke:var(--dsw-alias-border-l2,#9ca3af);stroke-width:1.4;fill:none}',
+            '.rdm-label{font-size:11.5px;fill:var(--dsw-alias-label-primary,#1f2937);font-family:system-ui,sans-serif}.rdm-sub{font-size:11px;fill:var(--dsw-alias-label-secondary,#6b7280)}.rdm-node{fill:var(--dsw-alias-bg-layer-1,#f8fafc);stroke:var(--dsw-alias-border-l1,#d1d5db)}.rdm-root{fill:var(--dsw-alias-bg-layer-2,#eef2f7)}.rdm-node-selected{stroke:var(--dsw-alias-brand-primary,#3b82f6);stroke-width:2}.rdm-edge{stroke:var(--dsw-alias-border-l2,#9ca3af);stroke-width:1.4;fill:none}',
           ),
           h('g', { transform: `translate(30,30) scale(${mapScale})` },
             guideLayout.edges.map((edge) => {
               const from = byId.get(edge.from)
               const to = byId.get(edge.to)
               if (!from || !to) return null
-              const x1 = from.x + 190
-              const y1 = from.y + 14
+              const x1 = from.x + MAP_NODE_WIDTH
+              const y1 = from.y + MAP_NODE_HEIGHT / 2
               const x2 = to.x
-              const y2 = to.y + 14
+              const y2 = to.y + MAP_NODE_HEIGHT / 2
               const mid = (x1 + x2) / 2
               return h('path', {
                 key: `${edge.from}-${edge.to}`,
@@ -4820,39 +4933,83 @@ function ReaderView(props) {
                 d: `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`,
               })
             }),
-            guideLayout.nodes.map((node) =>
-              h(
+            guideLayout.nodes.map((node) => {
+              const lines = splitNodeTitle(node.title)
+              const isSelected = node.id === selectedNodeId
+              return h(
                 'g',
-                { key: node.id, transform: `translate(${node.x},${node.y})` },
+                {
+                  key: node.id,
+                  transform: `translate(${node.x},${node.y})`,
+                  'data-node-id': node.id,
+                  style: { cursor: 'pointer' },
+                },
+                h('title', null, node.title || ''),
                 h('rect', {
-                  width: 190,
-                  height: 30,
-                  rx: 8,
-                  className: node.depth === 0 ? 'rdm-node rdm-root' : 'rdm-node',
-                  onClick: () => (node.hasChildren ? toggleCollapse(node.id) : jumpToSection(node)),
+                  width: MAP_NODE_WIDTH,
+                  height: MAP_NODE_HEIGHT,
+                  rx: 10,
+                  className: `rdm-node${node.depth === 0 ? ' rdm-root' : ''}${isSelected ? ' rdm-node-selected' : ''}`,
+                  onClick: () => activateNode(node),
                 }),
-                h('text', { x: 10, y: 19, className: 'rdm-label', onClick: () => jumpToSection(node) }, String(node.title || '').slice(0, 18)),
+                h('text', {
+                  x: 12,
+                  y: lines.length > 1 ? 17 : 25,
+                  className: 'rdm-label',
+                  onClick: () => {
+                    setSelectedNodeId(node.id)
+                    jumpToSection(node)
+                  },
+                }, lines[0]),
+                lines[1]
+                  ? h('text', {
+                      x: 12,
+                      y: 32,
+                      className: 'rdm-label',
+                      onClick: () => {
+                        setSelectedNodeId(node.id)
+                        jumpToSection(node)
+                      },
+                    }, lines[1])
+                  : null,
                 node.hasChildren
                   ? h(
                       'text',
                       {
-                        x: 172,
-                        y: 19,
+                        x: MAP_NODE_WIDTH - 18,
+                        y: MAP_NODE_HEIGHT / 2 + 4,
                         className: 'rdm-sub',
                         style: { cursor: 'pointer' },
                         onClick: (event) => {
                           event.stopPropagation()
+                          setSelectedNodeId(node.id)
                           toggleCollapse(node.id)
                         },
                       },
                       node.collapsed ? '▸' : '▾',
                     )
                   : null,
-              ),
-            ),
+              )
+            }),
           ),
         ),
       ),
+      selected
+        ? h(
+            'div',
+            { className: 'rd-map-detail' },
+            h('div', { className: 'rd-map-detail-title' }, selected.title),
+            selected.summary ? h('div', { className: 'rd-map-detail-summary' }, selected.summary) : null,
+            (selected.keyPoints || []).length
+              ? h('ul', { className: 'rd-map-detail-points' }, selected.keyPoints.map((point, index) => h('li', { key: index }, point)))
+              : null,
+            h(
+              'button',
+              { className: 'rd-btn', onClick: () => jumpToSection(selected) },
+              t('label.jumpOriginal'),
+            ),
+          )
+        : null,
     )
   }
 

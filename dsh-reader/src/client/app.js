@@ -300,6 +300,10 @@ export function ReaderView(props) {
   const [guideView, setGuideView] = React.useState('list')
   const [collapsedIds, setCollapsedIds] = React.useState(() => new Set())
   const [mapScale, setMapScale] = React.useState(1)
+  const [selectedNodeId, setSelectedNodeId] = React.useState(null)
+  const mapScrollRef = React.useRef(null)
+  const mapDragRef = React.useRef(null)
+  const suppressMapClick = React.useRef(false)
   const [askText, setAskText] = React.useState('')
   const [askBusy, setAskBusy] = React.useState(false)
   const [askWeb, setAskWeb] = React.useState(false)
@@ -344,6 +348,26 @@ export function ReaderView(props) {
     () => (guideTree ? layoutTree(guideTree, collapsedIds) : null),
     [guideTree, collapsedIds],
   )
+
+  React.useEffect(() => {
+    if (!guideTree) {
+      setCollapsedIds(new Set())
+      setSelectedNodeId(null)
+      return
+    }
+    // The map opens as a chapter outline; expanding a chapter is explicit.
+    setCollapsedIds(new Set((guideTree.children || []).filter((node) => (node.children || []).length > 0).map((node) => node.id)))
+    setSelectedNodeId(null)
+  }, [guideTree])
+
+  React.useEffect(() => {
+    if (guideView !== 'map' || !guideLayout) return
+    const node = mapScrollRef.current
+    if (!node) return
+    const available = Math.max(240, node.clientWidth - 16)
+    const fit = Math.min(1, Math.max(0.55, available / (guideLayout.width + 60)))
+    setMapScale((current) => (Math.abs(current - 1) < 0.001 ? Number(fit.toFixed(2)) : current))
+  }, [guideView, guideLayout])
   const docAnnotations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.annotations || [] : []),
     [store.docs, docKey],
@@ -1714,6 +1738,45 @@ export function ReaderView(props) {
     const height = guideLayout.height + 60
     const canvasWidth = Math.round(width * mapScale)
     const canvasHeight = Math.round(height * mapScale)
+    const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
+
+    const activateNode = (node) => {
+      if (suppressMapClick.current) return
+      setSelectedNodeId(node.id)
+      if (node.hasChildren) toggleCollapse(node.id)
+      else jumpToSection(node)
+    }
+    const onMapPointerDown = (event) => {
+      if (event.button !== 0) return
+      mapDragRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        left: event.currentTarget.scrollLeft,
+        top: event.currentTarget.scrollTop,
+        moved: false,
+      }
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    }
+    const onMapPointerMove = (event) => {
+      const drag = mapDragRef.current
+      if (!drag) return
+      const dx = event.clientX - drag.x
+      const dy = event.clientY - drag.y
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
+      event.currentTarget.scrollLeft = drag.left - dx
+      event.currentTarget.scrollTop = drag.top - dy
+    }
+    const onMapPointerUp = () => {
+      const drag = mapDragRef.current
+      mapDragRef.current = null
+      if (drag && drag.moved) {
+        suppressMapClick.current = true
+        setTimeout(() => {
+          suppressMapClick.current = false
+        }, 0)
+      }
+    }
+
     return h(
       'div',
       null,
@@ -1730,7 +1793,15 @@ export function ReaderView(props) {
       ),
       h(
         'div',
-        { className: 'rd-map-scroll' },
+        {
+          className: 'rd-map-scroll',
+          ref: mapScrollRef,
+          onPointerDown: onMapPointerDown,
+          onPointerMove: onMapPointerMove,
+          onPointerUp: onMapPointerUp,
+          onPointerCancel: onMapPointerUp,
+          title: t('label.mapHint'),
+        },
         h(
           'svg',
           {
@@ -1743,17 +1814,17 @@ export function ReaderView(props) {
           h(
             'style',
             null,
-            '.rdm-label{font-size:12px;fill:var(--dsw-alias-label-primary,#1f2937);font-family:system-ui,sans-serif}.rdm-sub{font-size:11px;fill:var(--dsw-alias-label-secondary,#6b7280)}.rdm-node{fill:var(--dsw-alias-bg-layer-1,#f8fafc);stroke:var(--dsw-alias-border-l1,#d1d5db)}.rdm-root{fill:var(--dsw-alias-bg-layer-2,#eef2f7)}.rdm-edge{stroke:var(--dsw-alias-border-l2,#9ca3af);stroke-width:1.4;fill:none}',
+            '.rdm-label{font-size:11.5px;fill:var(--dsw-alias-label-primary,#1f2937);font-family:system-ui,sans-serif}.rdm-sub{font-size:11px;fill:var(--dsw-alias-label-secondary,#6b7280)}.rdm-node{fill:var(--dsw-alias-bg-layer-1,#f8fafc);stroke:var(--dsw-alias-border-l1,#d1d5db)}.rdm-root{fill:var(--dsw-alias-bg-layer-2,#eef2f7)}.rdm-node-selected{stroke:var(--dsw-alias-brand-primary,#3b82f6);stroke-width:2}.rdm-edge{stroke:var(--dsw-alias-border-l2,#9ca3af);stroke-width:1.4;fill:none}',
           ),
           h('g', { transform: `translate(30,30) scale(${mapScale})` },
             guideLayout.edges.map((edge) => {
               const from = byId.get(edge.from)
               const to = byId.get(edge.to)
               if (!from || !to) return null
-              const x1 = from.x + 190
-              const y1 = from.y + 14
+              const x1 = from.x + MAP_NODE_WIDTH
+              const y1 = from.y + MAP_NODE_HEIGHT / 2
               const x2 = to.x
-              const y2 = to.y + 14
+              const y2 = to.y + MAP_NODE_HEIGHT / 2
               const mid = (x1 + x2) / 2
               return h('path', {
                 key: `${edge.from}-${edge.to}`,
@@ -1761,39 +1832,83 @@ export function ReaderView(props) {
                 d: `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`,
               })
             }),
-            guideLayout.nodes.map((node) =>
-              h(
+            guideLayout.nodes.map((node) => {
+              const lines = splitNodeTitle(node.title)
+              const isSelected = node.id === selectedNodeId
+              return h(
                 'g',
-                { key: node.id, transform: `translate(${node.x},${node.y})` },
+                {
+                  key: node.id,
+                  transform: `translate(${node.x},${node.y})`,
+                  'data-node-id': node.id,
+                  style: { cursor: 'pointer' },
+                },
+                h('title', null, node.title || ''),
                 h('rect', {
-                  width: 190,
-                  height: 30,
-                  rx: 8,
-                  className: node.depth === 0 ? 'rdm-node rdm-root' : 'rdm-node',
-                  onClick: () => (node.hasChildren ? toggleCollapse(node.id) : jumpToSection(node)),
+                  width: MAP_NODE_WIDTH,
+                  height: MAP_NODE_HEIGHT,
+                  rx: 10,
+                  className: `rdm-node${node.depth === 0 ? ' rdm-root' : ''}${isSelected ? ' rdm-node-selected' : ''}`,
+                  onClick: () => activateNode(node),
                 }),
-                h('text', { x: 10, y: 19, className: 'rdm-label', onClick: () => jumpToSection(node) }, String(node.title || '').slice(0, 18)),
+                h('text', {
+                  x: 12,
+                  y: lines.length > 1 ? 17 : 25,
+                  className: 'rdm-label',
+                  onClick: () => {
+                    setSelectedNodeId(node.id)
+                    jumpToSection(node)
+                  },
+                }, lines[0]),
+                lines[1]
+                  ? h('text', {
+                      x: 12,
+                      y: 32,
+                      className: 'rdm-label',
+                      onClick: () => {
+                        setSelectedNodeId(node.id)
+                        jumpToSection(node)
+                      },
+                    }, lines[1])
+                  : null,
                 node.hasChildren
                   ? h(
                       'text',
                       {
-                        x: 172,
-                        y: 19,
+                        x: MAP_NODE_WIDTH - 18,
+                        y: MAP_NODE_HEIGHT / 2 + 4,
                         className: 'rdm-sub',
                         style: { cursor: 'pointer' },
                         onClick: (event) => {
                           event.stopPropagation()
+                          setSelectedNodeId(node.id)
                           toggleCollapse(node.id)
                         },
                       },
                       node.collapsed ? '▸' : '▾',
                     )
                   : null,
-              ),
-            ),
+              )
+            }),
           ),
         ),
       ),
+      selected
+        ? h(
+            'div',
+            { className: 'rd-map-detail' },
+            h('div', { className: 'rd-map-detail-title' }, selected.title),
+            selected.summary ? h('div', { className: 'rd-map-detail-summary' }, selected.summary) : null,
+            (selected.keyPoints || []).length
+              ? h('ul', { className: 'rd-map-detail-points' }, selected.keyPoints.map((point, index) => h('li', { key: index }, point)))
+              : null,
+            h(
+              'button',
+              { className: 'rd-btn', onClick: () => jumpToSection(selected) },
+              t('label.jumpOriginal'),
+            ),
+          )
+        : null,
     )
   }
 

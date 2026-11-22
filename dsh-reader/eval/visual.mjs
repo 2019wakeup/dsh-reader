@@ -732,9 +732,32 @@ async function main() {
 
     const mapClicked = await clickAny('.rd-drawer button', ['导图', 'Mindmap'])
     await page.waitForSelector('.rd-map-scroll svg .rdm-label', { timeout: 8000 })
-    const nodes = await page.$$eval('.rdm-label', (items) => items.length)
-    record('mindmap renders nodes', mapClicked && nodes >= 3, `${nodes} nodes`)
+    const mapDefault = await page.evaluate(() => ({
+      nodes: document.querySelectorAll('.rdm-node').length,
+      labels: document.querySelectorAll('.rdm-label').length,
+      details: document.querySelectorAll('.rd-map-detail').length,
+    }))
+    record('mindmap opens as a collapsed chapter outline', mapClicked && mapDefault.nodes === 3 && mapDefault.details === 0, `${mapDefault.nodes} nodes, ${mapDefault.labels} labels`)
     await shot('05-mindmap')
+    const expanded = await page.evaluate(() => {
+      const node = document.querySelector('[data-node-id="part1"] rect')
+      if (!node) return false
+      node.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      return true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const mapExpanded = await page.evaluate(() => ({
+      nodes: document.querySelectorAll('.rdm-node').length,
+      detail: document.querySelector('.rd-map-detail-title')?.textContent || '',
+      summary: document.querySelector('.rd-map-detail-summary')?.textContent || '',
+    }))
+    record('clicking a chapter expands its sections', expanded && mapExpanded.nodes > mapDefault.nodes, `${mapDefault.nodes} -> ${mapExpanded.nodes}`)
+    record('selected node shows its summary', mapExpanded.detail.includes('第一部分') && mapExpanded.summary.length > 5, `${mapExpanded.detail}: ${mapExpanded.summary.slice(0, 24)}`)
+    await page.evaluate(() => {
+      const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
+      reset.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 250))
     const baseMapWidth = await page.$eval('.rd-map-scroll svg', (node) => Number(node.getAttribute('width')))
     await page.evaluate(() => {
       const plus = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '+')
@@ -759,6 +782,18 @@ async function main() {
       zoomedMap.width > baseMapWidth && zoomedMap.scrollable,
       `${baseMapWidth} -> ${zoomedMap.width} rect=${zoomedMap.rectWidth} scroll=${zoomedMap.scrollWidth}/${zoomedMap.clientWidth} overflow=${zoomedMap.overflow}`,
     )
+    const mapBox = await page.$eval('.rd-map-scroll', (node) => {
+      const rect = node.getBoundingClientRect()
+      node.scrollLeft = 120
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, scrolled: node.scrollLeft }
+    })
+    await page.mouse.move(mapBox.left + mapBox.width / 2, mapBox.top + mapBox.height - 30)
+    await page.mouse.down()
+    await page.mouse.move(mapBox.left + mapBox.width / 2 - 80, mapBox.top + mapBox.height - 30, { steps: 5 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const dragged = await page.$eval('.rd-map-scroll', (node) => node.scrollLeft)
+    record('mindmap can be dragged horizontally', dragged !== mapBox.scrolled, `${mapBox.scrolled} -> ${dragged}`)
     await page.evaluate(() => {
       const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
       reset.click()

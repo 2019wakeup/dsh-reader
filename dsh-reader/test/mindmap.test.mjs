@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildTree, buildGuideTree, layoutTree, guideMarkdown } from '../src/client/mindmap.js'
+import { buildTree, buildGuideTree, layoutTree, guideMarkdown, splitNodeTitle } from '../src/client/mindmap.js'
 
 const sections = [
   { id: 'a', title: '第一部分', level: 1, summary: 'A' },
@@ -40,4 +40,33 @@ test('exports a readable markdown outline', () => {
   assert.match(text, /主旨/)
   assert.match(text, /q1/)
   assert.match(text, /二|一/)
+})
+
+
+test('chunked sections of one chapter merge into the chapter node', () => {
+  const tree = buildGuideTree('书', {
+    parts: [
+      { id: 'c1', title: '01 康波中的价格波动', summary: '本篇摘要', sectionIds: ['c1-1', 'c1-2', 'c1-3'] },
+    ],
+    sections: [
+      { id: 'c1-1', title: '01 康波中的价格波动（1）', page: 3, summary: '第一段' },
+      { id: 'c1-2', title: '01 康波中的价格波动（2）', page: 11, summary: '第二段' },
+      { id: 'c1-3', title: '01 康波中的价格波动（3）', page: 20, summary: '第三段' },
+    ],
+  })
+  assert.equal(tree.children.length, 1)
+  assert.equal(tree.children[0].children.length, 0, 'chunk suffixes are not separate branches')
+  assert.equal(tree.children[0].page, 3)
+  assert.equal(tree.children[0].summary, '本篇摘要')
+})
+
+test('long node titles wrap to at most two lines', () => {
+  const short = splitNodeTitle('短标题')
+  assert.deepEqual(short, ['短标题'])
+  const long = splitNodeTitle('01 人生财富靠康波——康波中的价格波动与阶段划分')
+  assert.equal(long.length, 2)
+  assert.ok(long[0].length <= 17)
+  const veryLong = splitNodeTitle('01 人生财富靠康波——康波中的价格波动与阶段划分以及更多补充说明文字')
+  assert.equal(veryLong.length, 2)
+  assert.ok(veryLong[1].endsWith('…'))
 })

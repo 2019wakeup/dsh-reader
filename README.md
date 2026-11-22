@@ -65,7 +65,7 @@
 
 | 门禁 | 数量 |
 |---|---|
-| 单元 / DOM 测试 | **234** |
+| 单元 / DOM 测试 | **236** |
 | 产品级 eval | **10** |
 | 视觉回归（无头 Chrome + 像素基线 + 中英文界面） | **88** |
 | 发布检查（迁移演练 / 导出回环 / 资产 / 文档） | **10** |
@@ -117,9 +117,9 @@
 cd dsh-reader
 pnpm install
 pnpm build            # 生成 client.js
-pnpm test             # 234 条单元/DOM 测试
+pnpm test             # 236 条单元/DOM 测试
 pnpm eval             # 10 项产品级 eval
-pnpm eval:visual      # 88 项视觉检查（需要 DSH GUI + Chrome）
+pnpm eval:visual      # 91 项视觉检查（需要 DSH GUI + Chrome）
 pnpm release:check    # 11 项发布门禁
 ```
 

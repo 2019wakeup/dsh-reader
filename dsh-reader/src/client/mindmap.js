@@ -1,3 +1,24 @@
+export const MAP_NODE_WIDTH = 230
+export const MAP_NODE_HEIGHT = 40
+export const MAP_ROW_HEIGHT = 54
+export const MAP_COLUMN_WIDTH = 250
+
+function baseTitle(value) {
+  return String(value || '')
+    .replace(/[（(]\s*\d+\s*[）)]\s*$/, '')
+    .trim()
+}
+
+/** Split a long node title into two readable SVG lines. */
+export function splitNodeTitle(value, perLine = 17) {
+  const chars = Array.from(String(value || ''))
+  if (chars.length <= perLine) return [chars.join('')]
+  return [
+    chars.slice(0, perLine).join(''),
+    chars.slice(perLine, perLine * 2 - 1).join('') + (chars.length > perLine * 2 - 1 ? '…' : ''),
+  ]
+}
+
 /**
  * Turn flat guide sections into a heading-level tree rooted at the document.
  * @param {string} title root label
@@ -41,6 +62,7 @@ export function buildGuideTree(title, guide) {
       summary: part.summary || '',
       children: [],
     }
+    node.keyPoints = part.keyPoints || []
     for (const sectionId of part.sectionIds || []) {
       const section = byId.get(sectionId)
       if (!section) continue
@@ -50,15 +72,21 @@ export function buildGuideTree(title, guide) {
         summary: section.summary || '',
         page: section.page,
         chapter: section.chapter,
+        keyPoints: section.keyPoints || [],
         children: [],
       })
     }
-    if (node.children.length === 1) {
-      const only = node.children[0]
-      // A single-section part and its section are the same reading unit; keep
-      // one node (the part) and inherit the section's jump target.
-      node.page = only.page
-      node.chapter = only.chapter
+    // Chunked sections of one chapter share the chapter title with a （1）/（2）
+    // suffix. They are not semantic child topics; merging them avoids three
+    // identical branches in the map. A single-section part is merged too.
+    const partBase = baseTitle(node.title)
+    const chunked = node.children.length > 0 && node.children.every((child) => baseTitle(child.title) === partBase)
+    if (node.children.length === 1 || chunked) {
+      const first = node.children[0]
+      node.page = first.page
+      node.chapter = first.chapter
+      if (!node.summary) node.summary = first.summary || ''
+      if (!node.keyPoints.length) node.keyPoints = first.keyPoints || []
       node.children = []
     }
     root.children.push(node)
@@ -72,8 +100,8 @@ export function buildGuideTree(title, guide) {
  * @param {Set<string>} collapsed ids whose children are hidden
  */
 export function layoutTree(tree, collapsed = new Set(), options = {}) {
-  const rowHeight = options.rowHeight || 40
-  const columnWidth = options.columnWidth || 220
+  const rowHeight = options.rowHeight || MAP_ROW_HEIGHT
+  const columnWidth = options.columnWidth || MAP_COLUMN_WIDTH
   const nodes = []
   const edges = []
   let cursor = 0
@@ -95,7 +123,9 @@ export function layoutTree(tree, collapsed = new Set(), options = {}) {
       id: node.id,
       title: node.title,
       summary: node.summary,
+      keyPoints: node.keyPoints || [],
       page: node.page,
+      chapter: node.chapter,
       x: node.x,
       y: node.y,
       depth,
@@ -110,6 +140,8 @@ export function layoutTree(tree, collapsed = new Set(), options = {}) {
     nodes,
     edges,
     width: (maxDepth + 1) * columnWidth,
+    nodeWidth: options.nodeWidth || MAP_NODE_WIDTH,
+    nodeHeight: options.nodeHeight || MAP_NODE_HEIGHT,
     height: Math.max(cursor, rowHeight),
   }
 }
