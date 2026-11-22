@@ -906,6 +906,10 @@ export function ReaderView(props) {
     setMenu(null)
     setChildMenu(null)
     if (!term) return
+    if (term.length > 1200) {
+      flash(t('label.selectionTooLongExplain'))
+      return
+    }
     const parent = parentId ? store.concepts[parentId] : null
     if (parent && conceptChain(store.concepts, parentId).length >= 3) {
       flash(t('label.nestLimit'))
@@ -1221,10 +1225,6 @@ export function ReaderView(props) {
     }
     const root = contentRef.current
     if (!root || !root.contains(range.commonAncestorContainer)) {
-      setMenu(null)
-      return
-    }
-    if (text.length > 160) {
       setMenu(null)
       return
     }
@@ -1705,6 +1705,10 @@ export function ReaderView(props) {
     if (!menu) return
     const text = normalizeBlockText(menu.text)
     if (!text) return
+    if (text.length > 4000) {
+      flash(t('label.selectionTooLongTranslate'))
+      return
+    }
     const rect = menu.range.getBoundingClientRect()
     setMenu(null)
     setSelectionTranslation({ text, loading: true, translation: '', rect })

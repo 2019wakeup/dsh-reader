@@ -151,6 +151,8 @@ const ZH = {
   'label.translating': '翻译中…',
   'label.untranslated': '（未翻译）',
   'label.noTranslation': '暂未得到译文，请重试。',
+  'label.selectionTooLongExplain': '选中内容较长；解释请缩短选词，或使用高亮、笔记、翻译。',
+  'label.selectionTooLongTranslate': '选中内容超过单次翻译上限，请分段选择。',
   'translation.mode.off': '关闭',
   'translation.mode.dual': '段落对照',
   'translation.mode.only': '仅译文',
@@ -375,6 +377,8 @@ const EN = {
   'label.translating': 'Translating…',
   'label.untranslated': '(not translated)',
   'label.noTranslation': 'No translation yet; try again.',
+  'label.selectionTooLongExplain': 'The selection is long; shorten it for an explanation, or use highlight, note or translation.',
+  'label.selectionTooLongTranslate': 'The selection exceeds the one-request translation limit; select a shorter range.',
   'translation.mode.off': '关闭',
   'translation.mode.dual': '段落对照',
   'translation.mode.only': '仅译文',
@@ -3389,7 +3393,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.11.0'
+const READER_VERSION = '0.11.1'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -4090,6 +4094,10 @@ function ReaderView(props) {
     setMenu(null)
     setChildMenu(null)
     if (!term) return
+    if (term.length > 1200) {
+      flash(t('label.selectionTooLongExplain'))
+      return
+    }
     const parent = parentId ? store.concepts[parentId] : null
     if (parent && conceptChain(store.concepts, parentId).length >= 3) {
       flash(t('label.nestLimit'))
@@ -4405,10 +4413,6 @@ function ReaderView(props) {
     }
     const root = contentRef.current
     if (!root || !root.contains(range.commonAncestorContainer)) {
-      setMenu(null)
-      return
-    }
-    if (text.length > 160) {
       setMenu(null)
       return
     }
@@ -4889,6 +4893,10 @@ function ReaderView(props) {
     if (!menu) return
     const text = normalizeBlockText(menu.text)
     if (!text) return
+    if (text.length > 4000) {
+      flash(t('label.selectionTooLongTranslate'))
+      return
+    }
     const rect = menu.range.getBoundingClientRect()
     setMenu(null)
     setSelectionTranslation({ text, loading: true, translation: '', rect })
