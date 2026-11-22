@@ -66,7 +66,7 @@ test('long node titles wrap to at most two lines', () => {
   const long = splitNodeTitle('01 示例章节——价格波动与阶段划分')
   assert.equal(long.length, 2)
   assert.ok(long[0].length <= 17)
-  const veryLong = splitNodeTitle('01 示例章节——价格波动与阶段划分以及更多补充说明文字')
+  const veryLong = splitNodeTitle('01 示例章节——价格波动与阶段划分以及更多补充说明文字用于测试超长标题换行与省略')
   assert.equal(veryLong.length, 2)
   assert.ok(veryLong[1].endsWith('…'))
 })
