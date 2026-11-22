@@ -650,6 +650,74 @@ async function main() {
     const childMenuGone = await page.evaluate(() => !document.querySelector('.rd-child-menu'))
     const childMenuLeft = await page.evaluate(() => document.querySelector('.rd-child-menu')?.textContent || '')
     record('child explain action dismisses itself', childMenuGone, childMenuLeft)
+
+    await page.evaluate(() => {
+      const def = document.querySelector('.rd-card .rd-def')
+      const range = document.createRange()
+      range.selectNodeContents(def)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      document.querySelector('.rd-card').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await clickAny('.rd-child-menu button', ['再解释', 'Explain again'])
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    const stack = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('.rd-card')]
+      const rects = cards.map((card) => {
+        const rect = card.getBoundingClientRect()
+        return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, pointer: getComputedStyle(card).pointerEvents }
+      })
+      const parent = rects[0]
+      const top = rects[rects.length - 1]
+      const hit = document.elementFromPoint(parent.left + 6, parent.top + 6)
+      const hitTop = document.elementFromPoint(top.left + 10, top.top + 10)
+      return {
+        count: cards.length,
+        rects,
+        pointer: rects.map((rect) => rect.pointer),
+        hitIndex: hit && hit.closest ? cards.indexOf(hit.closest('.rd-card')) : -1,
+        hitTopIndex: hitTop && hitTop.closest ? cards.indexOf(hitTop.closest('.rd-card')) : -1,
+      }
+    })
+    record('child explanation opens a stacked card', stack.count === 2, `${stack.count} cards`)
+    record('both stacked cards receive pointer events', stack.pointer.every((value) => value === 'auto'), stack.pointer.join(','))
+    record('overlapping cards do not leak clicks to the parent', stack.hitIndex === 0, `hit card ${stack.hitIndex}`)
+    record('the visible top card receives its own clicks', stack.hitTopIndex === 1, `hit card ${stack.hitTopIndex}`)
+    const stackBefore = await page.evaluate(() => [...document.querySelectorAll('.rd-card')].map((card) => {
+      const rect = card.getBoundingClientRect()
+      return { left: rect.left, top: rect.top }
+    }))
+    const childHeader = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('.rd-card')]
+      const header = cards[cards.length - 1].querySelector('h3')
+      const rect = header.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + 12 }
+    })
+    await page.mouse.move(childHeader.x, childHeader.y)
+    await page.mouse.down()
+    await page.mouse.move(childHeader.x + 80, childHeader.y + 50, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const stackAfter = await page.evaluate(() => [...document.querySelectorAll('.rd-card')].map((card) => {
+      const rect = card.getBoundingClientRect()
+      return { left: rect.left, top: rect.top }
+    }))
+    record(
+      'stacked cards move independently',
+      Math.abs(stackAfter[0].left - stackBefore[0].left) <= 1 &&
+        Math.abs(stackAfter[0].top - stackBefore[0].top) <= 1 &&
+        Math.hypot(stackAfter[1].left - stackBefore[1].left, stackAfter[1].top - stackBefore[1].top) > 20,
+      `${JSON.stringify(stackBefore)} -> ${JSON.stringify(stackAfter)}`,
+    )
+    await page.evaluate(() => {
+      const zones = [...document.querySelectorAll('.rd-hover-zone')]
+      const card = zones[zones.length - 1].querySelector('.rd-card')
+      const buttons = [...card.querySelectorAll('h3 button')]
+      buttons[buttons.length - 1]?.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
     await page.evaluate(() => {
       window.getSelection()?.removeAllRanges()
       document.querySelector('.rd-card-pin')?.click()

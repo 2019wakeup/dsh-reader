@@ -77,8 +77,8 @@ export const READER_CSS = `
 .rd-entry:hover{background:var(--dsw-alias-bg-layer-1)}
 .rd-entry .rd-ext{flex:0 0 auto;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:5px;padding:2px 5px}
 .rd-entry .rd-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rd-hover-zone{position:fixed;z-index:80;padding:16px}
-.rd-hover-zone .rd-card{position:absolute;left:0;top:0;z-index:auto}
+.rd-hover-zone{position:fixed;z-index:80;padding:0}
+.rd-hover-zone .rd-card{position:absolute;left:16px;top:16px;z-index:auto}
 .rd-card{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:min(62vh,500px);overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:14px 15px;animation:rd-in .12s ease-out;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent) transparent}
 .rd-card::-webkit-scrollbar{width:8px}
 .rd-card::-webkit-scrollbar-track{background:transparent;margin:8px 0}

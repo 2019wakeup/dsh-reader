@@ -44,7 +44,20 @@ async function main() {
       return json({ store: currentStore })
     }
     if (path.includes('/api/guide')) return json({ guide: fixtures.guide, reused: 0, generated: 0, store: currentStore })
-    if (path.includes('/api/explain')) return json({ concept: { ...fixtures.concept, occurrences: [] }, store: currentStore })
+    if (path.includes('/api/explain')) {
+      const payload = JSON.parse(init?.body || '{}')
+      let concept = { ...fixtures.concept, occurrences: [] }
+      if (payload.parentId) {
+        // Reuse the second fixture concept so the store and the concept-library
+        // counts stay untouched; this is only for the stacked-card rendering test.
+        concept = {
+          ...fixtures.store.concepts.c2,
+          occurrences: [],
+          parentId: payload.parentId,
+        }
+      }
+      return json({ concept, store: currentStore })
+    }
     if (path.includes('/api/concept/ask')) return json({ answer: '示例回答：这是视觉测试夹具。', store: currentStore })
     if (path.includes('/api/translate')) {
       const payload = JSON.parse(init?.body || '{}')
