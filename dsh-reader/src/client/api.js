@@ -1,10 +1,38 @@
 const BASE = '/dsh-reader-live'
 
-async function request(path, init) {
-  const res = await fetch(BASE + path, init)
-  const data = await res.json().catch(() => null)
-  if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
-  return data
+// The host aborts a stalled explanation at 90s; wait slightly longer so the
+// server's message wins, but never let the card spin forever.
+const EXPLAIN_TIMEOUT_MS = 100_000
+
+const timeoutText = () => (typeof t === 'function' ? t('label.timeout') : 'request timed out')
+
+/**
+ * Fetch JSON from the plugin host.
+ *
+ * `timeoutMs` is for the few calls the reader blocks a pending card on: without
+ * it a stalled request leaves the card spinning with no error and no way out.
+ */
+async function request(path, init, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) || 0
+  if (timeoutMs <= 0) {
+    const res = await fetch(BASE + path, init)
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    return data
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(BASE + path, { ...init, signal: controller.signal })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    return data
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(timeoutText())
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export const api = {
@@ -127,10 +155,17 @@ export const api = {
     })
   },
   explain(sessionId, payload) {
-    return request(`/api/explain?sessionId=${encodeURIComponent(sessionId || '')}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    return request(
+      `/api/explain?sessionId=${encodeURIComponent(sessionId || '')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      { timeoutMs: EXPLAIN_TIMEOUT_MS },
+    )
   },
+  // Exposed for tests: the timeout path is otherwise unreachable without a
+  // hundred-second wait.
+  __request: request,
 }

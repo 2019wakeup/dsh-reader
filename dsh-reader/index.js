@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { resolveInWorkspace } from './lib/paths.js'
+import { createDeadline } from './lib/deadline.js'
 import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLatestBackup } from './lib/store.js'
 import { recordSent } from './lib/sent.js'
 import { blockHash } from './src/client/translate.js'
@@ -189,6 +190,21 @@ function pluginModel(store, ctx) {
 
 const effortCache = new Map()
 
+/**
+ * How long one reader-initiated explanation may run before it is aborted.
+ *
+ * Nothing else bounds this call: it runs outside the agent loop, so a provider
+ * stream that stalls without finishing or erroring would keep the request — and
+ * the reader's pending card — alive indefinitely. Override for slow providers.
+ */
+const EXPLAIN_TIMEOUT_ENV = 'DSH_READER_EXPLAIN_TIMEOUT_MS'
+const DEFAULT_EXPLAIN_TIMEOUT_MS = 90_000
+
+function explainTimeoutMs() {
+  const configured = Number(process.env[EXPLAIN_TIMEOUT_ENV])
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_EXPLAIN_TIMEOUT_MS
+}
+
 async function effortsFor(ctx, provider, model) {
   const key = `${provider}|${model}`
   if (effortCache.has(key)) return effortCache.get(key)
@@ -209,28 +225,43 @@ async function pickEffort(ctx, provider, model, preferred) {
   return order.find((id) => efforts.includes(id)) || null
 }
 
-async function complete(ctx, { system, user, maxTokens = 700, signal, provider: providerOverride, model: modelOverride, reasoningEffort }) {
+async function complete(
+  ctx,
+  { system, user, maxTokens = 700, signal: callerSignal, timeoutMs = 0, provider: providerOverride, model: modelOverride, reasoningEffort },
+) {
   const selection = ctx.agentDefaultModel?.currentSelection?.()
   const provider = providerOverride || selection?.provider
   const model = modelOverride || selection?.model
   if (!provider || !model) throw httpError(503, 'no model configured')
+  const deadline = createDeadline({ timeoutMs, signal: callerSignal })
+  const timeoutError = () => httpError(504, `model did not answer within ${timeoutMs}ms`)
   let reply = ''
-  const stream = ctx.llm.stream({
-    provider,
-    model,
-    ...(reasoningEffort ? { reasoningEffort } : {}),
-    system,
-    messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
-    maxTokens,
-    temperature: 0.2,
-    signal,
-  })
-  for await (const chunk of stream) {
-    if (chunk.type === 'text-delta') reply += chunk.text
-    if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
-      throw httpError(502, chunk.reason.failure?.message || 'model error')
+  try {
+    const stream = ctx.llm.stream({
+      provider,
+      model,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
+      maxTokens,
+      temperature: 0.2,
+      signal: deadline.signal,
+    })
+    for await (const chunk of stream) {
+      if (chunk.type === 'text-delta') reply += chunk.text
+      if (chunk.type === 'finish' && chunk.reason?.kind === 'error') {
+        throw httpError(502, chunk.reason.failure?.message || 'model error')
+      }
     }
+  } catch (error) {
+    // The aborted stream usually surfaces as its own error; report our deadline
+    // instead, because "the provider never answered" is the useful diagnosis.
+    if (deadline.timedOut) throw timeoutError()
+    throw error
+  } finally {
+    deadline.dispose()
   }
+  if (deadline.timedOut) throw timeoutError()
   return reply
 }
 
@@ -252,7 +283,14 @@ async function explainConcept(ctx, cwd, body) {
     if (depth === 'full' && existing.depth !== 'full' && existing.source !== 'user') {
       const { system, user } = buildExplainPrompt({ term: existing.term, sentence, paragraph, docTitle: body?.docTitle })
       const parsed = parseExplanation(
-        await complete(ctx, { system, user, maxTokens: 700, provider: model.provider, model: model.model }),
+        await complete(ctx, {
+          system,
+          user,
+          maxTokens: 1600,
+          timeoutMs: explainTimeoutMs(),
+          provider: model.provider,
+          model: model.model,
+        }),
       )
       const stored = await mutateStore(cwd, (current) => {
         const target = current.concepts[existing.id]
@@ -289,7 +327,15 @@ async function explainConcept(ctx, cwd, body) {
           sentence: body.sentence,
           docTitle: body.docTitle,
         })
-        note = parseContextNote(await complete(ctx, { ...prompt, maxTokens: 200, provider: model.provider, model: model.model })).note
+        note = parseContextNote(
+          await complete(ctx, {
+            ...prompt,
+            maxTokens: 400,
+            timeoutMs: explainTimeoutMs(),
+            provider: model.provider,
+            model: model.model,
+          }),
+        ).note
       }
       const stored = await mutateStore(cwd, (current) => {
         recordSent(current, {
@@ -329,7 +375,12 @@ async function explainConcept(ctx, cwd, body) {
     pending = complete(ctx, {
       system,
       user,
-      maxTokens: quick ? 260 : 700,
+      // The whole budget, not just the JSON: a reasoning model spends tokens
+      // before it emits anything. 260 truncated the quick explanation and hid
+      // the real failure behind an unusable reply; the guide path uses 900 for
+      // a comparable single call.
+      maxTokens: quick ? 900 : 1600,
+      timeoutMs: explainTimeoutMs(),
       provider: model.provider,
       model: model.model,
       ...(quickEffort ? { reasoningEffort: quickEffort } : {}),
@@ -597,13 +648,45 @@ async function mutateRoute(ctx, req, res) {
   }
 }
 
+/**
+ * Leave a breadcrumb when an explanation fails.
+ *
+ * A failed explain used to leave no trace at all — no store write, no log — so
+ * the only symptom was a card that never stopped spinning. Recording the last
+ * few failures makes the next report diagnosable.
+ */
+async function recordExplainFailure(cwd, body, error) {
+  if (!cwd) return
+  const entry = {
+    at: Date.now(),
+    route: 'explain',
+    term: String(body?.term || '').slice(0, 80),
+    depth: body?.depth === 'full' ? 'full' : 'quick',
+    status: typeof error?.status === 'number' ? error.status : 0,
+    message: String(error?.message || error).slice(0, 300),
+  }
+  try {
+    await mutateStore(cwd, (current) => {
+      current.debug.lastError = entry
+      const failures = Array.isArray(current.debug.errors) ? current.debug.errors : []
+      current.debug.errors = [...failures, entry].slice(-5)
+      return current
+    })
+  } catch {
+    // Diagnostics must never mask the failure the caller asked about.
+  }
+}
+
 async function explainRoute(ctx, req, res) {
+  let cwd = ''
+  let body = null
   try {
     const url = new URL(req.url, 'http://local')
-    const cwd = await workspaceFor(ctx, url.searchParams.get('sessionId'))
-    const body = await readBody(req)
+    cwd = await workspaceFor(ctx, url.searchParams.get('sessionId'))
+    body = await readBody(req)
     send(res, 200, await explainConcept(ctx, cwd, body))
   } catch (error) {
+    await recordExplainFailure(cwd, body, error)
     handleRouteError(res, error)
   }
 }

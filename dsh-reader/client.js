@@ -228,6 +228,7 @@ const ZH = {
   'label.notePlaceholder': '写点备注…',
   'label.error': '出错了',
   'label.noModel': '未配置可用模型，无法生成解释',
+  'label.timeout': '模型没有响应，已超时；请重试，或在设置里调高解释超时',
   'label.traversal': '路径不合法',
   'label.epubFail': 'EPUB 解析失败',
   'label.pdfFail': 'PDF 加载失败',
@@ -428,6 +429,7 @@ const EN = {
   'label.notePlaceholder': 'Add a note…',
   'label.error': 'Something went wrong',
   'label.noModel': 'No model is configured',
+  'label.timeout': 'The model did not answer in time; retry, or raise the explanation timeout',
   'label.sessionLost': 'Session or workspace unavailable; reopen from a session',
   'label.docMissing': 'Document not found',
   'label.tooLarge': 'Content is too large; narrow the scope and retry',
@@ -451,6 +453,7 @@ function errorText(message) {
   const raw = String(message || '')
   const rules = [
     [/no model configured/i, 'label.noModel'],
+    [/did not answer within|timed out|timeout/i, 'label.timeout'],
     [/session workspace unavailable|sessionId required/i, 'label.sessionLost'],
     [/unknown docKey|unknown doc|unknown file/i, 'label.docMissing'],
     [/too many sections|too large|body too large/i, 'label.tooLarge'],
@@ -468,11 +471,39 @@ function t(key) {
 
 const BASE = '/dsh-reader-live'
 
-async function request(path, init) {
-  const res = await fetch(BASE + path, init)
-  const data = await res.json().catch(() => null)
-  if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
-  return data
+// The host aborts a stalled explanation at 90s; wait slightly longer so the
+// server's message wins, but never let the card spin forever.
+const EXPLAIN_TIMEOUT_MS = 100_000
+
+const timeoutText = () => (typeof t === 'function' ? t('label.timeout') : 'request timed out')
+
+/**
+ * Fetch JSON from the plugin host.
+ *
+ * `timeoutMs` is for the few calls the reader blocks a pending card on: without
+ * it a stalled request leaves the card spinning with no error and no way out.
+ */
+async function request(path, init, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) || 0
+  if (timeoutMs <= 0) {
+    const res = await fetch(BASE + path, init)
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    return data
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(BASE + path, { ...init, signal: controller.signal })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    return data
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(timeoutText())
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 const api = {
@@ -595,12 +626,19 @@ const api = {
     })
   },
   explain(sessionId, payload) {
-    return request(`/api/explain?sessionId=${encodeURIComponent(sessionId || '')}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    return request(
+      `/api/explain?sessionId=${encodeURIComponent(sessionId || '')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      { timeoutMs: EXPLAIN_TIMEOUT_MS },
+    )
   },
+  // Exposed for tests: the timeout path is otherwise unreachable without a
+  // hundred-second wait.
+  __request: request,
 }
 
 
@@ -5939,7 +5977,7 @@ function ReaderView(props) {
         'div',
         null,
         h('h3', null, card.term),
-        h('div', { className: 'rd-error' }, card.error),
+        h('div', { className: 'rd-error' }, errorText(card.error)),
         h(
           'div',
           { className: 'rd-actions' },

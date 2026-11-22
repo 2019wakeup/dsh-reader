@@ -11,7 +11,7 @@ const BACKUP_KEEP = 5
 let backupSequence = 0
 
 export function emptyStore() {
-  return { version: 2, revision: 0, prefs: defaultPrefs(), concepts: {}, docs: {}, debug: { lastSent: [] } }
+  return { version: 2, revision: 0, prefs: defaultPrefs(), concepts: {}, docs: {}, debug: { lastSent: [], lastError: null, errors: [] } }
 }
 
 function isRecord(value) {
@@ -85,6 +85,18 @@ function normalizeDocs(raw) {
   return docs
 }
 
+function normalizeFailure(raw) {
+  if (!isRecord(raw)) return null
+  return {
+    at: Number.isFinite(raw.at) ? raw.at : 0,
+    route: typeof raw.route === 'string' ? raw.route.slice(0, 40) : 'explain',
+    term: typeof raw.term === 'string' ? raw.term.slice(0, 80) : '',
+    depth: raw.depth === 'full' ? 'full' : 'quick',
+    status: Number.isFinite(raw.status) ? raw.status : 0,
+    message: typeof raw.message === 'string' ? raw.message.slice(0, 300) : '',
+  }
+}
+
 function normalizeDebug(raw) {
   const lastSent = raw && Array.isArray(raw.lastSent)
     ? raw.lastSent
@@ -97,7 +109,11 @@ function normalizeDebug(raw) {
           chars: Number.isFinite(item.chars) ? item.chars : 0,
         }))
     : []
-  return { lastSent }
+  const errors = raw && Array.isArray(raw.errors)
+    ? raw.errors.map(normalizeFailure).filter(Boolean).slice(-5)
+    : []
+  const lastError = (raw && normalizeFailure(raw.lastError)) || errors[errors.length - 1] || null
+  return { lastSent, lastError, errors }
 }
 
 function normalizeV2(raw) {

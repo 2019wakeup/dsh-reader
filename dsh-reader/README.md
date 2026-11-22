@@ -52,3 +52,4 @@ node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
 - 固定版式 EPUB（FXL）不支持。
 - 段落对照翻译、概念图谱、移动端尚未包含（见 1.0 PRD 决策）。
 - 解释/导读/追问需要 DSH 已配置可用模型。
+- 解释请求有 90 秒上限：模型迟迟不返回时会被中止并在卡片上显示超时（重试按钮可直接再试）。慢的渠道可以用环境变量 `DSH_READER_EXPLAIN_TIMEOUT_MS` 调高；失败原因会写进 `.dsh-reader/store.json` 的 `debug.lastError`。
