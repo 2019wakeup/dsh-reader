@@ -21,7 +21,7 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const BASELINE = path.join(here, 'visual', 'baseline')
 
 const UPDATE = process.env.VISUAL_UPDATE === '1'
-const DEMOS = ['示例-分布式系统阅读.md', '示例-分布式系统.epub', '示例-分布式系统.pdf']
+const DEMOS = ['示例-分布式系统阅读.md', '示例-Markdown语法.md', '示例-分布式系统.epub', '示例-分布式系统.pdf']
 
 const results = []
 function record(name, pass, detail) {
@@ -908,6 +908,42 @@ async function main() {
       'epub arrow at chapter end advances a chapter',
       nextChapter.indicator !== beforeChapter || !nextChapter.text.includes('一致性模型'),
       `${beforeChapter} -> ${nextChapter.indicator}`,
+    )
+
+    await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await clickAny('.rd-toolbar button', ['←'])
+    await page.waitForSelector('.rd-library', { timeout: 8000 })
+    await clickAny('.rd-entry', ['示例-Markdown语法.md'])
+    await page.waitForSelector('.rd-prose table', { timeout: 15000 })
+    const markdownRich = await page.evaluate(() => ({
+      tables: document.querySelectorAll('.rd-prose .rd-table-wrap table').length,
+      headers: [...document.querySelectorAll('.rd-prose thead th')].map((node) => node.textContent),
+      rows: document.querySelectorAll('.rd-prose tbody tr').length,
+      boxes: document.querySelectorAll('.rd-prose .rd-task input[type=checkbox]').length,
+      checked: document.querySelectorAll('.rd-prose .rd-task input[type=checkbox]:checked').length,
+      nested: document.querySelectorAll('.rd-prose li ul li').length,
+      codeLangs: [...document.querySelectorAll('.rd-prose pre code')].map((node) => node.getAttribute('class')),
+      align: document.querySelector('.rd-prose th[style]')?.getAttribute('style') || '',
+    }))
+    record('markdown tables render with header and rows', markdownRich.tables === 2 && markdownRich.rows === 6, `${markdownRich.tables} tables, ${markdownRich.rows} rows, ${markdownRich.align}`)
+    record('markdown table alignment is kept', markdownRich.align.includes('text-align:center'), markdownRich.align)
+    record('markdown task lists render checkboxes', markdownRich.boxes === 3 && markdownRich.checked === 2, `${markdownRich.checked}/${markdownRich.boxes} checked`)
+    record('markdown nested lists render', markdownRich.nested >= 2, `${markdownRich.nested} nested li`)
+    record('markdown fenced code keeps its language', markdownRich.codeLangs.some((value) => value === 'language-js'), markdownRich.codeLangs.join(','))
+    await shot('15-markdown-tables')
+    await page.evaluate(() => {
+      document.querySelector('.rd-prose img[alt="阅读流程示意"]')?.scrollIntoView({ block: 'center' })
+    })
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const markdownImage = await page.evaluate(() => {
+      const image = document.querySelector('.rd-prose img[alt="阅读流程示意"]')
+      return image ? { width: image.naturalWidth, complete: image.complete, src: image.getAttribute('src') || '' } : null
+    })
+    record(
+      'markdown relative images load through the file route',
+      Boolean(markdownImage && markdownImage.width > 0 && markdownImage.src.includes('/api/file')),
+      markdownImage ? `${markdownImage.width}px ${markdownImage.src.slice(0, 80)}` : 'missing',
     )
 
     const enBrowser = await puppeteer.launch({

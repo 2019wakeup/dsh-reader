@@ -33,7 +33,18 @@ export const READER_CSS = `
 .rd-prose li{margin:.3em 0}
 .rd-prose hr{border:0;border-top:1px solid var(--dsw-alias-border-l1);margin:2em 0}
 .rd-prose a{color:var(--dsw-alias-brand-primary);text-decoration:underline;text-underline-offset:2px}
-.rd-prose img{max-width:100%;height:auto;border-radius:8px}
+.rd-prose img{max-width:100%;height:auto;border-radius:8px;margin:.4em 0}
+.rd-prose .rd-img-alt{display:inline-block;padding:2px 8px;border:1px dashed var(--dsw-alias-border-l1);border-radius:6px;font-size:.9em;color:var(--dsw-alias-label-secondary)}
+.rd-prose del{color:var(--dsw-alias-label-secondary)}
+.rd-prose .rd-table-wrap{max-width:100%;overflow-x:auto;margin:1.1em 0;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}
+.rd-prose table{width:100%;border-collapse:collapse;font-size:.94em;line-height:1.55}
+.rd-prose th,.rd-prose td{border-bottom:1px solid var(--dsw-alias-border-l1);border-right:1px solid var(--dsw-alias-border-l1);padding:8px 11px;text-align:left;vertical-align:top}
+.rd-prose th:last-child,.rd-prose td:last-child{border-right:0}
+.rd-prose tr:last-child td{border-bottom:0}
+.rd-prose thead th{background:var(--dsw-alias-bg-layer-2);font-weight:600;white-space:nowrap}
+.rd-prose tbody tr:nth-child(even) td{background:var(--dsw-alias-bg-layer-1)}
+.rd-prose .rd-task{list-style:none;margin-left:-1.2em}
+.rd-prose .rd-task input{margin-right:6px;vertical-align:-1px}
 .rd-term{text-decoration:underline dashed var(--dsw-alias-border-l2);text-underline-offset:3px;cursor:help;border-radius:3px}
 .rd-term:hover{background:var(--dsw-alias-bg-layer-2)}
 .rd-term:focus-visible,.rd-hl:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}

@@ -26,6 +26,12 @@ const MIME = {
   '.md': 'text/markdown; charset=utf-8',
   '.markdown': 'text/markdown; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
 }
 
 function json(value, status = 200) {

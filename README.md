@@ -10,6 +10,8 @@
 
 ![概念卡](dsh-reader/eval/visual/baseline/03-concept-card.png)
 
+![Markdown 表格与任务列表](dsh-reader/eval/visual/baseline/15-markdown-tables.png)
+
 ## 六个亮点
 
 ### 1. 厚书真的读得完：结构感知的分层导读
@@ -63,9 +65,9 @@
 
 | 门禁 | 数量 |
 |---|---|
-| 单元 / DOM 测试 | **209** |
+| 单元 / DOM 测试 | **222** |
 | 产品级 eval | **10** |
-| 视觉回归（无头 Chrome + 像素基线 + 中英文界面） | **78** |
+| 视觉回归（无头 Chrome + 像素基线 + 中英文界面） | **88** |
 | 发布检查（迁移演练 / 导出回环 / 资产 / 文档） | **10** |
 
 真书 dogfood 也进了流程：523 页 PDF 与 27 章 EPUB 的渲染、目录、翻译、快速导读都用真实数据跑过。CI 在 Ubuntu 上跑 `test + eval`，每次 push 自动验证。
@@ -115,9 +117,9 @@
 cd dsh-reader
 pnpm install
 pnpm build            # 生成 client.js
-pnpm test             # 209 条单元/DOM 测试
+pnpm test             # 222 条单元/DOM 测试
 pnpm eval             # 10 项产品级 eval
-pnpm eval:visual      # 78 项视觉检查（需要 DSH GUI + Chrome）
+pnpm eval:visual      # 88 项视觉检查（需要 DSH GUI + Chrome）
 pnpm release:check    # 10 项发布门禁
 ```
 

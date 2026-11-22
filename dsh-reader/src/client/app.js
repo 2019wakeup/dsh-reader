@@ -4,11 +4,34 @@ function decodeText(bytes) {
   return new TextDecoder('utf-8').decode(bytes)
 }
 
+function markdownImageResolver(sessionId, doc) {
+  if (!sessionId || !doc || !doc.path) return undefined
+  return (source) => {
+    if (/^(https?:|data:image\/)/i.test(source)) return source
+    if (source.startsWith('/') || source.startsWith('#')) return null
+    let decoded = source
+    try {
+      decoded = decodeURIComponent(source)
+    } catch {
+      /* keep the raw path */
+    }
+    const parts = String(doc.path).split('/')
+    parts.pop()
+    for (const part of decoded.split('/')) {
+      if (!part || part === '.') continue
+      if (part === '..') parts.pop()
+      else parts.push(part)
+    }
+    const path = parts.filter(Boolean).join('/')
+    return path ? api.fileUrl(sessionId, path) : null
+  }
+}
+
 function headingsOf(text) {
   const out = []
   let inFence = false
   for (const line of String(text || '').split('\n')) {
-    if (/^```/.test(line.trim())) {
+    if (/^(```|~~~)/.test(line.trim())) {
       inFence = !inFence
       continue
     }
@@ -2041,7 +2064,7 @@ export function ReaderView(props) {
   const renderedHtml = React.useMemo(() => {
     if (!doc || doc.ext === '.pdf') return ''
     if (doc.ext === '.epub') return (doc.epub.chapters[chapter] || {}).html || ''
-    return markdownRender(decodeText(doc.bytes))
+    return markdownRender(decodeText(doc.bytes), { resolveImage: markdownImageResolver(sessionId, doc) })
   }, [doc, chapter])
 
   const translatedOnlyHtml = React.useMemo(() => {

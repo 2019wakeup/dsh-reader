@@ -22,6 +22,9 @@ export const api = {
       return { bytes, fingerprint: res.headers.get('x-doc-fingerprint') || '' }
     })
   },
+  fileUrl(sessionId, path) {
+    return `${BASE}/api/file?sessionId=${encodeURIComponent(sessionId || '')}&path=${encodeURIComponent(path)}`
+  },
   getStore(sessionId) {
     return request(`/api/store?sessionId=${encodeURIComponent(sessionId || '')}`)
   },
