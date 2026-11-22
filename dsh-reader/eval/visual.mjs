@@ -761,6 +761,12 @@ async function main() {
       fullscreenClicked && fullscreen && fullscreen.width >= fullscreen.viewportWidth - 1 && fullscreen.height >= fullscreen.viewportHeight - 1 && fullscreen.left <= 1 && fullscreen.top <= 1,
       JSON.stringify(fullscreen),
     )
+    const exitFullscreenClicked = await clickAny('.rd-drawer button', ['退出全屏', 'Exit fullscreen'])
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const fullscreenClosedByButton = await page.evaluate(() => !document.querySelector('.rd-map-stage-fullscreen'))
+    record('fullscreen button exits mindmap fullscreen', exitFullscreenClicked && fullscreenClosedByButton, '')
+    await clickAny('.rd-drawer button', ['全屏', 'Fullscreen'])
+    await new Promise((resolve) => setTimeout(resolve, 350))
     await page.keyboard.press('Escape')
     await new Promise((resolve) => setTimeout(resolve, 300))
     const fullscreenClosed = await page.evaluate(() => !document.querySelector('.rd-map-stage-fullscreen'))
@@ -785,6 +791,17 @@ async function main() {
     }))
     record('clicking a chapter expands its sections', mapExpanded.nodes > mapDefault.nodes, `${mapDefault.nodes} -> ${mapExpanded.nodes}`)
     record('selected node shows its summary above the map', mapExpanded.detail.includes('第一部分') && mapExpanded.summary.length > 5 && mapExpanded.visible, `${mapExpanded.detail}: ${mapExpanded.summary.slice(0, 24)}`)
+    const childRect = await page.$eval('[data-node-id="s1"] rect', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.click(childRect.x, childRect.y)
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    const childDetail = await page.evaluate(() => ({
+      title: document.querySelector('.rd-map-detail-title')?.textContent || '',
+      open: Boolean(document.querySelector('.rd-drawer')),
+    }))
+    record('clicking a section keeps the summary panel open', childDetail.open && childDetail.title.includes('一致性模型'), childDetail.title)
     const chevronRect = await page.$$eval('[data-node-id="part1"] rect', (nodes) => {
       const node = nodes[nodes.length - 1]
       const rect = node.getBoundingClientRect()

@@ -343,7 +343,9 @@ export function ReaderView(props) {
   const guide = docKey ? store.docs?.[docKey]?.guide : null
   const guideTree = React.useMemo(
     () => (guide ? buildGuideTree(doc ? doc.name : '', guide) : null),
-    [guide, doc],
+    // Only a new guide (or opening another book) may rebuild the map; page,
+    // selection and structure-probe updates must not reset its expansion.
+    [guide, doc ? doc.name : ''],
   )
   const guideLayout = React.useMemo(
     () => (guideTree ? layoutTree(guideTree, collapsedIds) : null),
@@ -364,6 +366,18 @@ export function ReaderView(props) {
   React.useEffect(() => {
     if (drawer !== 'guide' || guideView !== 'map') setMapFullscreen(false)
   }, [drawer, guideView])
+
+  React.useEffect(() => {
+    if (!mapFullscreen) return
+    const onEscape = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setMapFullscreen(false)
+    }
+    window.addEventListener('keydown', onEscape, true)
+    return () => window.removeEventListener('keydown', onEscape, true)
+  }, [mapFullscreen])
 
   React.useEffect(() => {
     if (!mapFullscreen) return
@@ -1820,29 +1834,47 @@ export function ReaderView(props) {
       { className: `rd-map-stage${mapFullscreen ? ' rd-map-stage-fullscreen' : ''}` },
       h(
         'div',
-        { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+        { className: 'rd-map-toolbar' },
         h(
-          'button',
-          { className: 'rd-btn', onClick: () => setMapFullscreen((value) => !value) },
-          mapFullscreen ? t('label.exitFullscreen') : t('label.fullscreen'),
+          'div',
+          { className: 'rd-map-group' },
+          h('button', { className: 'rd-map-btn', title: t('label.zoomOut'), onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
+          h('span', { className: 'rd-map-zoom' }, `${Math.round(mapScale * 100)}%`),
+          h('button', { className: 'rd-map-btn', title: t('label.zoomIn'), onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
+          h('button', { className: 'rd-map-btn', onClick: () => setMapScale(1) }, '1:1'),
         ),
-        h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
-        h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
-        h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
-        h('button', { className: 'rd-btn ghost', onClick: () => setMapScale(1) }, '1:1'),
-        h('button', { className: 'rd-btn ghost', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
+        h(
+          'div',
+          { className: 'rd-map-group' },
+          h('button', { className: 'rd-map-btn', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
+          h(
+            'button',
+            {
+              className: 'rd-map-btn',
+              onClick: () =>
+                setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+            },
+            t('label.collapseAll'),
+          ),
+        ),
+        h('span', { className: 'rd-map-spacer' }),
+        h(
+          'div',
+          { className: 'rd-map-group' },
+          h('button', { className: 'rd-map-btn', onClick: exportGuideSvg }, 'SVG'),
+          h('button', { className: 'rd-map-btn', onClick: exportGuidePng }, 'PNG'),
+          h('button', { className: 'rd-map-btn', onClick: exportGuideMd }, 'MD'),
+        ),
         h(
           'button',
           {
-            className: 'rd-btn ghost',
-            onClick: () =>
-              setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+            className: 'rd-map-btn rd-map-fullscreen',
+            title: mapFullscreen ? t('label.exitFullscreen') : t('label.fullscreen'),
+            'aria-label': mapFullscreen ? t('label.exitFullscreen') : t('label.fullscreen'),
+            onClick: () => setMapFullscreen((value) => !value),
           },
-          t('label.collapseAll'),
+          mapFullscreen ? `× ${t('label.exitFullscreen')}` : t('label.fullscreen'),
         ),
-        h('button', { className: 'rd-btn', onClick: exportGuideSvg }, 'SVG'),
-        h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
-        h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
       ),
       selected
         ? h(

@@ -234,6 +234,8 @@ const ZH = {
   'label.collapseAll': '收起全部',
   'label.fullscreen': '全屏',
   'label.exitFullscreen': '退出全屏',
+  'label.zoomIn': '放大',
+  'label.zoomOut': '缩小',
   'label.jumpOriginal': '跳到原文',
   'label.timeout': '模型没有响应，已超时；请重试，或在设置里调高解释超时',
   'label.traversal': '路径不合法',
@@ -442,6 +444,8 @@ const EN = {
   'label.collapseAll': 'Collapse all',
   'label.fullscreen': 'Fullscreen',
   'label.exitFullscreen': 'Exit fullscreen',
+  'label.zoomIn': 'Zoom in',
+  'label.zoomOut': 'Zoom out',
   'label.jumpOriginal': 'Jump to text',
   'label.timeout': 'The model did not answer in time; retry, or raise the explanation timeout',
   'label.sessionLost': 'Session or workspace unavailable; reopen from a session',
@@ -760,7 +764,17 @@ const READER_CSS = `
 .rd-theme-sepia .rd-main{background:#f5ecd9;color:#3d2f24}
 .rd-theme-sepia .rd-page{color:#3d2f24}
 .rd-relink{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 12px;font-size:12px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-map-stage{display:flex;flex-direction:column;min-height:0}
+\.rd-map-stage{display:flex;flex-direction:column;min-height:0}
+.rd-map-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.rd-map-group{display:flex;align-items:center;gap:2px;padding:3px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.rd-map-btn{height:26px;min-width:28px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap}
+.rd-map-btn:hover{background:var(--dsw-alias-bg-layer-2)}
+.rd-map-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.rd-map-zoom{min-width:42px;text-align:center;font-size:12px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.rd-map-spacer{flex:1;min-width:4px}
+.rd-map-toolbar .rd-map-fullscreen{padding:0 10px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+.rd-map-stage-fullscreen .rd-map-toolbar{flex:0 0 auto}
+.rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen{position:fixed;inset:0;z-index:130;display:flex;flex-direction:column;min-height:0;padding:14px 16px;background:var(--dsw-alias-bg-base)}
 .rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
@@ -3321,7 +3335,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.9.8'
+const READER_VERSION = '0.9.9'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3461,7 +3475,9 @@ function ReaderView(props) {
   const guide = docKey ? store.docs?.[docKey]?.guide : null
   const guideTree = React.useMemo(
     () => (guide ? buildGuideTree(doc ? doc.name : '', guide) : null),
-    [guide, doc],
+    // Only a new guide (or opening another book) may rebuild the map; page,
+    // selection and structure-probe updates must not reset its expansion.
+    [guide, doc ? doc.name : ''],
   )
   const guideLayout = React.useMemo(
     () => (guideTree ? layoutTree(guideTree, collapsedIds) : null),
@@ -3482,6 +3498,18 @@ function ReaderView(props) {
   React.useEffect(() => {
     if (drawer !== 'guide' || guideView !== 'map') setMapFullscreen(false)
   }, [drawer, guideView])
+
+  React.useEffect(() => {
+    if (!mapFullscreen) return
+    const onEscape = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setMapFullscreen(false)
+    }
+    window.addEventListener('keydown', onEscape, true)
+    return () => window.removeEventListener('keydown', onEscape, true)
+  }, [mapFullscreen])
 
   React.useEffect(() => {
     if (!mapFullscreen) return
@@ -4938,29 +4966,47 @@ function ReaderView(props) {
       { className: `rd-map-stage${mapFullscreen ? ' rd-map-stage-fullscreen' : ''}` },
       h(
         'div',
-        { className: 'rd-actions', style: { marginTop: 0, marginBottom: '8px' } },
+        { className: 'rd-map-toolbar' },
         h(
-          'button',
-          { className: 'rd-btn', onClick: () => setMapFullscreen((value) => !value) },
-          mapFullscreen ? t('label.exitFullscreen') : t('label.fullscreen'),
+          'div',
+          { className: 'rd-map-group' },
+          h('button', { className: 'rd-map-btn', title: t('label.zoomOut'), onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
+          h('span', { className: 'rd-map-zoom' }, `${Math.round(mapScale * 100)}%`),
+          h('button', { className: 'rd-map-btn', title: t('label.zoomIn'), onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
+          h('button', { className: 'rd-map-btn', onClick: () => setMapScale(1) }, '1:1'),
         ),
-        h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.max(0.6, Number((value - 0.1).toFixed(2)))) }, '−'),
-        h('span', { className: 'rd-muted' }, `${Math.round(mapScale * 100)}%`),
-        h('button', { className: 'rd-btn', onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
-        h('button', { className: 'rd-btn ghost', onClick: () => setMapScale(1) }, '1:1'),
-        h('button', { className: 'rd-btn ghost', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
+        h(
+          'div',
+          { className: 'rd-map-group' },
+          h('button', { className: 'rd-map-btn', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
+          h(
+            'button',
+            {
+              className: 'rd-map-btn',
+              onClick: () =>
+                setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+            },
+            t('label.collapseAll'),
+          ),
+        ),
+        h('span', { className: 'rd-map-spacer' }),
+        h(
+          'div',
+          { className: 'rd-map-group' },
+          h('button', { className: 'rd-map-btn', onClick: exportGuideSvg }, 'SVG'),
+          h('button', { className: 'rd-map-btn', onClick: exportGuidePng }, 'PNG'),
+          h('button', { className: 'rd-map-btn', onClick: exportGuideMd }, 'MD'),
+        ),
         h(
           'button',
           {
-            className: 'rd-btn ghost',
-            onClick: () =>
-              setCollapsedIds(new Set(guideLayout.nodes.filter((node) => node.hasChildren).map((node) => node.id))),
+            className: 'rd-map-btn rd-map-fullscreen',
+            title: mapFullscreen ? t('label.exitFullscreen') : t('label.fullscreen'),
+            'aria-label': mapFullscreen ? t('label.exitFullscreen') : t('label.fullscreen'),
+            onClick: () => setMapFullscreen((value) => !value),
           },
-          t('label.collapseAll'),
+          mapFullscreen ? `× ${t('label.exitFullscreen')}` : t('label.fullscreen'),
         ),
-        h('button', { className: 'rd-btn', onClick: exportGuideSvg }, 'SVG'),
-        h('button', { className: 'rd-btn', onClick: exportGuidePng }, 'PNG'),
-        h('button', { className: 'rd-btn', onClick: exportGuideMd }, 'MD'),
       ),
       selected
         ? h(
