@@ -29,6 +29,7 @@ const files = [
   'src/client/export.js',
   'src/client/relink.js',
   'src/client/search.js',
+  'src/client/host-layout.js',
   'src/client/app.js',
   'src/client/entry.js',
 ]
