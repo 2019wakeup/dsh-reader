@@ -209,6 +209,8 @@ class Boundary extends React.Component {
 
 test('deleting a highlighted annotation keeps the reader mounted', async (t) => {
   resetStore()
+  Object.defineProperty(win.navigator, 'language', { value: 'zh-CN', configurable: true })
+  Object.defineProperty(win.navigator, 'languages', { value: ['zh-CN'], configurable: true })
   const component = loadBundle()
   const { createRoot } = await import('react-dom/client')
   const container = document.getElementById('app')
@@ -222,7 +224,7 @@ test('deleting a highlighted annotation keeps the reader mounted', async (t) => 
     win.close()
   })
   root.render(React.createElement(Boundary, null, React.createElement(component, { sessionId: 's1' })))
-  await tick()
+  await tick(200)
 
   const entry = container.querySelector('.rd-entry')
   assert.ok(entry, 'library row rendered: ' + (container.querySelector('#err')?.textContent || container.textContent).slice(0, 900))
