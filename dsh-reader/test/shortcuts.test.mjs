@@ -8,8 +8,10 @@ function key(name, extra = {}) {
 
 test('maps page keys to next and previous', () => {
   assert.equal(shortcutFor(key('ArrowRight')), 'next')
+  assert.equal(shortcutFor(key('ArrowDown')), 'next')
   assert.equal(shortcutFor(key('PageDown')), 'next')
   assert.equal(shortcutFor(key('ArrowLeft')), 'prev')
+  assert.equal(shortcutFor(key('ArrowUp')), 'prev')
   assert.equal(shortcutFor(key('PageUp')), 'prev')
 })
 
@@ -18,6 +20,11 @@ test('supports the jk page-key preset', () => {
   assert.equal(shortcutFor(key('k'), { pageKeys: 'jk' }), 'prev')
   assert.equal(shortcutFor(key('j')), null, 'jk only applies when selected')
   assert.equal(shortcutFor(key('j'), { editable: true, pageKeys: 'jk' }), null)
+})
+
+test('maps home and end to document edges', () => {
+  assert.equal(shortcutFor(key('Home')), 'start')
+  assert.equal(shortcutFor(key('End')), 'end')
 })
 
 test('maps undo and redo with the platform modifier', () => {

@@ -2,7 +2,7 @@
  * One keyboard mapping for the reader. Editable controls keep their own keys.
  * @param {{key?: string, metaKey?: boolean, ctrlKey?: boolean, altKey?: boolean, shiftKey?: boolean}} event
  * @param {{editable?: boolean, pageKeys?: 'arrows'|'jk'}} [context]
- * @returns {'next'|'prev'|'undo'|'redo'|'help'|null}
+ * @returns {'next'|'prev'|'start'|'end'|'undo'|'redo'|'search'|'help'|null}
  */
 export function shortcutFor(event, context = {}) {
   if (!event || context.editable) return null
@@ -13,8 +13,10 @@ export function shortcutFor(event, context = {}) {
   }
   if (modifier && !event.altKey && key.toLowerCase() === 'f') return 'search'
   if (modifier || event.altKey) return null
-  if (key === 'ArrowRight' || key === 'PageDown' || key === ' ') return 'next'
-  if (key === 'ArrowLeft' || key === 'PageUp') return 'prev'
+  if (key === 'Home') return 'start'
+  if (key === 'End') return 'end'
+  if (key === 'ArrowRight' || key === 'ArrowDown' || key === 'PageDown' || key === ' ') return 'next'
+  if (key === 'ArrowLeft' || key === 'ArrowUp' || key === 'PageUp') return 'prev'
   if (context.pageKeys === 'jk') {
     if (key === 'j') return 'next'
     if (key === 'k') return 'prev'

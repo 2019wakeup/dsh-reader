@@ -16,6 +16,11 @@ function transform(m1, m2) {
   ]
 }
 
+export async function pdfPrefetch(pdf, pages) {
+  const numbers = [...new Set(pages)].filter((number) => number >= 1 && number <= pdf.numPages)
+  await Promise.allSettled(numbers.map((number) => pdf.doc.getPage(number)))
+}
+
 export async function pdfOpen(bytes) {
   const pdfjs = await loadPdfjs()
   pdfjs.GlobalWorkerOptions.workerSrc = '/dsh-reader-live/assets/pdf.worker.min.mjs'

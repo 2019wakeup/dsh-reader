@@ -444,6 +444,33 @@ async function main() {
     record('toolbar icons are readable', toolbarIcons.min >= 16, `min ${Math.round(toolbarIcons.min)}px sizes ${toolbarIcons.sizes.join(',')} attrs ${toolbarIcons.attrs.join(',')} css ${toolbarIcons.css.join(',')} btn ${toolbarIcons.buttonWidths.join(',')} html ${toolbarIcons.html}`)
     await shot('02-markdown')
 
+    await page.setViewport({ width: 1280, height: 420, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await page.evaluate(() => {
+      document.querySelector('.rd-main').scrollTop = 0
+    })
+    await page.keyboard.press('ArrowDown')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const scrolled = await page.evaluate(() => ({
+      top: document.querySelector('.rd-main').scrollTop,
+      width: document.querySelector('.rd-progress-bar')?.style.width || '',
+    }))
+    record('arrow scrolls the document', scrolled.top > 80, `${scrolled.top}px`)
+    record('progress bar follows scrolling', parseFloat(scrolled.width) > 0, scrolled.width)
+    await page.keyboard.press('End')
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    const atEnd = await page.evaluate(() => {
+      const main = document.querySelector('.rd-main')
+      return main.scrollHeight - main.clientHeight - main.scrollTop
+    })
+    record('End reaches the document bottom', atEnd <= 6, `${Math.max(0, Math.round(atEnd))}px from end`)
+    await page.keyboard.press('Home')
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    const backTop = await page.evaluate(() => document.querySelector('.rd-main').scrollTop)
+    record('Home returns to the top', backTop === 0, `${backTop}px`)
+    await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
     await page.hover('.rd-prose .rd-term')
     await page.waitForSelector('.rd-card', { timeout: 8000 })
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -715,6 +742,14 @@ async function main() {
         })(),
       }
     })
+    const pageInput = Boolean(await page.$('.rd-page-input'))
+    record('pdf page number is editable', pageInput, '')
+    await page.evaluate(() => {
+      const input = document.querySelector('.rd-page-input')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, '1')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
     record('pdf canvas rendered', pdf.width > 100, `${pdf.width}px wide`)
     record('pdf text layer extracted', pdf.textItems > 20, `${pdf.textItems} spans`)
     record('pdf canvas not blank', !pdf.canvasBlank, '')
@@ -752,6 +787,25 @@ async function main() {
     })()
     record('narrow card stays inside the reader', Boolean(narrowCard && narrowCard.inside), narrowCard ? `${narrowCard.card} in ${narrowCard.root}` : 'no term')
     await shot('10-narrow')
+
+    await page.mouse.move(4, 4)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await page.evaluate(() => {
+      const main = document.querySelector('.rd-main')
+      main.scrollTop = main.scrollHeight
+    })
+    const beforeChapter = await page.evaluate(() => [...document.querySelectorAll('.rd-toolbar .rd-muted')].map((node) => node.textContent).join('|'))
+    await page.keyboard.press('ArrowDown')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const nextChapter = await page.evaluate(() => ({
+      text: document.querySelector('.rd-prose')?.textContent.slice(0, 80) || '',
+      indicator: [...document.querySelectorAll('.rd-toolbar .rd-muted')].map((node) => node.textContent).join('|'),
+    }))
+    record(
+      'epub arrow at chapter end advances a chapter',
+      nextChapter.indicator !== beforeChapter || !nextChapter.text.includes('一致性模型'),
+      `${beforeChapter} -> ${nextChapter.indicator}`,
+    )
 
     const enBrowser = await puppeteer.launch({
       executablePath: CHROME,

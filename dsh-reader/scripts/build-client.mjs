@@ -23,6 +23,7 @@ const files = [
   'src/client/structure.js',
   'src/client/floating.js',
   'src/client/translate.js',
+  'src/client/navigation.js',
   'src/client/mindmap.js',
   'src/client/diagnostics.js',
   'src/client/export.js',

@@ -155,6 +155,10 @@ function PdfPageView(props) {
 function PdfPane(props) {
   const { doc, page, zoom, annotations, concepts, contentRef, spread } = props
   const pages = spread ? [page, page + 1].filter((number) => number <= doc.pdf.numPages) : [page]
+
+  React.useEffect(() => {
+    pdfPrefetch(doc.pdf, [page - 1, page + 1, page + 2, page + 3]).catch(() => {})
+  }, [doc, page])
   return h(
     'div',
     { className: 'rd-main' },
@@ -288,7 +292,10 @@ export function ReaderView(props) {
 
   const contentRef = React.useRef(null)
   const rootRef = React.useRef(null)
+  const pageInputRef = React.useRef(null)
+  const chapterScrollHint = React.useRef(null)
   const [layoutTick, setLayoutTick] = React.useState(0)
+  const [readingProgress, setReadingProgress] = React.useState(0)
   const [historyTick, setHistoryTick] = React.useState(0)
   const marksState = React.useRef({ root: null, view: '', concepts: '', annotations: '' })
   const hoverTimer = React.useRef(null)
@@ -410,9 +417,90 @@ export function ReaderView(props) {
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
 
+  const readingScroller = () => {
+    const root = contentRef.current
+    return root ? root.closest('.rd-main') || root.parentElement : null
+  }
+
+  const updateReadingProgress = () => {
+    if (!doc) {
+      setReadingProgress(0)
+      return
+    }
+    if (doc.ext === '.pdf') {
+      setReadingProgress(doc.pdf.numPages > 1 ? (page - 1) / (doc.pdf.numPages - 1) : 0)
+      return
+    }
+    const main = readingScroller()
+    if (!main) return
+    const local = scrollProgress({
+      scrollTop: main.scrollTop,
+      scrollHeight: main.scrollHeight,
+      clientHeight: main.clientHeight,
+    })
+    if (doc.ext === '.epub' && doc.epub) {
+      setReadingProgress(chapterProgress(chapter, local, doc.epub.chapters.length))
+    } else {
+      setReadingProgress(local)
+    }
+  }
+
+  const goChapter = (next, position = 'top') => {
+    chapterScrollHint.current = position
+    setChapter(next)
+  }
+
+  const scrollReading = (direction) => {
+    const main = readingScroller()
+    if (!main || !doc) return
+    const target = scrollStepTarget(
+      { scrollTop: main.scrollTop, scrollHeight: main.scrollHeight, clientHeight: main.clientHeight },
+      direction,
+    )
+    if (target.kind === 'scroll') {
+      main.scrollTo({ top: target.top, behavior: 'instant' })
+      return
+    }
+    if (doc.ext !== '.epub' || !doc.epub) return
+    if (target.kind === 'end' && chapter < doc.epub.chapters.length - 1) goChapter(chapter + 1, 'top')
+    if (target.kind === 'start' && chapter > 0) goChapter(chapter - 1, 'bottom')
+  }
+
+  React.useEffect(() => {
+    updateReadingProgress()
+  }, [doc, page, chapter, layoutTick, translationMode])
+
+  React.useEffect(() => {
+    if (!doc || doc.ext === '.pdf') return
+    const main = readingScroller()
+    if (!main) return
+    const onScroll = () => updateReadingProgress()
+    main.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => main.removeEventListener('scroll', onScroll)
+  }, [doc, chapter, layoutTick, translationMode])
+
+  React.useEffect(() => {
+    const hint = chapterScrollHint.current
+    chapterScrollHint.current = null
+    if (!hint || !doc || doc.ext !== '.epub') return
+    const main = readingScroller()
+    if (!main) return
+    requestAnimationFrame(() => {
+      main.scrollTop = hint === 'bottom' ? main.scrollHeight : 0
+      updateReadingProgress()
+    })
+  }, [chapter, doc])
+
+  React.useEffect(() => {
+    if (pageInputRef.current && document.activeElement !== pageInputRef.current) {
+      pageInputRef.current.value = String(page)
+    }
+  }, [page])
+
   React.useEffect(() => {
     const onKey = (event) => {
-      const action = shortcutFor(event, { editable: isEditableTarget(event.target) })
+      const action = shortcutFor(event, { editable: isEditableTarget(event.target), pageKeys: prefs.pageKeys })
       if (action === 'undo' || action === 'redo') {
         event.preventDefault()
         runHistory(action)
@@ -447,18 +535,34 @@ export function ReaderView(props) {
         return
       }
       if (!doc) return
-      const interactive = event.target && event.target.closest
-        ? event.target.closest('button, a, select, input, textarea, [role="button"]')
+      const typingTarget = event.target && event.target.closest
+        ? event.target.closest('input, textarea, select, [contenteditable="true"]')
         : null
-      if (action === 'next' || action === 'prev') {
-        if (interactive) return
+      const buttonTarget = event.target && event.target.closest
+        ? event.target.closest('button, a, [role="button"]')
+        : null
+      if (action === 'start' || action === 'end') {
+        if (typingTarget) return
+        if ((event.key === ' ' || event.key === 'Spacebar') && buttonTarget) return
         event.preventDefault()
-        const delta = action === 'next' ? 1 : -1
         if (doc.ext === '.pdf') {
+          setPage(action === 'start' ? 1 : doc.pdf.numPages)
+        } else {
+          const main = readingScroller()
+          if (main) main.scrollTo({ top: action === 'start' ? 0 : main.scrollHeight, behavior: 'instant' })
+        }
+        return
+      }
+      if (action === 'next' || action === 'prev') {
+        if (typingTarget) return
+        if ((event.key === ' ' || event.key === 'Spacebar') && buttonTarget) return
+        event.preventDefault()
+        if (doc.ext === '.pdf') {
+          const delta = action === 'next' ? 1 : -1
           const step = prefs.pdfSpread ? 2 : 1
           setPage((current) => Math.min(doc.pdf.numPages, Math.max(1, current + delta * step)))
-        } else if (doc.ext === '.epub') {
-          setChapter((current) => Math.min(doc.epub.chapters.length - 1, Math.max(0, current + delta)))
+        } else {
+          scrollReading(action)
         }
       }
     }
@@ -825,7 +929,7 @@ export function ReaderView(props) {
       }
       const index = doc.epub.chapters.findIndex((item) => item.path.endsWith(clean))
       if (index >= 0) {
-        setChapter(index)
+        goChapter(index, 'top')
         if (fragment) setPendingAnchor(fragment)
       }
     }
@@ -1443,7 +1547,7 @@ export function ReaderView(props) {
     if (!section) return
     if (doc?.ext === '.epub') {
       const index = Number(String(section.id).replace('c', ''))
-      if (Number.isFinite(index)) setChapter(index)
+      if (Number.isFinite(index)) goChapter(index, 'top')
       return
     }
     if (doc?.ext === '.pdf') {
@@ -1700,15 +1804,39 @@ export function ReaderView(props) {
         const shown = prefs.pdfSpread && page + 1 <= doc.pdf.numPages ? `${page}-${page + 1}` : `${page}`
         buttons.push(
           h('button', { key: 'prev', className: 'rd-btn ghost', onClick: () => setPage((p) => Math.max(1, p - step)) }, '‹'),
-          h('span', { key: 'page', className: 'rd-muted', style: { fontSize: '12px' } }, `${shown} / ${doc.pdf.numPages}`),
+          h('input', {
+            key: 'page-input',
+            ref: pageInputRef,
+            className: 'rd-page-input',
+            type: 'text',
+            inputMode: 'numeric',
+            'aria-label': t('label.page'),
+            defaultValue: String(page),
+            onFocus: (event) => event.target.select(),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') {
+                const next = parsePageInput(event.target.value, doc.pdf.numPages)
+                if (next !== null) setPage(next)
+                event.target.blur()
+              } else if (event.key === 'Escape') {
+                event.target.value = String(page)
+                event.target.blur()
+              }
+            },
+          }),
+          h(
+            'span',
+            { key: 'page', className: 'rd-muted', style: { fontSize: '12px' } },
+            `${shown} / ${doc.pdf.numPages}`,
+          ),
           h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => setPage((p) => Math.min(doc.pdf.numPages, p + step)) }, '›'),
         )
       }
       if (doc.ext === '.epub') {
         buttons.push(
-          h('button', { key: 'prev', className: 'rd-btn ghost', onClick: () => setChapter((c) => Math.max(0, c - 1)) }, '‹'),
+          h('button', { key: 'prev', className: 'rd-btn ghost', onClick: () => { if (chapter > 0) goChapter(chapter - 1, 'bottom') } }, '‹'),
           h('span', { key: 'chapter', className: 'rd-muted', style: { fontSize: '12px' } }, `${chapter + 1} / ${doc.epub.chapters.length}`),
-          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => setChapter((c) => Math.min(doc.epub.chapters.length - 1, c + 1)) }, '›'),
+          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => { if (chapter < doc.epub.chapters.length - 1) goChapter(chapter + 1, 'top') } }, '›'),
         )
       }
       buttons.push(h('span', { key: 'spacer', className: 'rd-spacer' }))
@@ -1916,7 +2044,7 @@ export function ReaderView(props) {
               tabIndex: 0,
               role: 'button',
               style: index === chapter ? { borderColor: 'var(--dsw-alias-brand-primary)' } : undefined,
-              onClick: () => setChapter(index),
+              onClick: () => goChapter(index, 'top'),
             },
             item.label || `${t('label.chapter')} ${index + 1}`,
           ),
@@ -3018,6 +3146,16 @@ export function ReaderView(props) {
       onMouseOut: onTermOut,
     },
     renderToolbar(),
+    doc
+      ? h(
+          'div',
+          { className: 'rd-progress', 'aria-hidden': 'true' },
+          h('div', {
+            className: 'rd-progress-bar',
+            style: { width: `${Math.max(0, Math.min(100, readingProgress * 100)).toFixed(1)}%` },
+          }),
+        )
+      : null,
     busy ? h('div', { className: 'rd-toast' }, t('label.loading')) : null,
     error ? h('div', { className: 'rd-error', style: { padding: '8px 14px' } }, error) : null,
     relink

@@ -63,9 +63,9 @@
 
 | 门禁 | 数量 |
 |---|---|
-| 单元 / DOM 测试 | **204** |
+| 单元 / DOM 测试 | **209** |
 | 产品级 eval | **10** |
-| 视觉回归（无头 Chrome + 像素基线 + 中英文界面） | **68** |
+| 视觉回归（无头 Chrome + 像素基线 + 中英文界面） | **74** |
 | 发布检查（迁移演练 / 导出回环 / 资产 / 文档） | **10** |
 
 真书 dogfood 也进了流程：523 页 PDF 与 27 章 EPUB 的渲染、目录、翻译、快速导读都用真实数据跑过。CI 在 Ubuntu 上跑 `test + eval`，每次 push 自动验证。
@@ -115,9 +115,9 @@
 cd dsh-reader
 pnpm install
 pnpm build            # 生成 client.js
-pnpm test             # 204 条单元/DOM 测试
+pnpm test             # 209 条单元/DOM 测试
 pnpm eval             # 10 项产品级 eval
-pnpm eval:visual      # 68 项视觉检查（需要 DSH GUI + Chrome）
+pnpm eval:visual      # 74 项视觉检查（需要 DSH GUI + Chrome）
 pnpm release:check    # 10 项发布门禁
 ```
 

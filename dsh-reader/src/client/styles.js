@@ -5,6 +5,10 @@ export const READER_CSS = `
 .rd-icon-btn{width:30px;min-width:30px;padding:0;display:inline-flex;align-items:center;justify-content:center}
 .rd-icon-btn svg{display:block;width:18px;height:18px;flex:0 0 auto}
 .rd-icon-btn:disabled{opacity:.4;cursor:default}
+.rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
+.rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
+.rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
+.rd-page-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .rd-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
 .rd-spacer{flex:1}
 .rd-btn{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;cursor:pointer;white-space:nowrap}
@@ -121,6 +125,10 @@ export const READER_CSS = `
 @media (max-width:640px){.rd-toolbar{overflow-x:auto;gap:6px;padding:0 8px;scrollbar-width:none}.rd-toolbar::-webkit-scrollbar{display:none}.rd-icon-btn{width:30px;min-width:30px;padding:0;display:inline-flex;align-items:center;justify-content:center}
 .rd-icon-btn svg{display:block;width:18px;height:18px;flex:0 0 auto}
 .rd-icon-btn:disabled{opacity:.4;cursor:default}
+.rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
+.rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
+.rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
+.rd-page-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .rd-title{max-width:30%}}
 @media (max-width:900px){.rd-drawer{position:absolute;right:0;top:44px;bottom:0;z-index:70;box-shadow:-8px 0 28px rgba(0,0,0,.15)}.rd-page{padding:28px 18px 100px}}
 `
