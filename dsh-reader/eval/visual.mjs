@@ -917,6 +917,22 @@ async function main() {
     }))
     record('single-section parts are not duplicated', partRows.parts === 1 && partRows.singleTitleCount === 1, JSON.stringify(partRows))
     await shot('04-guide')
+    const resizerBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const resizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(resizerPoint.x, resizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(resizerPoint.x - 80, resizerPoint.y, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const resizerAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('guide sidebar width can be resized', resizerAfter > resizerBefore + 40, `${Math.round(resizerBefore)} -> ${Math.round(resizerAfter)}`)
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const resizerReset = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('double-click resets the guide sidebar width', Math.abs(resizerReset - 320) <= 2, `${Math.round(resizerReset)}px`)
 
     await page.setViewport({ width: 1280, height: 300, deviceScaleFactor: 1 })
     await new Promise((resolve) => setTimeout(resolve, 400))
@@ -987,6 +1003,31 @@ async function main() {
 
     const mapClicked = await clickAny('.rd-drawer button', ['导图', 'Mindmap'])
     await page.waitForSelector('.rd-map-scroll svg .rdm-label', { timeout: 8000 })
+    const mapResizerBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const mapResizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(mapResizerPoint.x, mapResizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(mapResizerPoint.x - 60, mapResizerPoint.y, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const mapResizerAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('mindmap sidebar has its own resizable width', mapResizerAfter > mapResizerBefore + 30, `${Math.round(mapResizerBefore)} -> ${Math.round(mapResizerAfter)}`)
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const mapResizerReset = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('double-click resets the mindmap sidebar width', Math.abs(mapResizerReset - 760) <= 2, `${Math.round(mapResizerReset)}px`)
+    await page.mouse.move(4, 4)
+    await page.evaluate(() => {
+      const scroll = document.querySelector('.rd-map-scroll')
+      if (scroll) {
+        scroll.scrollLeft = 0
+        scroll.scrollTop = 0
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
     const mapDefault = await page.evaluate(() => ({
       nodes: document.querySelectorAll('.rdm-node').length,
       labels: document.querySelectorAll('.rdm-label').length,
@@ -1134,6 +1175,39 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 200))
     const dragged = await page.$eval('.rd-map-scroll', (node) => node.scrollLeft)
     record('mindmap can be dragged horizontally', dragged !== mapBox.scrolled, `${mapBox.scrolled} -> ${dragged} client=${mapBox.client} scroll=${mapBox.scroll} max=${mapBox.max} box=${Math.round(mapBox.width)}x${Math.round(mapBox.height)} svg=${mapBox.svgWidth} zoom=${mapBox.zoom}`)
+    await page.evaluate(() => {
+      const scroll = document.querySelector('.rd-map-scroll')
+      scroll.scrollLeft = 0
+      scroll.scrollTop = 0
+    })
+    const nodePoint = await page.evaluate(() => {
+      const map = document.querySelector('.rd-map-scroll')
+      const mapRect = map.getBoundingClientRect()
+      const node = [...document.querySelectorAll('.rdm-node')].find((candidate) => {
+        const rect = candidate.getBoundingClientRect()
+        return (
+          rect.left >= mapRect.left + 20 &&
+          rect.right <= mapRect.right - 20 &&
+          rect.top >= mapRect.top + 20 &&
+          rect.bottom <= mapRect.bottom - 20
+        )
+      })
+      if (!node) return null
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    const nodeHit = await page.evaluate(({ x, y }) => {
+      const hit = document.elementFromPoint(x, y)
+      return { tag: hit?.tagName || '', cls: String(hit?.getAttribute?.('class') || ''), inMap: Boolean(hit?.closest?.('.rd-map-scroll')) }
+    }, nodePoint)
+    if (!nodePoint) throw new Error('no visible mindmap node to drag')
+    await page.mouse.move(nodePoint.x, nodePoint.y)
+    await page.mouse.down()
+    await page.mouse.move(nodePoint.x - 100, nodePoint.y - 20, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const nodeDragged = await page.$eval('.rd-map-scroll', (node) => ({ left: node.scrollLeft, top: node.scrollTop }))
+    record('mindmap can be dragged from a node as well', nodeDragged.left > 20, `${nodeDragged.left},${nodeDragged.top} point=${nodePoint.x},${nodePoint.y} hit=${JSON.stringify(nodeHit)}`)
     await page.evaluate(() => {
       const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
       reset.click()

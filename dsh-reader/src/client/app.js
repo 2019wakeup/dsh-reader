@@ -337,6 +337,8 @@ export function ReaderView(props) {
   const pageInputRef = React.useRef(null)
   const chapterScrollHint = React.useRef(null)
   const drawerBodyRef = React.useRef(null)
+  const drawerResizeRef = React.useRef(null)
+  const [drawerDraft, setDrawerDraft] = React.useState(null)
   const drawerScroll = React.useRef({})
   const lastDrawer = React.useRef(null)
   const [layoutTick, setLayoutTick] = React.useState(0)
@@ -592,6 +594,55 @@ export function ReaderView(props) {
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
+
+  React.useEffect(() => {
+    setDrawerDraft(null)
+  }, [drawer, guideView])
+
+  const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
+  const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
+  const drawerWidth = drawerDraft ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
+  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 280))
+  const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
+  const commitDrawerWidth = (width) => {
+    const next = Math.round(clampDrawerWidth(width))
+    setDrawerDraft(next)
+    changePrefs({ [drawerWidthKey]: next })
+    return next
+  }
+  const startDrawerResize = (event) => {
+    if (event.button !== 0) return
+    event.stopPropagation()
+    drawerResizeRef.current = {
+      key: drawerWidthKey,
+      startX: event.clientX,
+      startWidth: drawerWidth,
+    }
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    } catch {
+      /* pointer capture is best-effort */
+    }
+  }
+  const moveDrawerResize = (event) => {
+    const resize = drawerResizeRef.current
+    if (!resize) return
+    event.preventDefault()
+    const next = clampDrawerWidth(resize.startWidth + resize.startX - event.clientX)
+    setDrawerDraft(Math.round(next))
+  }
+  const endDrawerResize = () => {
+    const resize = drawerResizeRef.current
+    if (!resize) return
+    drawerResizeRef.current = null
+    const next = Math.round(clampDrawerWidth(drawerWidth))
+    setDrawerDraft(next)
+    changePrefs({ [resize.key]: next })
+  }
+  const resetDrawerWidth = () => {
+    setDrawerDraft(null)
+    changePrefs({ [drawerWidthKey]: drawerWidthDefault })
+  }
 
   const readingScroller = () => {
     const root = contentRef.current
@@ -3286,7 +3337,31 @@ export function ReaderView(props) {
     }
     return h(
       'div',
-      { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
+      {
+        className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}`,
+        style: { flexBasis: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
+      },
+      h('div', {
+        className: 'rd-drawer-resizer',
+        role: 'separator',
+        tabIndex: 0,
+        'aria-orientation': 'vertical',
+        'aria-label': t('label.resizeSidebar'),
+        'aria-valuemin': 240,
+        'aria-valuemax': drawerMaxWidth(),
+        'aria-valuenow': Math.round(drawerWidth),
+        title: t('label.resizeSidebar'),
+        onPointerDown: startDrawerResize,
+        onPointerMove: moveDrawerResize,
+        onPointerUp: endDrawerResize,
+        onPointerCancel: endDrawerResize,
+        onDoubleClick: resetDrawerWidth,
+        onKeyDown: (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
+        },
+      }),
       h(
         'div',
         { className: 'rd-drawer-head' },

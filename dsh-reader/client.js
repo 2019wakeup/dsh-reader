@@ -252,6 +252,7 @@ const ZH = {
   'label.error': '出错了',
   'label.noModel': '未配置可用模型，无法生成解释',
   'label.mapHint': '拖动可平移；点击节点查看摘要并跳到原文',
+  'label.resizeSidebar': '拖动调整侧栏宽度，双击恢复默认',
   'label.chunk': '分片',
   'label.expandAll': '展开全部',
   'label.collapseAll': '收起全部',
@@ -485,6 +486,7 @@ const EN = {
   'label.error': 'Something went wrong',
   'label.noModel': 'No model is configured',
   'label.mapHint': 'Drag to pan; click a node to read its summary and jump to the text',
+  'label.resizeSidebar': 'Drag to resize the sidebar; double-click to reset',
   'label.chunk': 'Part',
   'label.expandAll': 'Expand all',
   'label.collapseAll': 'Collapse all',
@@ -766,7 +768,9 @@ const READER_CSS = `
 .rd-term:focus-visible,.rd-hl:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .rd-hl{background:color-mix(in srgb,var(--hl,#f2c94c) 38%,transparent);border-radius:3px;padding:0 1px;cursor:pointer}
 .rd-drawer.rd-drawer-wide{flex-basis:min(760px,62vw);max-width:min(760px,62vw)}
-.rd-drawer{flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
+.rd-drawer{position:relative;flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
+.rd-drawer-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;z-index:6;cursor:col-resize;touch-action:none;border-radius:4px}
+.rd-drawer-resizer:hover,.rd-drawer-resizer:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 28%,transparent);outline:none}
 .rd-drawer-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
@@ -3490,7 +3494,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.11.8'
+const READER_VERSION = '0.12.0'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3613,6 +3617,8 @@ function ReaderView(props) {
   const pageInputRef = React.useRef(null)
   const chapterScrollHint = React.useRef(null)
   const drawerBodyRef = React.useRef(null)
+  const drawerResizeRef = React.useRef(null)
+  const [drawerDraft, setDrawerDraft] = React.useState(null)
   const drawerScroll = React.useRef({})
   const lastDrawer = React.useRef(null)
   const [layoutTick, setLayoutTick] = React.useState(0)
@@ -3868,6 +3874,55 @@ function ReaderView(props) {
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
+
+  React.useEffect(() => {
+    setDrawerDraft(null)
+  }, [drawer, guideView])
+
+  const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
+  const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
+  const drawerWidth = drawerDraft ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
+  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 280))
+  const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
+  const commitDrawerWidth = (width) => {
+    const next = Math.round(clampDrawerWidth(width))
+    setDrawerDraft(next)
+    changePrefs({ [drawerWidthKey]: next })
+    return next
+  }
+  const startDrawerResize = (event) => {
+    if (event.button !== 0) return
+    event.stopPropagation()
+    drawerResizeRef.current = {
+      key: drawerWidthKey,
+      startX: event.clientX,
+      startWidth: drawerWidth,
+    }
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    } catch {
+      /* pointer capture is best-effort */
+    }
+  }
+  const moveDrawerResize = (event) => {
+    const resize = drawerResizeRef.current
+    if (!resize) return
+    event.preventDefault()
+    const next = clampDrawerWidth(resize.startWidth + resize.startX - event.clientX)
+    setDrawerDraft(Math.round(next))
+  }
+  const endDrawerResize = () => {
+    const resize = drawerResizeRef.current
+    if (!resize) return
+    drawerResizeRef.current = null
+    const next = Math.round(clampDrawerWidth(drawerWidth))
+    setDrawerDraft(next)
+    changePrefs({ [resize.key]: next })
+  }
+  const resetDrawerWidth = () => {
+    setDrawerDraft(null)
+    changePrefs({ [drawerWidthKey]: drawerWidthDefault })
+  }
 
   const readingScroller = () => {
     const root = contentRef.current
@@ -6562,7 +6617,31 @@ function ReaderView(props) {
     }
     return h(
       'div',
-      { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
+      {
+        className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}`,
+        style: { flexBasis: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
+      },
+      h('div', {
+        className: 'rd-drawer-resizer',
+        role: 'separator',
+        tabIndex: 0,
+        'aria-orientation': 'vertical',
+        'aria-label': t('label.resizeSidebar'),
+        'aria-valuemin': 240,
+        'aria-valuemax': drawerMaxWidth(),
+        'aria-valuenow': Math.round(drawerWidth),
+        title: t('label.resizeSidebar'),
+        onPointerDown: startDrawerResize,
+        onPointerMove: moveDrawerResize,
+        onPointerUp: endDrawerResize,
+        onPointerCancel: endDrawerResize,
+        onDoubleClick: resetDrawerWidth,
+        onKeyDown: (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
+        },
+      }),
       h(
         'div',
         { className: 'rd-drawer-head' },

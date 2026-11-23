@@ -52,6 +52,20 @@ test('normalizes malformed v2 data on read', async () => {
   assert.equal(store.prefs.cardTrigger, 'hover')
   assert.equal(store.prefs.translateFrom, 'en')
   assert.equal(store.prefs.translateTo, 'zh')
+  assert.equal(store.prefs.drawerWidth, 320)
+  assert.equal(store.prefs.mapWidth, 760)
+})
+
+test('clamps persisted sidebar widths to usable ranges', async () => {
+  const cwd = await tmpWorkspace()
+  await fs.mkdir(path.join(cwd, '.dsh-reader'), { recursive: true })
+  await fs.writeFile(
+    path.join(cwd, '.dsh-reader', 'store.json'),
+    JSON.stringify({ version: 2, prefs: { drawerWidth: 5, mapWidth: 9999 }, concepts: {}, docs: {} }),
+  )
+  const store = await readStore(cwd)
+  assert.equal(store.prefs.drawerWidth, 240)
+  assert.equal(store.prefs.mapWidth, 1200)
 })
 
 test('recovers a corrupt store from the newest backup', async () => {

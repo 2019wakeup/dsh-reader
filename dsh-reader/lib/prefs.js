@@ -8,6 +8,8 @@ export function defaultPrefs() {
     pdfSpread: false,
     pageKeys: 'arrows',
     model: null,
+    drawerWidth: 320,
+    mapWidth: 760,
     translateFrom: 'en',
     translateTo: 'zh',
     guideDepth: 'standard',
