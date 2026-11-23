@@ -187,6 +187,25 @@ test('mutates a concept and reads it back', async (t) => {
   assert.equal((await get.json()).store.concepts.c1.id, 'c1')
 })
 
+test('deleting a concept hands its children to the level above', async (t) => {
+  const { call } = await setup(t)
+  const mutate = (body) =>
+    call('/dsh-reader-live/api/mutate?sessionId=s1', { method: 'POST', body: JSON.stringify(body) })
+  await mutate({ op: 'concept/upsert', concept: { id: 'a', term: 'A', definition: 'a' } })
+  await mutate({ op: 'concept/upsert', concept: { id: 'b', term: 'B', definition: 'b', parentId: 'a' } })
+  await mutate({ op: 'concept/upsert', concept: { id: 'c', term: 'C', definition: 'c', parentId: 'b' } })
+  const gone = await mutate({ op: 'concept/delete', id: 'b' })
+  const store = (await gone.json()).store
+  assert.equal(store.concepts.b, undefined)
+  // The grandchild is promoted to the deleted card's own parent, so no card is
+  // left pointing at a concept that no longer exists.
+  assert.equal(store.concepts.c.parentId, 'a')
+  const top = await mutate({ op: 'concept/delete', id: 'a' })
+  const after = (await top.json()).store
+  assert.equal(after.concepts.a, undefined)
+  assert.equal(after.concepts.c.parentId, null)
+})
+
 test('serializes concurrent mutations without losing one', async (t) => {
   const { call } = await setup(t)
   await Promise.all([

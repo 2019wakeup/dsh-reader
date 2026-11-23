@@ -1349,6 +1349,35 @@ async function main() {
     await page.mouse.move(4, 4)
     await shot('05b-concepts-scope')
 
+    await page.evaluate(() => document.querySelector('[data-concept-id] .rd-row-delete').click())
+    await page.waitForSelector('.rd-drawer-confirm', { timeout: 8000 })
+    const deletePrompt = await page.evaluate(() => {
+      const panel = document.querySelector('.rd-drawer-confirm')
+      return {
+        open: Boolean(panel),
+        danger: Boolean(panel && panel.querySelector('[data-action="confirm-delete-concept"]')),
+        cancel: Boolean(panel && panel.querySelector('[data-action="cancel-delete-concept"]')),
+        card: Boolean(document.querySelector('.rd-card')),
+        rows: document.querySelectorAll('[data-concept-id]').length,
+      }
+    })
+    record(
+      'a concept can be removed from the drawer row itself',
+      deletePrompt.open && deletePrompt.danger && deletePrompt.cancel && !deletePrompt.card && deletePrompt.rows > 0,
+      `${deletePrompt.rows} rows open=${deletePrompt.open} danger=${deletePrompt.danger} cancel=${deletePrompt.cancel} card=${deletePrompt.card}`,
+    )
+    await page.evaluate(() => document.querySelector('[data-action="cancel-delete-concept"]').click())
+    await page.waitForFunction(() => !document.querySelector('.rd-drawer-confirm'), { timeout: 8000 })
+    const afterCancel = await page.evaluate(() => ({
+      open: Boolean(document.querySelector('.rd-drawer-confirm')),
+      rows: document.querySelectorAll('[data-concept-id]').length,
+    }))
+    record(
+      'cancelling the drawer confirmation keeps the concept',
+      !afterCancel.open && afterCancel.rows === deletePrompt.rows,
+      `${afterCancel.rows} rows`,
+    )
+
     const settingsClicked = await clickAny('.rd-toolbar button', ['设置', 'Settings'])
     await page.waitForSelector('.rd-drawer select', { timeout: 8000 })
     const modelPicker = await page.evaluate(() =>

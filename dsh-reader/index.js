@@ -589,7 +589,18 @@ function applyMutation(store, body) {
   }
   if (op === 'concept/delete') {
     if (typeof body.id !== 'string') throw httpError(400, 'invalid id')
+    const removed = store.concepts[body.id]
     delete store.concepts[body.id]
+    if (removed) {
+      // Cards explained inside this one were drawn from its context. Promoting
+      // them keeps a single chain instead of leaving a parentId that resolves
+      // to nothing.
+      const parentId =
+        typeof removed.parentId === 'string' && store.concepts[removed.parentId] ? removed.parentId : null
+      for (const concept of Object.values(store.concepts)) {
+        if (concept && concept.parentId === body.id) concept.parentId = parentId
+      }
+    }
     return store
   }
   if (op === 'prefs/set') {
