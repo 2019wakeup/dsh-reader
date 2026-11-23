@@ -224,6 +224,9 @@ const ZH = {
   'label.parent': '上位概念',
   'label.related': '相关',
   'label.deleteConcept': '删除这张概念卡',
+  'label.deleteConceptConfirm': '确定从概念栏删除？',
+  'label.deleteConceptChildren': '从它下钻的概念会接到它的上一层',
+  'label.conceptDeleted': '已删除概念',
 }
 
 const EN = {
@@ -460,6 +463,9 @@ const EN = {
   'label.parent': 'Parent',
   'label.related': 'Related',
   'label.deleteConcept': 'Delete this concept card',
+  'label.deleteConceptConfirm': 'Remove it from the concept list?',
+  'label.deleteConceptChildren': 'Cards explained inside it move one level up',
+  'label.conceptDeleted': 'Concept deleted',
 }
 
 const isZh = typeof navigator !== 'undefined' && /^zh/i.test(navigator.language || '')

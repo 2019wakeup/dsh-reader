@@ -270,6 +270,9 @@ const ZH = {
   'label.parent': '上位概念',
   'label.related': '相关',
   'label.deleteConcept': '删除这张概念卡',
+  'label.deleteConceptConfirm': '确定从概念栏删除？',
+  'label.deleteConceptChildren': '从它下钻的概念会接到它的上一层',
+  'label.conceptDeleted': '已删除概念',
 }
 
 const EN = {
@@ -506,6 +509,9 @@ const EN = {
   'label.parent': 'Parent',
   'label.related': 'Related',
   'label.deleteConcept': 'Delete this concept card',
+  'label.deleteConceptConfirm': 'Remove it from the concept list?',
+  'label.deleteConceptChildren': 'Cards explained inside it move one level up',
+  'label.conceptDeleted': 'Concept deleted',
 }
 
 const isZh = typeof navigator !== 'undefined' && /^zh/i.test(navigator.language || '')
@@ -770,6 +776,13 @@ const READER_CSS = `
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
 .rd-drawer-item:hover{background:var(--dsw-alias-bg-layer-1)}
 .rd-drawer-item .rd-muted{color:var(--dsw-alias-label-secondary);font-size:11.5px}
+.rd-drawer-row-head{display:flex;align-items:flex-start;gap:6px}
+.rd-drawer-row-head>div:first-child{flex:1;min-width:0}
+.rd-row-delete{flex:0 0 auto;padding:0 6px;line-height:1.4;opacity:.55;font-size:14px}
+.rd-drawer-item:hover .rd-row-delete,.rd-row-delete:focus-visible{opacity:1}
+.rd-drawer-confirm{border-top:1px dashed var(--dsw-alias-border-l1);margin-top:6px}
+.rd-btn.rd-danger{color:#c0392b;border-color:color-mix(in srgb,#c0392b 45%,transparent)}
+.rd-btn.rd-danger:hover{background:color-mix(in srgb,#c0392b 12%,transparent)}
 .rd-muted{color:var(--dsw-alias-label-secondary)}
 .rd-empty{padding:28px 8px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.7}
 .rd-library{padding:36px 28px 80px;max-width:900px;margin:0 auto}
@@ -3545,6 +3558,7 @@ function ReaderView(props) {
   const [lostMarks, setLostMarks] = React.useState([])
   const [scrollTarget, setScrollTarget] = React.useState(null)
   const [occurrencesOpen, setOccurrencesOpen] = React.useState(null)
+  const [deleteConceptId, setDeleteConceptId] = React.useState(null)
   const [conceptEdit, setConceptEdit] = React.useState(null)
   const [focusConcept, setFocusConcept] = React.useState(null)
   const [showHelp, setShowHelp] = React.useState(false)
@@ -4340,9 +4354,13 @@ function ReaderView(props) {
   const removeAnnotation = (id) => applyMutation({ op: 'annotation/remove', docKey, id }).catch(() => {})
 
   const removeConcept = (id) => {
-    applyMutation({ op: 'concept/delete', id }).catch((e) => reportError(e))
+    setDeleteConceptId(null)
+    setOccurrencesOpen(null)
     setConceptEdit(null)
     setCards((current) => current.filter((entry) => entry.id !== id))
+    applyMutation({ op: 'concept/delete', id })
+      .then(() => flash(t('label.conceptDeleted')))
+      .catch((e) => reportError(e))
   }
 
   const changePrefs = (patch) => {
@@ -6146,8 +6164,61 @@ function ReaderView(props) {
                       { id: concept.id, pinned: true, rect: { left: 260, top: 140, right: 260, bottom: 140 } },
                     ]),
                 },
-                h('div', { style: { fontWeight: 600 } }, concept.term),
+                h(
+                  'div',
+                  { className: 'rd-drawer-row-head' },
+                  h('div', { style: { fontWeight: 600 } }, concept.term),
+                  h(
+                    'button',
+                    {
+                      className: 'rd-btn ghost rd-row-delete',
+                      title: t('label.deleteConcept'),
+                      'aria-label': t('label.deleteConcept'),
+                      onClick: (event) => {
+                        event.stopPropagation()
+                        setDeleteConceptId(deleteConceptId === concept.id ? null : concept.id)
+                      },
+                    },
+                    '×',
+                  ),
+                ),
                 h('div', { className: 'rd-muted', style: { marginTop: '3px' } }, String(concept.definition || '').slice(0, 90)),
+                deleteConceptId === concept.id
+                  ? h(
+                      'div',
+                      { className: 'rd-drawer-confirm', onClick: (event) => event.stopPropagation() },
+                      h('div', { className: 'rd-muted', style: { marginTop: '6px' } }, t('label.deleteConceptConfirm')),
+                      h('div', { className: 'rd-muted', style: { fontSize: '11px', marginTop: '2px' } }, t('label.deleteConceptChildren')),
+                      h(
+                        'div',
+                        { style: { display: 'flex', gap: '6px', marginTop: '6px' } },
+                        h(
+                          'button',
+                          {
+                            className: 'rd-btn rd-danger',
+                            'data-action': 'confirm-delete-concept',
+                            onClick: (event) => {
+                              event.stopPropagation()
+                              removeConcept(concept.id)
+                            },
+                          },
+                          t('action.delete'),
+                        ),
+                        h(
+                          'button',
+                          {
+                            className: 'rd-btn ghost',
+                            'data-action': 'cancel-delete-concept',
+                            onClick: (event) => {
+                              event.stopPropagation()
+                              setDeleteConceptId(null)
+                            },
+                          },
+                          t('action.cancel'),
+                        ),
+                      ),
+                    )
+                  : null,
                 h(
                   'button',
                   {
