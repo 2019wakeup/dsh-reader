@@ -3488,7 +3488,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.11.6'
+const READER_VERSION = '0.11.7'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
