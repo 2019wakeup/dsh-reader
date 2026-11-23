@@ -1,6 +1,6 @@
 {
   "name": "dsh-reader",
-  "version": "0.11.6",
+  "version": "0.11.7",
   "private": true,
   "type": "module",
   "description": "Reading workspace with concept cards for DeepSeek Harness",

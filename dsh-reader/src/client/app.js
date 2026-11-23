@@ -791,7 +791,11 @@ export function ReaderView(props) {
       setCards((current) => (current.some((entry) => entry.pinned) ? [] : current))
       dismissSelection(window)
     }
-    const onScroll = () => {
+    // The listener sits on window in the capture phase, so it also receives
+    // scroll events from the annotation editor's own textarea and from any
+    // scrolling panel. Those must not close the panel the user is typing in.
+    const onScroll = (event) => {
+      if (!shouldDismissOnScroll(event.target)) return
       setMenu(null)
       setChildMenu(null)
       setEditing(null)
@@ -3310,7 +3314,7 @@ export function ReaderView(props) {
     return h(
       'div',
       {
-        className: 'rd-card rd-editor',
+        className: 'rd-card rd-editor rd-annotation-editor',
         style: { ...style, width: style.width, maxHeight: style.maxHeight },
         onMouseEnter: () => clearTimeout(hideTimer.current),
         onClick: (event) => event.stopPropagation(),
@@ -3343,7 +3347,7 @@ export function ReaderView(props) {
       }),
       h(
         'div',
-        { className: 'rd-actions' },
+        { className: 'rd-actions rd-sticky-actions' },
         h('button', { className: 'rd-btn', onClick: saveEditing }, t('action.save')),
         h('button', { className: 'rd-btn', onClick: deleteEditing }, t('action.delete')),
         h('button', { className: 'rd-btn ghost', onClick: () => setEditing(null) }, t('action.close')),

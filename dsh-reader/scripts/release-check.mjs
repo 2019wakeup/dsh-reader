@@ -53,7 +53,7 @@ await check('eval pipeline', async () => {
 
 await check('visual pipeline', async () => {
   command('visual', 'node eval/visual.mjs')
-  return '119 checks + baselines'
+  return '122 checks + baselines'
 })
 
 await check('host layout probe', async () => {
