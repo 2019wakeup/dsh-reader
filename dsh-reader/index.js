@@ -265,6 +265,27 @@ async function complete(
   return reply
 }
 
+const MAX_ANCESTOR_DEPTH = 4
+
+/**
+ * The cards the reader came through, farthest ancestor first. Parents are only
+ * ever set to an already-stored concept, but the walk keeps a visited set so a
+ * hand-edited or migrated store can never spin here.
+ */
+function ancestorChain(concepts, startId) {
+  const chain = []
+  const seen = new Set()
+  let current = typeof startId === 'string' && startId ? concepts?.[startId] : null
+  while (current && chain.length < MAX_ANCESTOR_DEPTH) {
+    const id = typeof current.id === 'string' && current.id ? current.id : null
+    if (!id || seen.has(id)) break
+    seen.add(id)
+    chain.push(current)
+    current = current.parentId ? concepts?.[current.parentId] : null
+  }
+  return chain.reverse()
+}
+
 async function explainConcept(ctx, cwd, body) {
   const term = String(body?.term || '').trim()
   if (!term) throw httpError(400, 'term required')
@@ -278,10 +299,29 @@ async function explainConcept(ctx, cwd, body) {
     return Array.isArray(concept.aliases) && concept.aliases.some((alias) => normalizeTerm(alias) === key)
   })
   const model = pluginModel(store, ctx)
+  const ancestors = ancestorChain(store.concepts, body?.parentId)
   const depth = body?.depth === 'full' ? 'full' : 'quick'
   if (existing) {
+    // Asking about a concept that is already on the path the reader came down
+    // would hand back the very card that raised the question. Reuse it as a
+    // step back up instead of re-explaining it against itself.
+    if (ancestors.some((item) => item.id === existing.id)) {
+      return {
+        concept: existing,
+        reused: true,
+        ancestor: true,
+        route: 'ancestor',
+        chain: ancestors.map((item) => ({ id: item.id, term: item.term })),
+      }
+    }
     if (depth === 'full' && existing.depth !== 'full' && existing.source !== 'user') {
-      const { system, user } = buildExplainPrompt({ term: existing.term, sentence, paragraph, docTitle: body?.docTitle })
+      const { system, user } = buildExplainPrompt({
+        term: existing.term,
+        sentence,
+        paragraph,
+        docTitle: body?.docTitle,
+        ancestors,
+      })
       const parsed = parseExplanation(
         await complete(ctx, {
           system,
@@ -365,8 +405,8 @@ async function explainConcept(ctx, cwd, body) {
 
   const quick = depth === 'quick'
   const { system, user } = quick
-    ? buildQuickExplainPrompt({ term, sentence, docTitle: body?.docTitle })
-    : buildExplainPrompt({ term, sentence, paragraph, docTitle: body?.docTitle })
+    ? buildQuickExplainPrompt({ term, sentence, docTitle: body?.docTitle, ancestors })
+    : buildExplainPrompt({ term, sentence, paragraph, docTitle: body?.docTitle, ancestors })
   const quickEffort = quick ? await pickEffort(ctx, model.provider, model.model, 'low') : null
   // Single-flight: two readers explaining the same term share one model call.
   const inflightKey = `${cwd}|${key}|${depth}`
