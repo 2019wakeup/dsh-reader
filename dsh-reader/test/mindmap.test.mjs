@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildTree, buildGuideTree, layoutTree, guideMarkdown, splitNodeTitle, chunkNodeLabel } from '../src/client/mindmap.js'
+import { buildTree, buildGuideTree, layoutTree, guideMarkdown, splitNodeTitle, chunkNodeTitle } from '../src/client/mindmap.js'
 
 const sections = [
   { id: 'a', title: '第一部分', level: 1, summary: 'A' },
@@ -75,8 +75,9 @@ test('long node titles wrap to at most two lines', () => {
 })
 
 
-test('chunk labels carry the chunk number and page', () => {
-  assert.equal(chunkNodeLabel({ chunkIndex: 2, page: 11, title: 'x' }), '分片 2 · p11')
-  assert.equal(chunkNodeLabel({ chunkIndex: 2, title: 'x' }, 'Part'), 'Part 2')
-  assert.equal(chunkNodeLabel({ title: '完整标题' }), '完整标题')
+test('chunk titles use the section heading without an ordinal badge', () => {
+  assert.equal(chunkNodeTitle({ chunkIndex: 2, page: 11, title: '一致性模型（2）' }), '一致性模型')
+  assert.equal(chunkNodeTitle({ chunkIndex: 2, title: '一致性模型(3)' }), '一致性模型')
+  assert.equal(chunkNodeTitle({ chunkIndex: 2, title: '', summary: '这一段讲取舍' }), '这一段讲取舍')
+  assert.equal(chunkNodeTitle({ title: '完整标题' }), '完整标题')
 })

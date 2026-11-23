@@ -1142,6 +1142,12 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 400))
     const expandedAll = await page.$$eval('.rdm-node', (nodes) => nodes.length)
     record('expand all reveals every map node', expandedAll > mapDefault.nodes, `${mapDefault.nodes} -> ${expandedAll}`)
+    const chunkLabels = await page.$$eval('.rdm-label', (nodes) => nodes.map((node) => node.textContent.trim()))
+    record(
+      'map nodes show section titles instead of chunk numbers',
+      chunkLabels.length > 0 && chunkLabels.every((label) => !/^分片/.test(label)),
+      chunkLabels.slice(0, 6).join(' | '),
+    )
     await clickAny('.rd-drawer button', ['收起全部', 'Collapse all'])
     await new Promise((resolve) => setTimeout(resolve, 400))
     const collapsedAll = await page.$$eval('.rdm-node', (nodes) => nodes.length)
@@ -1170,13 +1176,20 @@ async function main() {
       const rect = node.getBoundingClientRect()
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
     })
+    const mainBeforeClick = await page.evaluate(() => document.querySelector('.rd-main').scrollTop)
     await page.mouse.click(childRect.x, childRect.y)
-    await new Promise((resolve) => setTimeout(resolve, 700))
+    await new Promise((resolve) => setTimeout(resolve, 1300))
     const childDetail = await page.evaluate(() => ({
       title: document.querySelector('.rd-map-detail-title')?.textContent || '',
       open: Boolean(document.querySelector('.rd-drawer')),
+      nodeSelected: Boolean(document.querySelector('.rdm-node-selected')),
+      main: document.querySelector('.rd-main').scrollTop,
     }))
-    record('clicking a section keeps the summary panel open', childDetail.open && childDetail.title.includes('一致性模型'), childDetail.title)
+    record(
+      'clicking a section keeps the detail card open without flashing',
+      childDetail.open && childDetail.title.includes('一致性模型') && childDetail.nodeSelected && Math.abs(childDetail.main - mainBeforeClick) <= 2,
+      `${childDetail.title} main ${mainBeforeClick} -> ${childDetail.main}`,
+    )
     const chevronRect = await page.$$eval('[data-node-id="part1"] rect', (nodes) => {
       const node = nodes[nodes.length - 1]
       const rect = node.getBoundingClientRect()
@@ -1581,6 +1594,54 @@ async function main() {
     if (enVerdict.write) await fs.writeFile(enVerdict.write, enBuffer)
     record('shot 14-en-reader', enVerdict.pass, enVerdict.detail)
     await enBrowser.close()
+
+    // State survives the reader view unmounting when the user visits the DSH
+    // conversation and comes back: same session restores the book, drawer and
+    // reading position from localStorage.
+    await page.evaluate(() => {
+      const guide = [...document.querySelectorAll('.rd-toolbar button')].find((button) => button.textContent.includes('导读'))
+      if (guide) guide.click()
+    })
+    await page.waitForSelector('.rd-drawer', { timeout: 8000 }).catch(() => {})
+    await page.evaluate(() => {
+      const main = document.querySelector('.rd-main')
+      if (main) main.scrollTop = 160
+    })
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    const beforeReload = await page.evaluate(() => {
+      const saved = JSON.parse(localStorage.getItem(`dsh-reader:view:${new URLSearchParams(location.search).get('session') || ''}`) || 'null')
+      return {
+        path: document.querySelector('.rd-title')?.textContent || '',
+        drawer: Boolean(document.querySelector('.rd-drawer')),
+        scroll: document.querySelector('.rd-main')?.scrollTop || 0,
+        savedScroll: saved ? saved.scrollTop : null,
+        savedDrawer: saved ? saved.drawer : null,
+        mains: [...document.querySelectorAll('.rd-main')].map((node) => ({
+          scroll: node.scrollTop,
+          height: node.scrollHeight,
+          client: node.clientHeight,
+          text: (node.textContent || '').slice(0, 18),
+        })),
+      }
+    })
+    await page.reload({ waitUntil: 'networkidle0' })
+    await page.waitForSelector('.rd-prose', { timeout: 15000 })
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    const afterReload = await page.evaluate(() => ({
+      path: document.querySelector('.rd-title')?.textContent || '',
+      drawer: Boolean(document.querySelector('.rd-drawer')),
+      scroll: document.querySelector('.rd-main')?.scrollTop || 0,
+    }))
+    record(
+      'returning to a session restores the open book and drawer',
+      Boolean(beforeReload.path) && afterReload.path === beforeReload.path && afterReload.drawer,
+      `${beforeReload.path} -> ${afterReload.path}, drawer ${afterReload.drawer}`,
+    )
+    record(
+      'returning to a session restores the reading position',
+      afterReload.scroll > 100 && Math.abs(afterReload.scroll - beforeReload.scroll) < 80,
+      `${beforeReload.scroll} -> ${afterReload.scroll} saved=${beforeReload.savedScroll} mains=${JSON.stringify(beforeReload.mains)}`,
+    )
   } catch (error) {
     try {
       const dump = await page.evaluate(() => ({

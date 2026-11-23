@@ -32,7 +32,7 @@ const { markdownSections } = await import(path.join(root, 'src/client/sections.j
 const { docFingerprint } = await import(path.join(root, 'lib/fingerprint.js'))
 const { readStore } = await import(path.join(root, 'lib/store.js'))
 const { parseSectionReply, parseOverviewReply } = await import(path.join(root, 'lib/guide.js'))
-const { buildTree, layoutTree, chunkNodeLabel } = await import(path.join(root, 'src/client/mindmap.js'))
+const { buildTree, layoutTree, chunkNodeTitle } = await import(path.join(root, 'src/client/mindmap.js'))
 const { clampCardPosition } = await import(path.join(root, 'src/client/card-drag.js'))
 const { takeTranslationBatch, isNearViewport } = await import(path.join(root, 'src/client/translation-schedule.js'))
 
@@ -187,8 +187,8 @@ export const cases = [
   {
     name: 'mindmap.chunklabel',
     async run() {
-      const label = chunkNodeLabel({ chunkIndex: 2, page: 11, title: 'x' })
-      if (label !== '分片 2 · p11') throw new Error('chunk label lost its page')
+      const label = chunkNodeTitle({ chunkIndex: 2, page: 11, title: '一致性模型（2）' })
+      if (label !== '一致性模型') throw new Error('chunk title still shows the ordinal badge')
       return { label }
     },
   },
