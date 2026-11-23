@@ -251,13 +251,9 @@ const ZH = {
   'label.notePlaceholder': '写点备注…',
   'label.error': '出错了',
   'label.noModel': '未配置可用模型，无法生成解释',
-  'label.mapHint': '拖动或方向键可平移；点击节点查看摘要并跳到原文',
+  'label.mapHint': '拖动画布或按方向键平移，双击空白处回到中心；点击节点查看摘要并跳到原文',
+  'label.mapCenter': '回到画布中心',
   'label.resizeSidebar': '拖动调整侧栏宽度，双击恢复默认',
-  'label.mapNoPan': '导图已完整显示；点「+」放大后即可拖拽平移',
-  'label.narrowSidebar': '收窄侧栏',
-  'label.widenSidebar': '加宽侧栏',
-  'label.panMapLeft': '向左平移导图',
-  'label.panMapRight': '向右平移导图',
   'label.chunk': '分片',
   'label.expandAll': '展开全部',
   'label.collapseAll': '收起全部',
@@ -490,13 +486,9 @@ const EN = {
   'label.notePlaceholder': 'Add a note…',
   'label.error': 'Something went wrong',
   'label.noModel': 'No model is configured',
-  'label.mapHint': 'Drag or use arrow keys to pan; click a node to read its summary and jump to the text',
+  'label.mapHint': 'Drag the canvas or use arrow keys to pan; double-click empty space to recenter; click a node to read its summary',
+  'label.mapCenter': 'Recenter canvas',
   'label.resizeSidebar': 'Drag to resize the sidebar; double-click to reset',
-  'label.mapNoPan': 'The map fits; zoom in with + to pan',
-  'label.narrowSidebar': 'Narrow sidebar',
-  'label.widenSidebar': 'Widen sidebar',
-  'label.panMapLeft': 'Pan map left',
-  'label.panMapRight': 'Pan map right',
   'label.chunk': 'Part',
   'label.expandAll': 'Expand all',
   'label.collapseAll': 'Collapse all',
@@ -855,7 +847,8 @@ const READER_CSS = `
 .rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
 .rd-map-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
-.rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-scroll{position:relative;max-width:100%;height:min(46vh,520px);max-height:46vh;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-canvas{position:absolute;left:0;top:0;will-change:transform}.rd-map-canvas svg{display:block}
 .rd-map-scroll:active{cursor:grabbing}
 .rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}
 .rd-map-detail-title{font-weight:600;margin-bottom:4px}
@@ -3506,7 +3499,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.12.2'
+const READER_VERSION = '0.12.3'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3608,7 +3601,10 @@ function ReaderView(props) {
   const [mapScale, setMapScale] = React.useState(1)
   const [selectedNodeId, setSelectedNodeId] = React.useState(null)
   const [mapFullscreen, setMapFullscreen] = React.useState(false)
+  const [mapPan, setMapPan] = React.useState({ x: 0, y: 0 })
   const mapScrollRef = React.useRef(null)
+  const mapCanvasRef = React.useRef(null)
+  const mapPanRef = React.useRef({ x: 0, y: 0 })
   const mapDragRef = React.useRef(null)
   const suppressMapClick = React.useRef(false)
   const [askText, setAskText] = React.useState('')
@@ -3698,22 +3694,7 @@ function ReaderView(props) {
       body.scrollTop = 0
       drawerScroll.current['guide:map'] = 0
     }
-    const node = mapScrollRef.current
-    if (node) {
-      node.scrollLeft = 0
-      node.scrollTop = 0
-    }
   }, [guideView])
-
-  React.useEffect(() => {
-    if (!mapFullscreen) return
-    const node = mapScrollRef.current
-    if (!node) return
-    requestAnimationFrame(() => {
-      node.scrollLeft = 0
-      node.scrollTop = 0
-    })
-  }, [mapFullscreen])
 
   React.useEffect(() => {
     if (guideView !== 'map' || !guideLayout) return
@@ -3723,6 +3704,58 @@ function ReaderView(props) {
     const fit = Math.min(1, Math.max(0.55, available / (guideLayout.width + 60)))
     setMapScale((current) => (Math.abs(current - 1) < 0.001 ? Number(fit.toFixed(2)) : current))
   }, [guideView, guideLayout])
+
+  // The map is a canvas rather than a scroll box: panning moves the drawing
+  // itself, so a map that happens to fit in the viewport can still be dragged.
+  const mapGeometry = () => {
+    const node = mapScrollRef.current
+    if (!node || !guideLayout) return null
+    return {
+      viewportWidth: node.clientWidth,
+      viewportHeight: node.clientHeight,
+      canvasWidth: Math.round((guideLayout.width + 60) * mapScale),
+      canvasHeight: Math.round((guideLayout.height + 60) * mapScale),
+    }
+  }
+  const clampMapPan = (pan, geometry = mapGeometry()) => {
+    if (!geometry) return pan
+    const edge = 72
+    const minX = edge - geometry.canvasWidth
+    const maxX = geometry.viewportWidth - edge
+    const minY = edge - geometry.canvasHeight
+    const maxY = geometry.viewportHeight - edge
+    return {
+      x: Math.round(maxX >= minX ? Math.min(maxX, Math.max(minX, pan.x)) : (geometry.viewportWidth - geometry.canvasWidth) / 2),
+      y: Math.round(maxY >= minY ? Math.min(maxY, Math.max(minY, pan.y)) : (geometry.viewportHeight - geometry.canvasHeight) / 2),
+    }
+  }
+  const centerMapPan = () => {
+    const geometry = mapGeometry()
+    if (!geometry) return
+    const next = clampMapPan({
+      x: (geometry.viewportWidth - geometry.canvasWidth) / 2,
+      y: (geometry.viewportHeight - geometry.canvasHeight) / 2,
+    }, geometry)
+    mapPanRef.current = next
+    setMapPan(next)
+  }
+
+  React.useEffect(() => {
+    if (drawer !== 'guide' || guideView !== 'map' || !guideLayout) return
+    let frame = requestAnimationFrame(centerMapPan)
+    const node = mapScrollRef.current
+    if (!node || typeof ResizeObserver !== 'function') return () => cancelAnimationFrame(frame)
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(centerMapPan)
+    })
+    observer.observe(node)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawer, guideView, guideLayout, mapScale, mapFullscreen])
   const docAnnotations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.annotations || [] : []),
     [store.docs, docKey],
@@ -3908,7 +3941,7 @@ function ReaderView(props) {
   const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
   const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
   const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
-  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 240))
+  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(320, rootBounds().width - 180))
   const drawerWidth = Math.min(drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault), drawerMaxWidth())
   const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
   const commitDrawerWidth = (width) => {
@@ -5423,8 +5456,8 @@ function ReaderView(props) {
       mapDragRef.current = {
         x: event.clientX,
         y: event.clientY,
-        left: event.currentTarget.scrollLeft,
-        top: event.currentTarget.scrollTop,
+        panX: mapPanRef.current.x,
+        panY: mapPanRef.current.y,
         moved: false,
         captured: false,
       }
@@ -5439,17 +5472,14 @@ function ReaderView(props) {
         // Capture only after the pointer actually moves: capturing on
         // pointerdown retargets the click and makes node clicks do nothing.
         drag.moved = true
-        const node = event.currentTarget
-        if (node.scrollWidth <= node.clientWidth + 1 && node.scrollHeight <= node.clientHeight + 1) {
-          flash(t('label.mapNoPan'))
-        }
       }
       if (!drag.captured) {
         drag.captured = true
         event.currentTarget.setPointerCapture?.(event.pointerId)
       }
-      event.currentTarget.scrollLeft = drag.left - dx
-      event.currentTarget.scrollTop = drag.top - dy
+      const next = clampMapPan({ x: drag.panX + dx, y: drag.panY + dy })
+      mapPanRef.current = next
+      setMapPan(next)
     }
     const onMapPointerUp = () => {
       const drag = mapDragRef.current
@@ -5475,34 +5505,7 @@ function ReaderView(props) {
           h('span', { className: 'rd-map-zoom' }, `${Math.round(mapScale * 100)}%`),
           h('button', { className: 'rd-map-btn', title: t('label.zoomIn'), onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
           h('button', { className: 'rd-map-btn', onClick: () => setMapScale(1) }, '1:1'),
-        ),
-        h(
-          'div',
-          { className: 'rd-map-group' },
-          h(
-            'button',
-            {
-              className: 'rd-map-btn',
-              title: t('label.panMapLeft'),
-              onClick: () => {
-                const node = mapScrollRef.current
-                if (node) node.scrollLeft -= 120
-              },
-            },
-            '←',
-          ),
-          h(
-            'button',
-            {
-              className: 'rd-map-btn',
-              title: t('label.panMapRight'),
-              onClick: () => {
-                const node = mapScrollRef.current
-                if (node) node.scrollLeft += 120
-              },
-            },
-            '→',
-          ),
+          h('button', { className: 'rd-map-btn', title: t('label.mapCenter'), onClick: centerMapPan }, '⌖'),
         ),
         h(
           'div',
@@ -5559,23 +5562,37 @@ function ReaderView(props) {
           className: 'rd-map-scroll',
           ref: mapScrollRef,
           tabIndex: 0,
+          'data-pan-x': mapPan.x,
+          'data-pan-y': mapPan.y,
           onKeyDown: (event) => {
             if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
             event.preventDefault()
             event.stopPropagation()
-            const node = mapScrollRef.current
-            if (!node) return
-            if (event.key === 'ArrowLeft') node.scrollLeft -= 48
-            if (event.key === 'ArrowRight') node.scrollLeft += 48
-            if (event.key === 'ArrowUp') node.scrollTop -= 48
-            if (event.key === 'ArrowDown') node.scrollTop += 48
+            const step = event.key === 'ArrowLeft' ? 48 : event.key === 'ArrowRight' ? -48 : event.key === 'ArrowUp' ? 48 : -48
+            const next = clampMapPan({
+              x: mapPanRef.current.x + (event.key === 'ArrowLeft' || event.key === 'ArrowRight' ? step : 0),
+              y: mapPanRef.current.y + (event.key === 'ArrowUp' || event.key === 'ArrowDown' ? step : 0),
+            })
+            mapPanRef.current = next
+            setMapPan(next)
           },
           onPointerDown: onMapPointerDown,
           onPointerMove: onMapPointerMove,
           onPointerUp: onMapPointerUp,
           onPointerCancel: onMapPointerUp,
+          onDoubleClick: (event) => {
+            if (event.target && event.target.closest && event.target.closest('.rdm-node')) return
+            centerMapPan()
+          },
           title: t('label.mapHint'),
         },
+        h(
+          'div',
+          {
+            className: 'rd-map-canvas',
+            ref: mapCanvasRef,
+            style: { width: canvasWidth, height: canvasHeight, transform: `translate3d(${mapPan.x}px, ${mapPan.y}px, 0)` },
+          },
         h(
           'svg',
           {
@@ -5672,6 +5689,7 @@ function ReaderView(props) {
               )
             }),
           ),
+        ),
         ),
       ),
     )
@@ -6717,16 +6735,6 @@ function ReaderView(props) {
         { className: 'rd-drawer-head' },
         h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, titles[drawer]),
         h('span', { className: 'rd-spacer' }),
-        h(
-          'button',
-          { className: 'rd-btn ghost rd-icon-btn', title: t('label.narrowSidebar'), 'aria-label': t('label.narrowSidebar'), onClick: () => commitDrawerWidth(drawerWidth - 48) },
-          '−',
-        ),
-        h(
-          'button',
-          { className: 'rd-btn ghost rd-icon-btn', title: t('label.widenSidebar'), 'aria-label': t('label.widenSidebar'), onClick: () => commitDrawerWidth(drawerWidth + 48) },
-          '+',
-        ),
         h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
       ),
       h(

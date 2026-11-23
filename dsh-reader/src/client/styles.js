@@ -135,7 +135,8 @@ export const READER_CSS = `
 .rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
 .rd-map-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
-.rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-scroll{position:relative;max-width:100%;height:min(46vh,520px);max-height:46vh;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-canvas{position:absolute;left:0;top:0;will-change:transform}.rd-map-canvas svg{display:block}
 .rd-map-scroll:active{cursor:grabbing}
 .rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}
 .rd-map-detail-title{font-weight:600;margin-bottom:4px}
