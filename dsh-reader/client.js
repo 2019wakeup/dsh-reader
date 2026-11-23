@@ -802,6 +802,7 @@ const READER_CSS = `
 .rd-editor .rd-input{width:100%;margin-top:6px}
 .rd-editor{max-height:min(64vh,520px)}
 .rd-editor textarea{width:100%;min-height:64px;margin-top:8px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:8px 10px;font-size:12.5px;line-height:1.6;font-family:inherit}
+.rd-annotation-editor textarea{min-height:96px;max-height:min(34vh,260px);overflow:auto;overscroll-behavior:contain}
 .rd-card .rd-actions.rd-sticky-actions{position:sticky;bottom:-1px;z-index:2;background:var(--dsw-alias-bg-overlay);padding:8px 0 2px;margin-top:10px;border-top:1px solid var(--dsw-alias-border-l1)}
 .rd-trans-card{position:fixed;z-index:95;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.22);padding:12px 13px;overflow:auto}
 .rd-trans{margin-top:6px;padding-left:10px;border-left:2px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:.92em;line-height:1.6}
@@ -868,7 +869,7 @@ const READER_CSS = `
 .rd-pdf-hl{position:absolute;background:color-mix(in srgb,var(--hl,#f2c94c) 30%,transparent);pointer-events:none;border-radius:2px}
 .rd-note-mask{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
 .rd-note-box{width:min(420px,90vw);background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:16px;box-shadow:0 16px 48px rgba(0,0,0,.28)}
-.rd-note-box textarea{width:100%;min-height:110px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:9px 10px;font-size:13px;line-height:1.6;font-family:inherit}
+.rd-note-box textarea{width:100%;min-height:110px;overscroll-behavior:contain;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:9px 10px;font-size:13px;line-height:1.6;font-family:inherit}
 .rd-note-box .rd-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
 .rd-input{height:28px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:0 9px;font-size:12px;font-family:inherit}
 .rd-select{height:28px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 6px}
@@ -1981,6 +1982,15 @@ function asElement(target) {
   return target && typeof target.closest === 'function' ? target : null
 }
 
+// Overlays float above the reading surface and must not be dismissed by
+// scrolling inside themselves: a note field or a long card scrolling its own
+// content is not the page moving under the anchor.
+const OWN_SCROLL_SURFACE = '.rd-mini, .rd-card, .rd-trans-card'
+// Editable fields scroll as the caret moves (and while an IME composes), which
+// happens constantly while typing; closing the panel on that would make the
+// editor unusable.
+const EDITABLE_TARGET = 'textarea, input, select, [contenteditable="true"]'
+
 /** True when the pointer landed on the selection toolbar itself. */
 function isToolbarTarget(target) {
   const element = asElement(target)
@@ -1992,6 +2002,18 @@ function shouldDismissOnPointerDown(target) {
   const element = asElement(target)
   if (!element) return true
   return !element.closest('.rd-mini, .rd-card')
+}
+
+/**
+ * True when a scroll should close the floating panels. A window-level event
+ * (no element target) always counts as the reading surface moving; a scroll
+ * that originates inside a panel or an editable field does not.
+ */
+function shouldDismissOnScroll(target) {
+  const element = asElement(target)
+  if (!element) return true
+  if (element.closest(EDITABLE_TARGET)) return false
+  return !element.closest(OWN_SCROLL_SURFACE)
 }
 
 /** Drop the current text selection without touching the document. */
@@ -4043,7 +4065,11 @@ function ReaderView(props) {
       setCards((current) => (current.some((entry) => entry.pinned) ? [] : current))
       dismissSelection(window)
     }
-    const onScroll = () => {
+    // The listener sits on window in the capture phase, so it also receives
+    // scroll events from the annotation editor's own textarea and from any
+    // scrolling panel. Those must not close the panel the user is typing in.
+    const onScroll = (event) => {
+      if (!shouldDismissOnScroll(event.target)) return
       setMenu(null)
       setChildMenu(null)
       setEditing(null)
@@ -6555,7 +6581,7 @@ function ReaderView(props) {
     return h(
       'div',
       {
-        className: 'rd-card rd-editor',
+        className: 'rd-card rd-editor rd-annotation-editor',
         style: { ...style, width: style.width, maxHeight: style.maxHeight },
         onMouseEnter: () => clearTimeout(hideTimer.current),
         onClick: (event) => event.stopPropagation(),
@@ -6588,7 +6614,7 @@ function ReaderView(props) {
       }),
       h(
         'div',
-        { className: 'rd-actions' },
+        { className: 'rd-actions rd-sticky-actions' },
         h('button', { className: 'rd-btn', onClick: saveEditing }, t('action.save')),
         h('button', { className: 'rd-btn', onClick: deleteEditing }, t('action.delete')),
         h('button', { className: 'rd-btn ghost', onClick: () => setEditing(null) }, t('action.close')),

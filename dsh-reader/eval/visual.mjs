@@ -793,7 +793,47 @@ async function main() {
     )
     const quoteVisible = await page.$eval('.rd-editor .rd-quote', (node) => node.textContent.trim().length > 0).catch(() => false)
     record('annotation editor shows the quote', quoteVisible, '')
+
+    // The "已收下" toast lives four seconds; wait it out so these shots record the
+    // editor and the note box instead of whatever transient banner a previous
+    // step raised.
+    await page.waitForFunction(() => !document.querySelector('.rd-toast'), { timeout: 8000 })
     await shot('03d-annotation-editor')
+    // A long note scrolls inside its own field. That scroll must not be read as
+    // the page moving under the anchor, or the editor closes and the note is lost.
+    await page.click('.rd-annotation-editor textarea')
+    for (let line = 0; line < 8; line += 1) {
+      await page.keyboard.type(`line ${line + 1}`)
+      await page.keyboard.press('Enter')
+    }
+    const noteScroll = await page.evaluate(async () => {
+      const field = document.querySelector('.rd-annotation-editor textarea')
+      if (!field) return null
+      const scrollable = field.scrollHeight > field.clientHeight
+      field.scrollTop = field.scrollHeight
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return { scrollable, kept: Boolean(document.querySelector('.rd-annotation-editor')), scrollTop: field.scrollTop }
+    })
+    record('annotation note field scrolls on its own', noteScroll?.scrollable === true, noteScroll ? `scrollTop ${Math.round(noteScroll.scrollTop)}` : 'field missing')
+    record('scrolling inside the note keeps the editor open', noteScroll?.kept === true, noteScroll ? '' : 'field missing')
+    const dismissedByPageScroll = await page.evaluate(async () => {
+      const main = document.querySelector('.rd-main')
+      if (!main) return null
+      const before = main.scrollTop
+      // Jump instantly: the panes use smooth scrolling, and an animated restore
+      // would leave the rest of the walkthrough on a half-scrolled page.
+      const previousBehavior = main.style.scrollBehavior
+      main.style.scrollBehavior = 'auto'
+      main.scrollTop = before + 40
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      const closed = !document.querySelector('.rd-annotation-editor')
+      // Put the reading surface back where the rest of the walkthrough expects it.
+      main.scrollTop = before
+      main.style.scrollBehavior = previousBehavior
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return closed
+    })
+    record('scrolling the page still closes the annotation editor', dismissedByPageScroll === true, '')
     await page.keyboard.press('Escape')
     await new Promise((resolve) => setTimeout(resolve, 300))
 
@@ -825,6 +865,11 @@ async function main() {
     record('note box fits viewport', selected && fitsViewport(noteBox), `box ${Math.round(noteBox.left)},${Math.round(noteBox.top)}`)
     record('note box no overflow', noteBox.scrollWidth <= noteBox.clientWidth + 1, `${noteBox.scrollWidth}/${noteBox.clientWidth}`)
     record('note textarea fits box', noteTextarea.right <= noteBox.parentRight + 1, `${Math.round(noteTextarea.right)} <= ${Math.round(noteBox.parentRight)}`)
+
+    // The "已收下" toast lives four seconds; wait it out so these shots record the
+    // editor and the note box instead of whatever transient banner a previous
+    // step raised.
+    await page.waitForFunction(() => !document.querySelector('.rd-toast'), { timeout: 8000 })
     await shot('03e-note-box')
     await clickAny('.rd-note-box button', ['取消', 'Cancel'])
     await new Promise((resolve) => setTimeout(resolve, 300))
