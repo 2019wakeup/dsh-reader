@@ -251,8 +251,9 @@ const ZH = {
   'label.notePlaceholder': '写点备注…',
   'label.error': '出错了',
   'label.noModel': '未配置可用模型，无法生成解释',
-  'label.mapHint': '拖动可平移；点击节点查看摘要并跳到原文',
+  'label.mapHint': '拖动或方向键可平移；点击节点查看摘要并跳到原文',
   'label.resizeSidebar': '拖动调整侧栏宽度，双击恢复默认',
+  'label.mapNoPan': '导图已完整显示；点「+」放大后即可拖拽平移',
   'label.chunk': '分片',
   'label.expandAll': '展开全部',
   'label.collapseAll': '收起全部',
@@ -485,8 +486,9 @@ const EN = {
   'label.notePlaceholder': 'Add a note…',
   'label.error': 'Something went wrong',
   'label.noModel': 'No model is configured',
-  'label.mapHint': 'Drag to pan; click a node to read its summary and jump to the text',
+  'label.mapHint': 'Drag or use arrow keys to pan; click a node to read its summary and jump to the text',
   'label.resizeSidebar': 'Drag to resize the sidebar; double-click to reset',
+  'label.mapNoPan': 'The map fits; zoom in with + to pan',
   'label.chunk': 'Part',
   'label.expandAll': 'Expand all',
   'label.collapseAll': 'Collapse all',
@@ -769,8 +771,9 @@ const READER_CSS = `
 .rd-hl{background:color-mix(in srgb,var(--hl,#f2c94c) 38%,transparent);border-radius:3px;padding:0 1px;cursor:pointer}
 .rd-drawer.rd-drawer-wide{flex-basis:min(760px,62vw);max-width:min(760px,62vw)}
 .rd-drawer{position:relative;flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
-.rd-drawer-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;z-index:6;cursor:col-resize;touch-action:none;border-radius:4px}
-.rd-drawer-resizer:hover,.rd-drawer-resizer:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 28%,transparent);outline:none}
+.rd-drawer-resizer{position:absolute;left:-6px;top:0;bottom:0;width:12px;z-index:6;cursor:col-resize;touch-action:none;border-radius:4px}
+.rd-drawer-resizer:after{content:'';position:absolute;left:5px;top:50%;width:2px;height:36px;transform:translateY(-50%);border-radius:2px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 14%,transparent)}
+.rd-drawer-resizer:hover,.rd-drawer-resizer:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent);outline:none}
 .rd-drawer-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
@@ -843,6 +846,7 @@ const READER_CSS = `
 .rd-map-stage-fullscreen{position:fixed;inset:0;z-index:130;display:flex;flex-direction:column;min-height:0;padding:14px 16px;background:var(--dsw-alias-bg-base)}
 .rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
+.rd-map-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
 .rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
 .rd-map-scroll:active{cursor:grabbing}
 .rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}
@@ -3494,7 +3498,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.12.0'
+const READER_VERSION = '0.12.1'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3674,6 +3678,24 @@ function ReaderView(props) {
     window.addEventListener('keydown', onEscape, true)
     return () => window.removeEventListener('keydown', onEscape, true)
   }, [mapFullscreen])
+
+  React.useEffect(() => {
+    if (guideView !== 'map') return
+    setMapScale(1)
+    setSelectedNodeId(null)
+    // The list and the map share the drawer body; entering the map starts at
+    // the top instead of inheriting the list's scroll offset.
+    const body = drawerBodyRef.current
+    if (body) {
+      body.scrollTop = 0
+      drawerScroll.current['guide:map'] = 0
+    }
+    const node = mapScrollRef.current
+    if (node) {
+      node.scrollLeft = 0
+      node.scrollTop = 0
+    }
+  }, [guideView])
 
   React.useEffect(() => {
     if (!mapFullscreen) return
@@ -3875,18 +3897,15 @@ function ReaderView(props) {
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
 
-  React.useEffect(() => {
-    setDrawerDraft(null)
-  }, [drawer, guideView])
-
   const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
   const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
-  const drawerWidth = drawerDraft ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
+  const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
+  const drawerWidth = drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
   const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 280))
   const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
   const commitDrawerWidth = (width) => {
     const next = Math.round(clampDrawerWidth(width))
-    setDrawerDraft(next)
+    setDrawerDraft({ key: drawerWidthKey, width: next })
     changePrefs({ [drawerWidthKey]: next })
     return next
   }
@@ -3908,15 +3927,16 @@ function ReaderView(props) {
     const resize = drawerResizeRef.current
     if (!resize) return
     event.preventDefault()
-    const next = clampDrawerWidth(resize.startWidth + resize.startX - event.clientX)
-    setDrawerDraft(Math.round(next))
+    const next = Math.round(clampDrawerWidth(resize.startWidth + resize.startX - event.clientX))
+    resize.currentWidth = next
+    setDrawerDraft({ key: resize.key, width: next })
   }
   const endDrawerResize = () => {
     const resize = drawerResizeRef.current
     if (!resize) return
     drawerResizeRef.current = null
-    const next = Math.round(clampDrawerWidth(drawerWidth))
-    setDrawerDraft(next)
+    const next = Math.round(clampDrawerWidth(resize.currentWidth ?? drawerWidth))
+    setDrawerDraft({ key: resize.key, width: next })
     changePrefs({ [resize.key]: next })
   }
   const resetDrawerWidth = () => {
@@ -4005,18 +4025,16 @@ function ReaderView(props) {
     }
   }, [page])
 
+  const drawerViewKey = drawer === 'guide' ? `guide:${guideView}` : drawer
+
   React.useEffect(() => {
-    if (lastDrawer.current && lastDrawer.current !== drawer) {
-      // The previous body is gone by the time this runs; each tab keeps its
-      // last known offset via the onScroll handler instead.
-    }
-    lastDrawer.current = drawer
+    lastDrawer.current = drawerViewKey
     const body = drawerBodyRef.current
     if (!body || !drawer) return
     requestAnimationFrame(() => {
-      body.scrollTop = drawerScroll.current[drawer] || 0
+      body.scrollTop = drawerScroll.current[drawerViewKey] || 0
     })
-  }, [drawer])
+  }, [drawer, guideView])
 
   React.useEffect(() => {
     const onKey = (event) => {
@@ -5413,6 +5431,10 @@ function ReaderView(props) {
         // Capture only after the pointer actually moves: capturing on
         // pointerdown retargets the click and makes node clicks do nothing.
         drag.moved = true
+        const node = event.currentTarget
+        if (node.scrollWidth <= node.clientWidth + 1 && node.scrollHeight <= node.clientHeight + 1) {
+          flash(t('label.mapNoPan'))
+        }
       }
       if (!drag.captured) {
         drag.captured = true
@@ -5500,6 +5522,18 @@ function ReaderView(props) {
         {
           className: 'rd-map-scroll',
           ref: mapScrollRef,
+          tabIndex: 0,
+          onKeyDown: (event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+            event.preventDefault()
+            event.stopPropagation()
+            const node = mapScrollRef.current
+            if (!node) return
+            if (event.key === 'ArrowLeft') node.scrollLeft -= 48
+            if (event.key === 'ArrowRight') node.scrollLeft += 48
+            if (event.key === 'ArrowUp') node.scrollTop -= 48
+            if (event.key === 'ArrowDown') node.scrollTop += 48
+          },
           onPointerDown: onMapPointerDown,
           onPointerMove: onMapPointerMove,
           onPointerUp: onMapPointerUp,
@@ -5976,7 +6010,7 @@ function ReaderView(props) {
           className: 'rd-drawer-body',
           ref: drawerBodyRef,
           onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
         body,
@@ -6655,7 +6689,7 @@ function ReaderView(props) {
           className: 'rd-drawer-body',
           ref: drawerBodyRef,
           onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
         body,

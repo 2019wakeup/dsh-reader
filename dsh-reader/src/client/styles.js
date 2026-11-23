@@ -59,8 +59,9 @@ export const READER_CSS = `
 .rd-hl{background:color-mix(in srgb,var(--hl,#f2c94c) 38%,transparent);border-radius:3px;padding:0 1px;cursor:pointer}
 .rd-drawer.rd-drawer-wide{flex-basis:min(760px,62vw);max-width:min(760px,62vw)}
 .rd-drawer{position:relative;flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
-.rd-drawer-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;z-index:6;cursor:col-resize;touch-action:none;border-radius:4px}
-.rd-drawer-resizer:hover,.rd-drawer-resizer:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 28%,transparent);outline:none}
+.rd-drawer-resizer{position:absolute;left:-6px;top:0;bottom:0;width:12px;z-index:6;cursor:col-resize;touch-action:none;border-radius:4px}
+.rd-drawer-resizer:after{content:'';position:absolute;left:5px;top:50%;width:2px;height:36px;transform:translateY(-50%);border-radius:2px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 14%,transparent)}
+.rd-drawer-resizer:hover,.rd-drawer-resizer:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent);outline:none}
 .rd-drawer-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
@@ -133,6 +134,7 @@ export const READER_CSS = `
 .rd-map-stage-fullscreen{position:fixed;inset:0;z-index:130;display:flex;flex-direction:column;min-height:0;padding:14px 16px;background:var(--dsw-alias-bg-base)}
 .rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
+.rd-map-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
 .rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
 .rd-map-scroll:active{cursor:grabbing}
 .rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}

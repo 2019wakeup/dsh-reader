@@ -396,6 +396,24 @@ export function ReaderView(props) {
   }, [mapFullscreen])
 
   React.useEffect(() => {
+    if (guideView !== 'map') return
+    setMapScale(1)
+    setSelectedNodeId(null)
+    // The list and the map share the drawer body; entering the map starts at
+    // the top instead of inheriting the list's scroll offset.
+    const body = drawerBodyRef.current
+    if (body) {
+      body.scrollTop = 0
+      drawerScroll.current['guide:map'] = 0
+    }
+    const node = mapScrollRef.current
+    if (node) {
+      node.scrollLeft = 0
+      node.scrollTop = 0
+    }
+  }, [guideView])
+
+  React.useEffect(() => {
     if (!mapFullscreen) return
     const node = mapScrollRef.current
     if (!node) return
@@ -595,18 +613,15 @@ export function ReaderView(props) {
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
 
-  React.useEffect(() => {
-    setDrawerDraft(null)
-  }, [drawer, guideView])
-
   const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
   const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
-  const drawerWidth = drawerDraft ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
+  const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
+  const drawerWidth = drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
   const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 280))
   const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
   const commitDrawerWidth = (width) => {
     const next = Math.round(clampDrawerWidth(width))
-    setDrawerDraft(next)
+    setDrawerDraft({ key: drawerWidthKey, width: next })
     changePrefs({ [drawerWidthKey]: next })
     return next
   }
@@ -628,15 +643,16 @@ export function ReaderView(props) {
     const resize = drawerResizeRef.current
     if (!resize) return
     event.preventDefault()
-    const next = clampDrawerWidth(resize.startWidth + resize.startX - event.clientX)
-    setDrawerDraft(Math.round(next))
+    const next = Math.round(clampDrawerWidth(resize.startWidth + resize.startX - event.clientX))
+    resize.currentWidth = next
+    setDrawerDraft({ key: resize.key, width: next })
   }
   const endDrawerResize = () => {
     const resize = drawerResizeRef.current
     if (!resize) return
     drawerResizeRef.current = null
-    const next = Math.round(clampDrawerWidth(drawerWidth))
-    setDrawerDraft(next)
+    const next = Math.round(clampDrawerWidth(resize.currentWidth ?? drawerWidth))
+    setDrawerDraft({ key: resize.key, width: next })
     changePrefs({ [resize.key]: next })
   }
   const resetDrawerWidth = () => {
@@ -725,18 +741,16 @@ export function ReaderView(props) {
     }
   }, [page])
 
+  const drawerViewKey = drawer === 'guide' ? `guide:${guideView}` : drawer
+
   React.useEffect(() => {
-    if (lastDrawer.current && lastDrawer.current !== drawer) {
-      // The previous body is gone by the time this runs; each tab keeps its
-      // last known offset via the onScroll handler instead.
-    }
-    lastDrawer.current = drawer
+    lastDrawer.current = drawerViewKey
     const body = drawerBodyRef.current
     if (!body || !drawer) return
     requestAnimationFrame(() => {
-      body.scrollTop = drawerScroll.current[drawer] || 0
+      body.scrollTop = drawerScroll.current[drawerViewKey] || 0
     })
-  }, [drawer])
+  }, [drawer, guideView])
 
   React.useEffect(() => {
     const onKey = (event) => {
@@ -2133,6 +2147,10 @@ export function ReaderView(props) {
         // Capture only after the pointer actually moves: capturing on
         // pointerdown retargets the click and makes node clicks do nothing.
         drag.moved = true
+        const node = event.currentTarget
+        if (node.scrollWidth <= node.clientWidth + 1 && node.scrollHeight <= node.clientHeight + 1) {
+          flash(t('label.mapNoPan'))
+        }
       }
       if (!drag.captured) {
         drag.captured = true
@@ -2220,6 +2238,18 @@ export function ReaderView(props) {
         {
           className: 'rd-map-scroll',
           ref: mapScrollRef,
+          tabIndex: 0,
+          onKeyDown: (event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+            event.preventDefault()
+            event.stopPropagation()
+            const node = mapScrollRef.current
+            if (!node) return
+            if (event.key === 'ArrowLeft') node.scrollLeft -= 48
+            if (event.key === 'ArrowRight') node.scrollLeft += 48
+            if (event.key === 'ArrowUp') node.scrollTop -= 48
+            if (event.key === 'ArrowDown') node.scrollTop += 48
+          },
           onPointerDown: onMapPointerDown,
           onPointerMove: onMapPointerMove,
           onPointerUp: onMapPointerUp,
@@ -2696,7 +2726,7 @@ export function ReaderView(props) {
           className: 'rd-drawer-body',
           ref: drawerBodyRef,
           onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
         body,
@@ -3375,7 +3405,7 @@ export function ReaderView(props) {
           className: 'rd-drawer-body',
           ref: drawerBodyRef,
           onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
         body,

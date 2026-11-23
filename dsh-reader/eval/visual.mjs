@@ -929,10 +929,6 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 300))
     const resizerAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
     record('guide sidebar width can be resized', resizerAfter > resizerBefore + 40, `${Math.round(resizerBefore)} -> ${Math.round(resizerAfter)}`)
-    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    const resizerReset = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
-    record('double-click resets the guide sidebar width', Math.abs(resizerReset - 320) <= 2, `${Math.round(resizerReset)}px`)
 
     await page.setViewport({ width: 1280, height: 300, deviceScaleFactor: 1 })
     await new Promise((resolve) => setTimeout(resolve, 400))
@@ -996,6 +992,28 @@ async function main() {
       `drawer ${beforeKeyboard.drawer} -> ${afterKeyboard.drawer}, main ${afterKeyboard.main}`,
     )
     await page.evaluate(() => {
+      document.querySelector('.rd-drawer-body').scrollTop = 60
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await clickAny('.rd-drawer button', ['导图', 'Mindmap'])
+    await page.waitForSelector('.rd-map-scroll svg .rdm-label', { timeout: 8000 })
+    const mapEntry = await page.evaluate(() => ({
+      width: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+      bodyTop: document.querySelector('.rd-drawer-body').scrollTop,
+    }))
+    record('map view uses its own width and starts at the top', Math.abs(mapEntry.width - 760) <= 2 && mapEntry.bodyTop === 0, `${Math.round(mapEntry.width)}px top=${mapEntry.bodyTop}`)
+    await clickAny('.rd-drawer button', ['列表', 'List'])
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const listReturn = await page.evaluate(() => ({
+      width: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+      bodyTop: document.querySelector('.rd-drawer-body').scrollTop,
+    }))
+    record('returning to the guide list restores its width and scroll', Math.abs(listReturn.width - 400) <= 2 && Math.abs(listReturn.bodyTop - 60) <= 4, `${Math.round(listReturn.width)}px top=${listReturn.bodyTop}`)
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const resizerReset = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('double-click resets the guide sidebar width', Math.abs(resizerReset - 320) <= 2, `${Math.round(resizerReset)}px`)
+    await page.evaluate(() => {
       document.querySelector('.rd-drawer-body').scrollTop = 0
     })
     await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 })
@@ -1035,6 +1053,17 @@ async function main() {
     }))
     record('mindmap opens as a collapsed chapter outline', mapClicked && mapDefault.nodes === 3 && mapDefault.details === 0, `${mapDefault.nodes} nodes, ${mapDefault.labels} labels`)
     await shot('05-mindmap')
+    const mapBoxForHint = await page.$eval('.rd-map-scroll', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width - 30, y: rect.top + rect.height - 30 }
+    })
+    await page.mouse.move(mapBoxForHint.x, mapBoxForHint.y)
+    await page.mouse.down()
+    await page.mouse.move(mapBoxForHint.x - 40, mapBoxForHint.y - 20, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const mapNoPanHint = await page.evaluate(() => document.querySelector('.rd-toast')?.textContent || '')
+    record('dragging a fully visible map explains why it does not move', mapNoPanHint.includes('放大') || mapNoPanHint.includes('zoom'), mapNoPanHint)
     const fullscreenClicked = await clickAny('.rd-drawer button', ['全屏', 'Fullscreen'])
     await new Promise((resolve) => setTimeout(resolve, 350))
     const fullscreen = await page.evaluate(() => {
@@ -1209,6 +1238,15 @@ async function main() {
     const nodeDragged = await page.$eval('.rd-map-scroll', (node) => ({ left: node.scrollLeft, top: node.scrollTop }))
     record('mindmap can be dragged from a node as well', nodeDragged.left > 20, `${nodeDragged.left},${nodeDragged.top} point=${nodePoint.x},${nodePoint.y} hit=${JSON.stringify(nodeHit)}`)
     await page.evaluate(() => {
+      const scroll = document.querySelector('.rd-map-scroll')
+      scroll.scrollLeft = 0
+      scroll.focus()
+    })
+    await page.keyboard.press('ArrowRight')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const keyboardPan = await page.$eval('.rd-map-scroll', (node) => node.scrollLeft)
+    record('mindmap can be panned with the keyboard', keyboardPan > 20, `${keyboardPan}px`)
+    await page.evaluate(() => {
       const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
       reset.click()
     })
@@ -1226,6 +1264,22 @@ async function main() {
     }))
     record('concept scope defaults to the current book', scope.doc === 'true', `${scope.rows} rows`)
     record('current-book concepts are filtered', scope.rows === 2 && scope.allCount.includes('3'), `${scope.docCount} / ${scope.allCount}`)
+    const conceptsResizer = await page.$('.rd-drawer-resizer')
+    const conceptsWidthBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const conceptsResizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(conceptsResizerPoint.x, conceptsResizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(conceptsResizerPoint.x - 60, conceptsResizerPoint.y, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const conceptsWidthAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('concept list shares the sidebar resize behavior', Boolean(conceptsResizer) && conceptsWidthAfter > conceptsWidthBefore + 30, `${Math.round(conceptsWidthBefore)} -> ${Math.round(conceptsWidthAfter)}`)
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.mouse.move(4, 4)
     await shot('05b-concepts-scope')
 
     const settingsClicked = await clickAny('.rd-toolbar button', ['设置', 'Settings'])
