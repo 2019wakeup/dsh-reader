@@ -1,3 +1,31 @@
+const VIEW_STATE_PREFIX = 'dsh-reader:view:'
+
+function viewStateKey(sessionId) {
+  return sessionId ? `${VIEW_STATE_PREFIX}${sessionId}` : ''
+}
+
+function readSavedViewState(sessionId) {
+  const key = viewStateKey(sessionId)
+  if (!key || typeof localStorage === 'undefined') return null
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || 'null')
+    return parsed && typeof parsed === 'object' && typeof parsed.path === 'string' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeSavedViewState(sessionId, value) {
+  const key = viewStateKey(sessionId)
+  if (!key || typeof localStorage === 'undefined') return
+  try {
+    if (value) localStorage.setItem(key, JSON.stringify(value))
+    else localStorage.removeItem(key)
+  } catch {
+    /* private mode or quota; reading still works without restore */
+  }
+}
+
 const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
 const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
 const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
@@ -272,6 +300,10 @@ export function ReaderView(props) {
   const [entries, setEntries] = React.useState([])
   const [dir, setDir] = React.useState('.')
   const [doc, setDoc] = React.useState(null)
+  const restoredViewRef = React.useRef(false)
+  const pendingScrollRef = React.useRef(null)
+  const latestViewRef = React.useRef({})
+  const latestScrollRef = React.useRef(0)
   const [store, setStore] = React.useState({ version: 1, concepts: {}, annotations: {}, positions: {} })
   const [chapter, setChapter] = React.useState(0)
   const [page, setPage] = React.useState(1)
@@ -317,7 +349,10 @@ export function ReaderView(props) {
   const [mapScale, setMapScale] = React.useState(1)
   const [selectedNodeId, setSelectedNodeId] = React.useState(null)
   const [mapFullscreen, setMapFullscreen] = React.useState(false)
+  const [mapPan, setMapPan] = React.useState({ x: 0, y: 0 })
   const mapScrollRef = React.useRef(null)
+  const mapCanvasRef = React.useRef(null)
+  const mapPanRef = React.useRef({ x: 0, y: 0 })
   const mapDragRef = React.useRef(null)
   const suppressMapClick = React.useRef(false)
   const [askText, setAskText] = React.useState('')
@@ -338,6 +373,8 @@ export function ReaderView(props) {
   const pageInputRef = React.useRef(null)
   const chapterScrollHint = React.useRef(null)
   const drawerBodyRef = React.useRef(null)
+  const drawerResizeRef = React.useRef(null)
+  const [drawerDraft, setDrawerDraft] = React.useState(null)
   const drawerScroll = React.useRef({})
   const lastDrawer = React.useRef(null)
   const [layoutTick, setLayoutTick] = React.useState(0)
@@ -356,11 +393,16 @@ export function ReaderView(props) {
   const concepts = React.useMemo(() => Object.values(store.concepts || {}), [store.concepts])
   const sentLog = (store.debug && Array.isArray(store.debug.lastSent) ? store.debug.lastSent : []).slice(-10).reverse()
   const guide = docKey ? store.docs?.[docKey]?.guide : null
+  // Store merges clone the guide object on every position/annotation write.
+  // Rebuild only when its actual content changes, otherwise selecting a node
+  // (which may save a page position) would reset the detail card a moment later.
+  const guideSignature = React.useMemo(() => (guide ? JSON.stringify(guide) : ''), [guide])
   const guideTree = React.useMemo(
     () => (guide ? buildGuideTree(doc ? doc.name : '', guide) : null),
     // Only a new guide (or opening another book) may rebuild the map; page,
     // selection and structure-probe updates must not reset its expansion.
-    [guide, doc ? doc.name : ''],
+    [guideSignature, doc ? doc.name : ''],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   )
   const guideLayout = React.useMemo(
     () => (guideTree ? layoutTree(guideTree, collapsedIds) : null),
@@ -395,14 +437,17 @@ export function ReaderView(props) {
   }, [mapFullscreen])
 
   React.useEffect(() => {
-    if (!mapFullscreen) return
-    const node = mapScrollRef.current
-    if (!node) return
-    requestAnimationFrame(() => {
-      node.scrollLeft = 0
-      node.scrollTop = 0
-    })
-  }, [mapFullscreen])
+    if (guideView !== 'map') return
+    setMapScale(1)
+    setSelectedNodeId(null)
+    // The list and the map share the drawer body; entering the map starts at
+    // the top instead of inheriting the list's scroll offset.
+    const body = drawerBodyRef.current
+    if (body) {
+      body.scrollTop = 0
+      drawerScroll.current['guide:map'] = 0
+    }
+  }, [guideView])
 
   React.useEffect(() => {
     if (guideView !== 'map' || !guideLayout) return
@@ -412,6 +457,58 @@ export function ReaderView(props) {
     const fit = Math.min(1, Math.max(0.55, available / (guideLayout.width + 60)))
     setMapScale((current) => (Math.abs(current - 1) < 0.001 ? Number(fit.toFixed(2)) : current))
   }, [guideView, guideLayout])
+
+  // The map is a canvas rather than a scroll box: panning moves the drawing
+  // itself, so a map that happens to fit in the viewport can still be dragged.
+  const mapGeometry = () => {
+    const node = mapScrollRef.current
+    if (!node || !guideLayout) return null
+    return {
+      viewportWidth: node.clientWidth,
+      viewportHeight: node.clientHeight,
+      canvasWidth: Math.round((guideLayout.width + 60) * mapScale),
+      canvasHeight: Math.round((guideLayout.height + 60) * mapScale),
+    }
+  }
+  const clampMapPan = (pan, geometry = mapGeometry()) => {
+    if (!geometry) return pan
+    const edge = 72
+    const minX = edge - geometry.canvasWidth
+    const maxX = geometry.viewportWidth - edge
+    const minY = edge - geometry.canvasHeight
+    const maxY = geometry.viewportHeight - edge
+    return {
+      x: Math.round(maxX >= minX ? Math.min(maxX, Math.max(minX, pan.x)) : (geometry.viewportWidth - geometry.canvasWidth) / 2),
+      y: Math.round(maxY >= minY ? Math.min(maxY, Math.max(minY, pan.y)) : (geometry.viewportHeight - geometry.canvasHeight) / 2),
+    }
+  }
+  const centerMapPan = () => {
+    const geometry = mapGeometry()
+    if (!geometry) return
+    const next = clampMapPan({
+      x: (geometry.viewportWidth - geometry.canvasWidth) / 2,
+      y: (geometry.viewportHeight - geometry.canvasHeight) / 2,
+    }, geometry)
+    mapPanRef.current = next
+    setMapPan(next)
+  }
+
+  React.useEffect(() => {
+    if (drawer !== 'guide' || guideView !== 'map' || !guideLayout) return
+    let frame = requestAnimationFrame(centerMapPan)
+    const node = mapScrollRef.current
+    if (!node || typeof ResizeObserver !== 'function') return () => cancelAnimationFrame(frame)
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(centerMapPan)
+    })
+    observer.observe(node)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawer, guideView, guideLayout, mapScale, mapFullscreen])
   const docAnnotations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.annotations || [] : []),
     [store.docs, docKey],
@@ -439,6 +536,25 @@ export function ReaderView(props) {
   React.useEffect(() => {
     if (Number.isFinite(store.prefs?.fontSize)) setFontSize(store.prefs.fontSize)
   }, [store.prefs?.fontSize])
+
+  React.useEffect(() => {
+    // A pending row confirmation belongs to the open drawer; closing it or
+    // switching tabs must not leave a confirmation behind.
+    setDeleteConceptId(null)
+  }, [drawer])
+
+  React.useEffect(() => {
+    restoredViewRef.current = false
+    pendingScrollRef.current = null
+    setDoc(null)
+    setEntries([])
+    setDrawer(null)
+    setCards([])
+    setMenu(null)
+    setEditing(null)
+    setConceptEdit(null)
+    setError('')
+  }, [sessionId])
 
   React.useEffect(() => {
     if (!sessionId) return
@@ -594,9 +710,83 @@ export function ReaderView(props) {
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
 
+  const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
+  const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
+  const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
+  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(320, rootBounds().width - 180))
+  const drawerWidth = Math.min(drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault), drawerMaxWidth())
+  const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
+  const commitDrawerWidth = (width) => {
+    const next = Math.round(clampDrawerWidth(width))
+    setDrawerDraft({ key: drawerWidthKey, width: next })
+    changePrefs({ [drawerWidthKey]: next })
+    return next
+  }
+  const startDrawerResize = (event) => {
+    if (event.button !== 0) return
+    event.stopPropagation()
+    drawerResizeRef.current = {
+      key: drawerWidthKey,
+      startX: event.clientX,
+      startWidth: drawerWidth,
+    }
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    } catch {
+      /* pointer capture is best-effort */
+    }
+  }
+  const moveDrawerResize = (event) => {
+    const resize = drawerResizeRef.current
+    if (!resize) return
+    event.preventDefault()
+    const next = Math.round(clampDrawerWidth(resize.startWidth + resize.startX - event.clientX))
+    resize.currentWidth = next
+    setDrawerDraft({ key: resize.key, width: next })
+  }
+  const endDrawerResize = () => {
+    const resize = drawerResizeRef.current
+    if (!resize) return
+    drawerResizeRef.current = null
+    const next = Math.round(clampDrawerWidth(resize.currentWidth ?? drawerWidth))
+    setDrawerDraft({ key: resize.key, width: next })
+    changePrefs({ [resize.key]: next })
+  }
+  const resetDrawerWidth = () => {
+    setDrawerDraft(null)
+    changePrefs({ [drawerWidthKey]: drawerWidthDefault })
+  }
+
   const readingScroller = () => {
     const root = contentRef.current
     return root ? root.closest('.rd-main') || root.parentElement : null
+  }
+
+  latestViewRef.current = {
+    sessionId: doc ? doc.sessionId || sessionId : sessionId,
+    path: doc ? doc.path : '',
+    name: doc ? doc.name : '',
+    chapter,
+    page,
+    drawer,
+    guideView,
+  }
+
+  const persistCurrentView = () => {
+    const latest = latestViewRef.current
+    if (!latest.sessionId || !latest.path) return
+    const main = readingScroller()
+    if (main) latestScrollRef.current = main.scrollTop
+    writeSavedViewState(latest.sessionId, {
+      path: latest.path,
+      name: latest.name,
+      chapter: latest.chapter,
+      page: latest.page,
+      drawer: latest.drawer,
+      guideView: latest.guideView,
+      scrollTop: latestScrollRef.current,
+      updatedAt: Date.now(),
+    })
   }
 
   const updateReadingProgress = () => {
@@ -675,18 +865,16 @@ export function ReaderView(props) {
     }
   }, [page])
 
+  const drawerViewKey = drawer === 'guide' ? `guide:${guideView}` : drawer
+
   React.useEffect(() => {
-    if (lastDrawer.current && lastDrawer.current !== drawer) {
-      // The previous body is gone by the time this runs; each tab keeps its
-      // last known offset via the onScroll handler instead.
-    }
-    lastDrawer.current = drawer
+    lastDrawer.current = drawerViewKey
     const body = drawerBodyRef.current
     if (!body || !drawer) return
     requestAnimationFrame(() => {
-      body.scrollTop = drawerScroll.current[drawer] || 0
+      body.scrollTop = drawerScroll.current[drawerViewKey] || 0
     })
-  }, [drawer])
+  }, [drawer, guideView])
 
   React.useEffect(() => {
     const onKey = (event) => {
@@ -792,7 +980,11 @@ export function ReaderView(props) {
       setCards((current) => (current.some((entry) => entry.pinned) ? [] : current))
       dismissSelection(window)
     }
-    const onScroll = () => {
+    // The listener sits on window in the capture phase, so it also receives
+    // scroll events from the annotation editor's own textarea and from any
+    // scrolling panel. Those must not close the panel the user is typing in.
+    const onScroll = (event) => {
+      if (!shouldDismissOnScroll(event.target)) return
       setMenu(null)
       setChildMenu(null)
       setEditing(null)
@@ -822,7 +1014,7 @@ export function ReaderView(props) {
     try {
       const opened = await api.fetchBytes(sessionId, entry.path)
       const ext = entry.ext || extOf(entry.name)
-      const next = { path: entry.path, name: entry.name, ext, bytes: opened.bytes, fingerprint: opened.fingerprint || '' }
+      const next = { path: entry.path, name: entry.name, ext, bytes: opened.bytes, fingerprint: opened.fingerprint || '', sessionId }
       if (ext === '.epub') {
         next.epub = await epubOpen(opened.bytes)
         if (next.epub.fixedLayout) throw new Error(t('label.fxlUnsupported'))
@@ -853,7 +1045,10 @@ export function ReaderView(props) {
       setDoc(next)
       setChapter(Number.isFinite(position.chapter) ? Math.max(0, position.chapter) : 0)
       setPage(Number.isFinite(position.page) ? Math.max(1, position.page) : 1)
-      setDrawer(null)
+      pendingScrollRef.current = Number.isFinite(options.scrollTop) && options.scrollTop > 0 ? options.scrollTop : null
+      latestScrollRef.current = Number.isFinite(options.scrollTop) && options.scrollTop > 0 ? options.scrollTop : 0
+      setDrawer(options.drawer || null)
+      if (options.guideView === 'map' || options.guideView === 'list') setGuideView(options.guideView)
       setCards([])
       setMenu(null)
       setEditing(null)
@@ -902,6 +1097,10 @@ export function ReaderView(props) {
 
   const back = () => {
     revokeAssets(doc)
+    writeSavedViewState(sessionId, null)
+    latestViewRef.current = {}
+    pendingScrollRef.current = null
+    restoredViewRef.current = true
     historyRef.current = null
     setRelink(null)
     setDoc(null)
@@ -925,6 +1124,89 @@ export function ReaderView(props) {
       })
       .catch((e) => setError(String(e.message || e)))
   }
+
+  // Restore the book, reading position and drawer when returning to this
+  // session after DSH unmounts the reader view.
+  React.useEffect(() => {
+    if (restoredViewRef.current || !sessionId) return
+    if (doc) {
+      restoredViewRef.current = true
+      return
+    }
+    if (entries.length === 0) return
+    const saved = readSavedViewState(sessionId)
+    restoredViewRef.current = true
+    if (!saved || !saved.path) return
+    const extension = extOf(saved.path)
+    if (!READABLE.has(extension)) return
+    openDoc(
+      { name: saved.name || basename(saved.path), path: saved.path, ext: extension },
+      {
+        position: { chapter: saved.chapter, page: saved.page },
+        drawer: saved.drawer || null,
+        guideView: saved.guideView,
+        scrollTop: saved.scrollTop,
+      },
+    )
+  }, [sessionId, entries, doc])
+
+  React.useEffect(() => {
+    if (!doc || pendingScrollRef.current == null) return
+    const target = pendingScrollRef.current
+    let first = null
+    let second = null
+    first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        const main = readingScroller()
+        if (main) {
+          // Restore immediately; the reading pane uses smooth scrolling for
+          // user navigation, but a restored position should not animate.
+          const previous = main.style.scrollBehavior
+          main.style.scrollBehavior = 'auto'
+          main.scrollTop = target
+          main.style.scrollBehavior = previous
+          pendingScrollRef.current = null
+        }
+      })
+    })
+    return () => {
+      if (first) cancelAnimationFrame(first)
+      if (second) cancelAnimationFrame(second)
+    }
+  }, [doc, chapter, page])
+
+  React.useEffect(() => {
+    if (!doc) return
+    const timer = setTimeout(persistCurrentView, 200)
+    return () => clearTimeout(timer)
+  }, [sessionId, doc ? doc.path : '', chapter, page, drawer, guideView])
+
+  React.useEffect(() => {
+    if (!doc) return
+    const root = rootRef.current
+    const main = readingScroller()
+    if (!root && !main) return
+    let timer = null
+    const onScroll = (event) => {
+      const target = event.target
+      const inReader = target && target.closest && target.closest('.rd-main')
+      if (!inReader && target !== main) return
+      clearTimeout(timer)
+      timer = setTimeout(persistCurrentView, 250)
+    }
+    // Scroll does not bubble; capture it at the reader root so the position is
+    // still recorded when the inner prose node was replaced by a re-render.
+    root?.addEventListener('scroll', onScroll, true)
+    main?.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      clearTimeout(timer)
+      root?.removeEventListener('scroll', onScroll, true)
+      main?.removeEventListener('scroll', onScroll)
+      persistCurrentView()
+    }
+  }, [doc, chapter, page])
+
+  React.useEffect(() => () => persistCurrentView(), [])
 
   const addAnnotation = (annotation) => {
     if (!doc) return Promise.resolve()
@@ -1016,6 +1298,13 @@ export function ReaderView(props) {
       })
       const concept = result.concept
       if (result.store) mergeStore(result.store)
+      if (result.ancestor) {
+        // The reader walked down the chain and asked about a term that raised it:
+        // show that card with the reason instead of pretending it is new.
+        setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect, hint: t('label.ancestorRevisit') }))
+        flash(t('label.ancestorRevisit'))
+        return
+      }
       setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect }))
       flash(`${t('label.conceptSaved')}：${concept.term}`)
     } catch (e) {
@@ -2041,27 +2330,31 @@ export function ReaderView(props) {
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
     const nodeLines = (node) => {
       if (node.chunkIndex) {
-        const head = chunkNodeLabel(node, t('label.chunk'))
+        const head = chunkNodeTitle(node)
         const summary = String(node.summary || '').replace(/\s+/g, ' ').trim()
-        if (!summary) return [head]
-        return [head, summary.slice(0, 18) + (summary.length > 18 ? '…' : '')]
+        const lines = splitNodeTitle(head || summary)
+        if (summary && head && summary !== head && lines.length < 2) {
+          lines.push(summary.slice(0, 18) + (summary.length > 18 ? '…' : ''))
+        }
+        return lines
       }
       return splitNodeTitle(node.title)
     }
 
     const activateNode = (node) => {
       if (suppressMapClick.current) return
+      // Selecting is stable: the detail stays above the map and the reader
+      // only moves through the explicit jump button below it.
       setSelectedNodeId(node.id)
       if (node.hasChildren) toggleCollapse(node.id)
-      else jumpToSection(node)
     }
     const onMapPointerDown = (event) => {
       if (event.button !== 0) return
       mapDragRef.current = {
         x: event.clientX,
         y: event.clientY,
-        left: event.currentTarget.scrollLeft,
-        top: event.currentTarget.scrollTop,
+        panX: mapPanRef.current.x,
+        panY: mapPanRef.current.y,
         moved: false,
         captured: false,
       }
@@ -2081,8 +2374,9 @@ export function ReaderView(props) {
         drag.captured = true
         event.currentTarget.setPointerCapture?.(event.pointerId)
       }
-      event.currentTarget.scrollLeft = drag.left - dx
-      event.currentTarget.scrollTop = drag.top - dy
+      const next = clampMapPan({ x: drag.panX + dx, y: drag.panY + dy })
+      mapPanRef.current = next
+      setMapPan(next)
     }
     const onMapPointerUp = () => {
       const drag = mapDragRef.current
@@ -2108,6 +2402,7 @@ export function ReaderView(props) {
           h('span', { className: 'rd-map-zoom' }, `${Math.round(mapScale * 100)}%`),
           h('button', { className: 'rd-map-btn', title: t('label.zoomIn'), onClick: () => setMapScale((value) => Math.min(1.8, Number((value + 0.1).toFixed(2)))) }, '+'),
           h('button', { className: 'rd-map-btn', onClick: () => setMapScale(1) }, '1:1'),
+          h('button', { className: 'rd-map-btn', title: t('label.mapCenter'), onClick: centerMapPan }, '⌖'),
         ),
         h(
           'div',
@@ -2163,12 +2458,38 @@ export function ReaderView(props) {
         {
           className: 'rd-map-scroll',
           ref: mapScrollRef,
+          tabIndex: 0,
+          'data-pan-x': mapPan.x,
+          'data-pan-y': mapPan.y,
+          onKeyDown: (event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+            event.preventDefault()
+            event.stopPropagation()
+            const step = event.key === 'ArrowLeft' ? 48 : event.key === 'ArrowRight' ? -48 : event.key === 'ArrowUp' ? 48 : -48
+            const next = clampMapPan({
+              x: mapPanRef.current.x + (event.key === 'ArrowLeft' || event.key === 'ArrowRight' ? step : 0),
+              y: mapPanRef.current.y + (event.key === 'ArrowUp' || event.key === 'ArrowDown' ? step : 0),
+            })
+            mapPanRef.current = next
+            setMapPan(next)
+          },
           onPointerDown: onMapPointerDown,
           onPointerMove: onMapPointerMove,
           onPointerUp: onMapPointerUp,
           onPointerCancel: onMapPointerUp,
+          onDoubleClick: (event) => {
+            if (event.target && event.target.closest && event.target.closest('.rdm-node')) return
+            centerMapPan()
+          },
           title: t('label.mapHint'),
         },
+        h(
+          'div',
+          {
+            className: 'rd-map-canvas',
+            ref: mapCanvasRef,
+            style: { width: canvasWidth, height: canvasHeight, transform: `translate3d(${mapPan.x}px, ${mapPan.y}px, 0)` },
+          },
         h(
           'svg',
           {
@@ -2265,6 +2586,7 @@ export function ReaderView(props) {
               )
             }),
           ),
+        ),
         ),
       ),
     )
@@ -2639,7 +2961,7 @@ export function ReaderView(props) {
           className: 'rd-drawer-body',
           ref: drawerBodyRef,
           onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
         body,
@@ -2894,10 +3216,12 @@ export function ReaderView(props) {
                     concept.id === focusConcept
                       ? { borderColor: 'var(--dsw-alias-brand-primary)' }
                       : undefined,
-                  onClick: () =>
+                  onClick: () => {
+                    setDeleteConceptId(null)
                     setCards([
                       { id: concept.id, pinned: true, rect: { left: 260, top: 140, right: 260, bottom: 140 } },
-                    ]),
+                    ])
+                  },
                 },
                 h(
                   'div',
@@ -3333,7 +3657,31 @@ export function ReaderView(props) {
     }
     return h(
       'div',
-      { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
+      {
+        className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}`,
+        style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
+      },
+      h('div', {
+        className: 'rd-drawer-resizer',
+        role: 'separator',
+        tabIndex: 0,
+        'aria-orientation': 'vertical',
+        'aria-label': t('label.resizeSidebar'),
+        'aria-valuemin': 240,
+        'aria-valuemax': drawerMaxWidth(),
+        'aria-valuenow': Math.round(drawerWidth),
+        title: t('label.resizeSidebar'),
+        onPointerDown: startDrawerResize,
+        onPointerMove: moveDrawerResize,
+        onPointerUp: endDrawerResize,
+        onPointerCancel: endDrawerResize,
+        onDoubleClick: resetDrawerWidth,
+        onKeyDown: (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
+        },
+      }),
       h(
         'div',
         { className: 'rd-drawer-head' },
@@ -3347,7 +3695,7 @@ export function ReaderView(props) {
           className: 'rd-drawer-body',
           ref: drawerBodyRef,
           onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawer] = event.currentTarget.scrollTop
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
         body,
@@ -3361,7 +3709,7 @@ export function ReaderView(props) {
     return h(
       'div',
       {
-        className: 'rd-card rd-editor',
+        className: 'rd-card rd-editor rd-annotation-editor',
         style: { ...style, width: style.width, maxHeight: style.maxHeight },
         onMouseEnter: () => clearTimeout(hideTimer.current),
         onClick: (event) => event.stopPropagation(),
@@ -3394,7 +3742,7 @@ export function ReaderView(props) {
       }),
       h(
         'div',
-        { className: 'rd-actions' },
+        { className: 'rd-actions rd-sticky-actions' },
         h('button', { className: 'rd-btn', onClick: saveEditing }, t('action.save')),
         h('button', { className: 'rd-btn', onClick: deleteEditing }, t('action.delete')),
         h('button', { className: 'rd-btn ghost', onClick: () => setEditing(null) }, t('action.close')),
@@ -3529,6 +3877,7 @@ export function ReaderView(props) {
         chain.length
           ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, chain.map((item) => item.term).join(' › '))
           : null,
+        card.hint ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, card.hint) : null,
         h('div', { className: 'rd-def' }, concept.definition || ''),
         concept.intuition
           ? h('div', { className: 'rd-sec' }, h('b', null, t('label.intuition') + '  '), concept.intuition)

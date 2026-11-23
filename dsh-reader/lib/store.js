@@ -37,6 +37,8 @@ function normalizePrefs(raw) {
       raw.model && typeof raw.model === 'object' && typeof raw.model.provider === 'string' && typeof raw.model.model === 'string'
         ? { provider: raw.model.provider.slice(0, 120), model: raw.model.model.slice(0, 120) }
         : null,
+    drawerWidth: number(raw.drawerWidth, base.drawerWidth, 240, 1100),
+    mapWidth: number(raw.mapWidth, base.mapWidth, 320, 1200),
     translateFrom: ['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt'].includes(raw.translateFrom)
       ? raw.translateFrom
       : base.translateFrom,

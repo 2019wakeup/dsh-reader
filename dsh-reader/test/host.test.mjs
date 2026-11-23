@@ -254,6 +254,63 @@ test('explains a new concept once and reuses it afterwards', async (t) => {
   assert.equal(calls(), 1)
 })
 
+test('a nested explanation tells the model which cards it came from', async (t) => {
+  const { call, ctx } = await setup(t, {
+    llmText: '{"definition":"子定义","intuition":"","context":"","examples":[]}',
+  })
+  const mutate = (body) =>
+    call('/dsh-reader-live/api/mutate?sessionId=s1', { method: 'POST', body: JSON.stringify(body) })
+  await mutate({ op: 'concept/upsert', concept: { id: 'root', term: '分布式系统', definition: '多台机器协作' } })
+  await mutate({ op: 'concept/upsert', concept: { id: 'mid', term: 'CAP', definition: '三角权衡', parentId: 'root' } })
+  const res = await call('/dsh-reader-live/api/explain?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ term: '分区容忍', sentence: 's', paragraph: 'p', parentId: 'mid' }),
+  })
+  const body = await res.json()
+  assert.equal(res.status, 200)
+  assert.equal(body.concept.parentId, 'mid')
+  const sent = ctx.lastStream.messages[0].content[0].text
+  assert.match(sent, /上层解释/)
+  assert.match(sent, /1\. 分布式系统：多台机器协作/)
+  assert.match(sent, /2\. CAP：三角权衡/)
+  assert.match(ctx.lastStream.system, /不要重复该概念已有的定义/)
+})
+
+test('asking again about the card that raised the current one steps back instead', async (t) => {
+  const { call, calls } = await setup(t)
+  const mutate = (body) =>
+    call('/dsh-reader-live/api/mutate?sessionId=s1', { method: 'POST', body: JSON.stringify(body) })
+  await mutate({ op: 'concept/upsert', concept: { id: 'a', term: '甲', definition: '甲的说明' } })
+  await mutate({ op: 'concept/upsert', concept: { id: 'b', term: '乙', definition: '乙说的是甲', parentId: 'a' } })
+  const before = calls()
+  const res = await call('/dsh-reader-live/api/explain?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ term: '甲', sentence: 's', paragraph: 'p', parentId: 'b' }),
+  })
+  const body = await res.json()
+  assert.equal(res.status, 200)
+  assert.equal(body.route, 'ancestor')
+  assert.equal(body.ancestor, true)
+  assert.equal(body.concept.id, 'a')
+  assert.equal(calls(), before, 'no model call for a term that is already explained above')
+})
+
+test('a cyclic parent chain does not hang the ancestor walk', async (t) => {
+  const { call } = await setup(t)
+  const mutate = (body) =>
+    call('/dsh-reader-live/api/mutate?sessionId=s1', { method: 'POST', body: JSON.stringify(body) })
+  await mutate({ op: 'concept/upsert', concept: { id: 'a', term: '甲', parentId: 'b' } })
+  await mutate({ op: 'concept/upsert', concept: { id: 'b', term: '乙', parentId: 'a' } })
+  const res = await call('/dsh-reader-live/api/explain?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ term: '丙', sentence: 's', paragraph: 'p', parentId: 'a' }),
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.concept.term, '丙')
+  assert.equal(body.concept.parentId, 'a')
+})
+
 test('explain keeps concepts that already existed', async (t) => {
   const { call } = await setup(t)
   await call('/dsh-reader-live/api/mutate?sessionId=s1', {

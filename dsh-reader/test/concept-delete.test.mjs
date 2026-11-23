@@ -237,3 +237,15 @@ test('cancelling the confirmation keeps the concept', async (t) => {
   assert.equal(mutations.filter((op) => op.op === 'concept/delete').length, 0, 'nothing was deleted')
   assert.ok(container.querySelector('[data-concept-id="a"]'), 'the concept stays')
 })
+
+
+test('opening a concept row dismisses the delete confirmation', async (t) => {
+  const { container, row } = await openConceptsDrawer(t)
+  row.querySelector('.rd-row-delete').dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+  await tick(40)
+  assert.ok(container.querySelector('.rd-drawer-confirm'), 'confirmation is open')
+  row.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+  await tick(60)
+  assert.equal(container.querySelector('.rd-drawer-confirm'), null, 'opening the row closes the confirmation')
+  assert.ok(container.querySelector('.rd-card'), 'the concept card opens')
+})

@@ -8,6 +8,23 @@ function strings(value, limit) {
   return Array.isArray(value) ? value.filter((x) => typeof x === 'string' && x.trim()).slice(0, limit) : []
 }
 
+const NESTED_RULE =
+  '如果「词条」本身就是某个上层概念或它的别名，不要重复该概念已有的定义，改为说明它在这段话里具体指什么、与上层概念的差别。'
+
+/** Ancestors of the card the reader is looking at, farthest first. */
+function ancestorLines(ancestors) {
+  const list = (Array.isArray(ancestors) ? ancestors : []).filter((item) => item && text(item.term))
+  if (list.length === 0) return []
+  return [
+    '',
+    '上层解释（从远到近，读者正在看这些卡片）：',
+    ...list.map(
+      (item, index) =>
+        `${index + 1}. ${text(item.term)}${text(item.definition) ? '：' + text(item.definition).slice(0, 120) : ''}`,
+    ),
+  ]
+}
+
 /** Turn one model reply into concept fields, tolerating fences and prose. */
 export function parseExplanation(reply) {
   const raw = String(reply ?? '')
@@ -109,22 +126,26 @@ export function buildAskPrompt({ concept, question, related = [], web = null }) 
 }
 
 /** Compact first-pass explanation: two fields, low latency. */
-export function buildQuickExplainPrompt({ term, sentence, docTitle }) {
+export function buildQuickExplainPrompt({ term, sentence, docTitle, ancestors = [] }) {
+  const layered = ancestorLines(ancestors)
   const system = [
     '你是阅读助手。读者只需要快速理解这个词。',
     '只输出一个 JSON 对象：{"definition":"一句话定义，60 字以内","intuition":"一句话直觉或比喻，40 字以内","examples":["一个短例子"]}。',
     '不要展开长文；不确定就直说。',
+    ...(layered.length ? [NESTED_RULE] : []),
   ].join('')
   const user = [
     `书名：${text(docTitle) || '未知'}`,
     `原文：${text(sentence).slice(0, 300)}`,
     `词条：${text(term)}`,
+    ...layered,
   ].join('\n')
   return { system, user }
 }
 
 /** Build the single-shot explanation prompt; never send more than one paragraph. */
-export function buildExplainPrompt({ term, sentence, paragraph, docTitle }) {
+export function buildExplainPrompt({ term, sentence, paragraph, docTitle, ancestors = [] }) {
+  const layered = ancestorLines(ancestors)
   const system = [
     '你是阅读助手，帮助读者理解正在读的书里的概念。',
     '只输出一个 JSON 对象，不要输出其他文字。字段：',
@@ -133,12 +154,14 @@ export function buildExplainPrompt({ term, sentence, paragraph, docTitle }) {
     'context：结合这本书的语境说明为什么这里用它，不超过 80 字；',
     'examples：0-3 个短例子；related：0-3 个相关概念名。',
     '不确定时用“可能指 A 或 B”表达，禁止编造。',
+    ...(layered.length ? [NESTED_RULE] : []),
   ].join('')
   const user = [
     `书名：${text(docTitle) || '未知'}`,
     `概念：${text(term)}`,
     `所在句：${text(sentence).slice(0, 240)}`,
     `所在段落：${text(paragraph).slice(0, 600)}`,
+    ...layered,
     '请输出 JSON。',
   ].join('\n')
   return { system, user }

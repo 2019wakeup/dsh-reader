@@ -92,3 +92,50 @@ test('prompt carries the term, sentence and a bounded paragraph', () => {
   assert.match(user, /分布式系统/)
   assert.ok(user.length < 1200)
 })
+
+test('ancestor cards are passed to the quick prompt, farthest first', () => {
+  const { system, user } = buildQuickExplainPrompt({
+    term: '分区容忍',
+    sentence: 'S',
+    docTitle: '书',
+    ancestors: [
+      { id: 'a', term: '分布式系统', definition: '多台机器协作' },
+      { id: 'b', term: 'CAP', definition: '三角权衡' },
+    ],
+  })
+  assert.match(user, /上层解释/)
+  assert.match(user, /1\. 分布式系统：多台机器协作/)
+  assert.match(user, /2\. CAP：三角权衡/)
+  assert.match(system, /不要重复该概念已有的定义/)
+})
+
+test('ancestor cards are passed to the full prompt too', () => {
+  const { system, user } = buildExplainPrompt({
+    term: '分区容忍',
+    sentence: 'S',
+    paragraph: 'P',
+    docTitle: '书',
+    ancestors: [{ id: 'b', term: 'CAP', definition: '三角权衡' }],
+  })
+  assert.match(user, /上层解释/)
+  assert.match(user, /CAP：三角权衡/)
+  assert.match(system, /不要重复该概念已有的定义/)
+})
+
+test('a top-level explanation keeps the prompt unchanged', () => {
+  const plain = buildQuickExplainPrompt({ term: 'T', sentence: 'S', docTitle: '书' })
+  const explicit = buildQuickExplainPrompt({ term: 'T', sentence: 'S', docTitle: '书', ancestors: [] })
+  assert.deepEqual(explicit, plain)
+  assert.doesNotMatch(plain.user, /上层解释/)
+  assert.doesNotMatch(plain.system, /不要重复该概念已有的定义/)
+})
+
+test('ancestor definitions are trimmed so the prompt stays bounded', () => {
+  const { user } = buildQuickExplainPrompt({
+    term: 'T',
+    sentence: 'S',
+    docTitle: '书',
+    ancestors: [{ id: 'a', term: '长概念', definition: '定义'.repeat(200) }],
+  })
+  assert.ok(user.length < 1200, `prompt was ${user.length} chars`)
+})

@@ -793,7 +793,47 @@ async function main() {
     )
     const quoteVisible = await page.$eval('.rd-editor .rd-quote', (node) => node.textContent.trim().length > 0).catch(() => false)
     record('annotation editor shows the quote', quoteVisible, '')
+
+    // The "已收下" toast lives four seconds; wait it out so these shots record the
+    // editor and the note box instead of whatever transient banner a previous
+    // step raised.
+    await page.waitForFunction(() => !document.querySelector('.rd-toast'), { timeout: 8000 })
     await shot('03d-annotation-editor')
+    // A long note scrolls inside its own field. That scroll must not be read as
+    // the page moving under the anchor, or the editor closes and the note is lost.
+    await page.click('.rd-annotation-editor textarea')
+    for (let line = 0; line < 8; line += 1) {
+      await page.keyboard.type(`line ${line + 1}`)
+      await page.keyboard.press('Enter')
+    }
+    const noteScroll = await page.evaluate(async () => {
+      const field = document.querySelector('.rd-annotation-editor textarea')
+      if (!field) return null
+      const scrollable = field.scrollHeight > field.clientHeight
+      field.scrollTop = field.scrollHeight
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return { scrollable, kept: Boolean(document.querySelector('.rd-annotation-editor')), scrollTop: field.scrollTop }
+    })
+    record('annotation note field scrolls on its own', noteScroll?.scrollable === true, noteScroll ? `scrollTop ${Math.round(noteScroll.scrollTop)}` : 'field missing')
+    record('scrolling inside the note keeps the editor open', noteScroll?.kept === true, noteScroll ? '' : 'field missing')
+    const dismissedByPageScroll = await page.evaluate(async () => {
+      const main = document.querySelector('.rd-main')
+      if (!main) return null
+      const before = main.scrollTop
+      // Jump instantly: the panes use smooth scrolling, and an animated restore
+      // would leave the rest of the walkthrough on a half-scrolled page.
+      const previousBehavior = main.style.scrollBehavior
+      main.style.scrollBehavior = 'auto'
+      main.scrollTop = before + 40
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      const closed = !document.querySelector('.rd-annotation-editor')
+      // Put the reading surface back where the rest of the walkthrough expects it.
+      main.scrollTop = before
+      main.style.scrollBehavior = previousBehavior
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return closed
+    })
+    record('scrolling the page still closes the annotation editor', dismissedByPageScroll === true, '')
     await page.keyboard.press('Escape')
     await new Promise((resolve) => setTimeout(resolve, 300))
 
@@ -825,6 +865,11 @@ async function main() {
     record('note box fits viewport', selected && fitsViewport(noteBox), `box ${Math.round(noteBox.left)},${Math.round(noteBox.top)}`)
     record('note box no overflow', noteBox.scrollWidth <= noteBox.clientWidth + 1, `${noteBox.scrollWidth}/${noteBox.clientWidth}`)
     record('note textarea fits box', noteTextarea.right <= noteBox.parentRight + 1, `${Math.round(noteTextarea.right)} <= ${Math.round(noteBox.parentRight)}`)
+
+    // The "已收下" toast lives four seconds; wait it out so these shots record the
+    // editor and the note box instead of whatever transient banner a previous
+    // step raised.
+    await page.waitForFunction(() => !document.querySelector('.rd-toast'), { timeout: 8000 })
     await shot('03e-note-box')
     await clickAny('.rd-note-box button', ['取消', 'Cancel'])
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -872,6 +917,18 @@ async function main() {
     }))
     record('single-section parts are not duplicated', partRows.parts === 1 && partRows.singleTitleCount === 1, JSON.stringify(partRows))
     await shot('04-guide')
+    const resizerBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const resizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(resizerPoint.x, resizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(resizerPoint.x - 80, resizerPoint.y, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const resizerAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('guide sidebar width can be resized', resizerAfter > resizerBefore + 40, `${Math.round(resizerBefore)} -> ${Math.round(resizerAfter)}`)
 
     await page.setViewport({ width: 1280, height: 300, deviceScaleFactor: 1 })
     await new Promise((resolve) => setTimeout(resolve, 400))
@@ -935,6 +992,28 @@ async function main() {
       `drawer ${beforeKeyboard.drawer} -> ${afterKeyboard.drawer}, main ${afterKeyboard.main}`,
     )
     await page.evaluate(() => {
+      document.querySelector('.rd-drawer-body').scrollTop = 60
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await clickAny('.rd-drawer button', ['导图', 'Mindmap'])
+    await page.waitForSelector('.rd-map-scroll svg .rdm-label', { timeout: 8000 })
+    const mapEntry = await page.evaluate(() => ({
+      width: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+      bodyTop: document.querySelector('.rd-drawer-body').scrollTop,
+    }))
+    record('map view uses its own width and starts at the top', Math.abs(mapEntry.width - 760) <= 2 && mapEntry.bodyTop === 0, `${Math.round(mapEntry.width)}px top=${mapEntry.bodyTop}`)
+    await clickAny('.rd-drawer button', ['列表', 'List'])
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const listReturn = await page.evaluate(() => ({
+      width: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+      bodyTop: document.querySelector('.rd-drawer-body').scrollTop,
+    }))
+    record('returning to the guide list restores its width and scroll', Math.abs(listReturn.width - 400) <= 2 && Math.abs(listReturn.bodyTop - 60) <= 4, `${Math.round(listReturn.width)}px top=${listReturn.bodyTop}`)
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const resizerReset = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('double-click resets the guide sidebar width', Math.abs(resizerReset - 320) <= 2, `${Math.round(resizerReset)}px`)
+    await page.evaluate(() => {
       document.querySelector('.rd-drawer-body').scrollTop = 0
     })
     await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 })
@@ -942,13 +1021,91 @@ async function main() {
 
     const mapClicked = await clickAny('.rd-drawer button', ['导图', 'Mindmap'])
     await page.waitForSelector('.rd-map-scroll svg .rdm-label', { timeout: 8000 })
+    const mapResizerBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const mapResizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(mapResizerPoint.x, mapResizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(mapResizerPoint.x - 60, mapResizerPoint.y, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const mapResizerAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('mindmap sidebar has its own resizable width', mapResizerAfter > mapResizerBefore + 30, `${Math.round(mapResizerBefore)} -> ${Math.round(mapResizerAfter)}`)
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const mapResizerReset = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('double-click resets the mindmap sidebar width', Math.abs(mapResizerReset - 760) <= 2, `${Math.round(mapResizerReset)}px`)
+    await page.mouse.move(4, 4)
+    await new Promise((resolve) => setTimeout(resolve, 200))
     const mapDefault = await page.evaluate(() => ({
       nodes: document.querySelectorAll('.rdm-node').length,
       labels: document.querySelectorAll('.rdm-label').length,
       details: document.querySelectorAll('.rd-map-detail').length,
     }))
     record('mindmap opens as a collapsed chapter outline', mapClicked && mapDefault.nodes === 3 && mapDefault.details === 0, `${mapDefault.nodes} nodes, ${mapDefault.labels} labels`)
+    const edgeBefore = await page.evaluate(() => {
+      const viewport = document.querySelector('.rd-map-scroll')
+      const rect = viewport.getBoundingClientRect()
+      return {
+        x: rect.left + 8,
+        y: rect.top + rect.height / 2,
+        pan: Number(viewport.getAttribute('data-pan-x')),
+        drawer: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+      }
+    })
+    await page.mouse.move(edgeBefore.x, edgeBefore.y)
+    await page.mouse.down()
+    await page.mouse.move(edgeBefore.x + 50, edgeBefore.y, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const edgeAfter = await page.evaluate(() => ({
+      pan: Number(document.querySelector('.rd-map-scroll').getAttribute('data-pan-x')),
+      drawer: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+    }))
+    record(
+      'dragging near the map edge pans the canvas without resizing the sidebar',
+      edgeAfter.pan !== edgeBefore.pan && Math.abs(edgeAfter.drawer - edgeBefore.drawer) <= 1,
+      `pan ${edgeBefore.pan} -> ${edgeAfter.pan}; drawer ${Math.round(edgeBefore.drawer)} -> ${Math.round(edgeAfter.drawer)}`,
+    )
+    await page.$$eval('.rd-map-toolbar button', (nodes) => {
+      const button = nodes.find((node) => node.getAttribute('title') === '回到画布中心' || node.getAttribute('title') === 'Recenter canvas')
+      if (button) button.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 250))
     await shot('05-mindmap')
+    const fitPan = await page.$eval('.rd-map-scroll', (node) => ({
+      x: Number(node.getAttribute('data-pan-x')),
+      y: Number(node.getAttribute('data-pan-y')),
+      rect: node.getBoundingClientRect().toJSON(),
+      drawer: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+    }))
+    await page.mouse.move(fitPan.rect.left + fitPan.rect.width / 2, fitPan.rect.top + fitPan.rect.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(fitPan.rect.left + fitPan.rect.width / 2 - 70, fitPan.rect.top + fitPan.rect.height / 2 + 30, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const fitPanAfter = await page.$eval('.rd-map-scroll', (node) => ({
+      x: Number(node.getAttribute('data-pan-x')),
+      y: Number(node.getAttribute('data-pan-y')),
+      drawer: document.querySelector('.rd-drawer').getBoundingClientRect().width,
+    }))
+    record(
+      'a fully visible mindmap still drags like a canvas',
+      fitPanAfter.x !== fitPan.x && fitPanAfter.y !== fitPan.y && Math.abs(fitPanAfter.drawer - fitPan.drawer) <= 1,
+      `${fitPan.x},${fitPan.y} -> ${fitPanAfter.x},${fitPanAfter.y}`,
+    )
+    await page.$$eval('.rd-map-toolbar button', (nodes) => {
+      const button = nodes.find((node) => node.getAttribute('title') === '回到画布中心' || node.getAttribute('title') === 'Recenter canvas')
+      if (button) button.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const centeredPan = await page.$eval('.rd-map-scroll', (node) => ({
+      x: Number(node.getAttribute('data-pan-x')),
+      y: Number(node.getAttribute('data-pan-y')),
+    }))
+    record('mindmap can recenter after panning', Math.abs(centeredPan.x - fitPan.x) <= 2 && Math.abs(centeredPan.y - fitPan.y) <= 2, `${centeredPan.x},${centeredPan.y}`)
     const fullscreenClicked = await clickAny('.rd-drawer button', ['全屏', 'Fullscreen'])
     await new Promise((resolve) => setTimeout(resolve, 350))
     const fullscreen = await page.evaluate(() => {
@@ -985,6 +1142,12 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 400))
     const expandedAll = await page.$$eval('.rdm-node', (nodes) => nodes.length)
     record('expand all reveals every map node', expandedAll > mapDefault.nodes, `${mapDefault.nodes} -> ${expandedAll}`)
+    const chunkLabels = await page.$$eval('.rdm-label', (nodes) => nodes.map((node) => node.textContent.trim()))
+    record(
+      'map nodes show section titles instead of chunk numbers',
+      chunkLabels.length > 0 && chunkLabels.every((label) => !/^分片/.test(label)),
+      chunkLabels.slice(0, 6).join(' | '),
+    )
     await clickAny('.rd-drawer button', ['收起全部', 'Collapse all'])
     await new Promise((resolve) => setTimeout(resolve, 400))
     const collapsedAll = await page.$$eval('.rdm-node', (nodes) => nodes.length)
@@ -1013,13 +1176,20 @@ async function main() {
       const rect = node.getBoundingClientRect()
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
     })
+    const mainBeforeClick = await page.evaluate(() => document.querySelector('.rd-main').scrollTop)
     await page.mouse.click(childRect.x, childRect.y)
-    await new Promise((resolve) => setTimeout(resolve, 700))
+    await new Promise((resolve) => setTimeout(resolve, 1300))
     const childDetail = await page.evaluate(() => ({
       title: document.querySelector('.rd-map-detail-title')?.textContent || '',
       open: Boolean(document.querySelector('.rd-drawer')),
+      nodeSelected: Boolean(document.querySelector('.rdm-node-selected')),
+      main: document.querySelector('.rd-main').scrollTop,
     }))
-    record('clicking a section keeps the summary panel open', childDetail.open && childDetail.title.includes('一致性模型'), childDetail.title)
+    record(
+      'clicking a section keeps the detail card open without flashing',
+      childDetail.open && childDetail.title.includes('一致性模型') && childDetail.nodeSelected && Math.abs(childDetail.main - mainBeforeClick) <= 2,
+      `${childDetail.title} main ${mainBeforeClick} -> ${childDetail.main}`,
+    )
     const chevronRect = await page.$$eval('[data-node-id="part1"] rect', (nodes) => {
       const node = nodes[nodes.length - 1]
       const rect = node.getBoundingClientRect()
@@ -1044,42 +1214,36 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 250))
     const baseMapWidth = await page.$eval('.rd-map-scroll svg', (node) => Number(node.getAttribute('width')))
     await page.evaluate(() => {
-      const plus = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '+')
+      const plus = [...document.querySelectorAll('.rd-map-toolbar button')].find((button) => button.textContent.trim() === '+')
       for (let index = 0; index < 5; index += 1) plus.click()
     })
     await new Promise((resolve) => setTimeout(resolve, 300))
     const zoomedMap = await page.evaluate(() => {
       const svg = document.querySelector('.rd-map-scroll svg')
-      const scroll = document.querySelector('.rd-map-scroll')
+      const viewport = document.querySelector('.rd-map-scroll')
+      const canvas = document.querySelector('.rd-map-canvas')
       const rect = svg.getBoundingClientRect()
       return {
         width: Number(svg.getAttribute('width')),
         rectWidth: Math.round(rect.width),
-        scrollWidth: scroll.scrollWidth,
-        clientWidth: scroll.clientWidth,
-        overflow: getComputedStyle(scroll).overflowX,
-        scrollable: scroll.scrollWidth > scroll.clientWidth,
+        viewportWidth: viewport.clientWidth,
+        canvasWidth: canvas.getBoundingClientRect().width,
       }
     })
     record(
-      'mindmap zoom grows the canvas and scrolls',
-      zoomedMap.width > baseMapWidth && zoomedMap.scrollable,
-      `${baseMapWidth} -> ${zoomedMap.width} rect=${zoomedMap.rectWidth} scroll=${zoomedMap.scrollWidth}/${zoomedMap.clientWidth} overflow=${zoomedMap.overflow}`,
+      'mindmap zoom grows the canvas beyond its viewport',
+      zoomedMap.width > baseMapWidth && zoomedMap.rectWidth > zoomedMap.viewportWidth,
+      `${baseMapWidth} -> ${zoomedMap.width} canvas=${Math.round(zoomedMap.rectWidth)} viewport=${zoomedMap.viewportWidth}`,
     )
     const mapBox = await page.$eval('.rd-map-scroll', (node) => {
       const rect = node.getBoundingClientRect()
-      node.scrollLeft = 120
       return {
         left: rect.left,
         top: rect.top,
         width: rect.width,
         height: rect.height,
-        scrolled: node.scrollLeft,
-        client: node.clientWidth,
-        scroll: node.scrollWidth,
-        max: node.scrollWidth - node.clientWidth,
-        svgWidth: document.querySelector('.rd-map-scroll svg')?.getAttribute('width') || '',
-        zoom: [...document.querySelectorAll('.rd-drawer .rd-muted')].map((n) => n.textContent).find((text) => /%$/.test(text)) || '',
+        panX: Number(node.getAttribute('data-pan-x')),
+        panY: Number(node.getAttribute('data-pan-y')),
       }
     })
     await page.mouse.move(mapBox.left + mapBox.width / 2, mapBox.top + mapBox.height - 30)
@@ -1087,8 +1251,43 @@ async function main() {
     await page.mouse.move(mapBox.left + mapBox.width / 2 - 80, mapBox.top + mapBox.height - 30, { steps: 5 })
     await page.mouse.up()
     await new Promise((resolve) => setTimeout(resolve, 200))
-    const dragged = await page.$eval('.rd-map-scroll', (node) => node.scrollLeft)
-    record('mindmap can be dragged horizontally', dragged !== mapBox.scrolled, `${mapBox.scrolled} -> ${dragged} client=${mapBox.client} scroll=${mapBox.scroll} max=${mapBox.max} box=${Math.round(mapBox.width)}x${Math.round(mapBox.height)} svg=${mapBox.svgWidth} zoom=${mapBox.zoom}`)
+    const dragged = await page.$eval('.rd-map-scroll', (node) => Number(node.getAttribute('data-pan-x')))
+    record(
+      'mindmap can be dragged horizontally even without scrollbars',
+      dragged !== mapBox.panX,
+      `${mapBox.panX} -> ${dragged} box=${Math.round(mapBox.width)}x${Math.round(mapBox.height)}`,
+    )
+    const nodePoint = await page.evaluate(() => {
+      const map = document.querySelector('.rd-map-scroll')
+      const mapRect = map.getBoundingClientRect()
+      const node = [...document.querySelectorAll('.rdm-node')].find((candidate) => {
+        const rect = candidate.getBoundingClientRect()
+        return (
+          rect.left >= mapRect.left + 20 &&
+          rect.right <= mapRect.right - 20 &&
+          rect.top >= mapRect.top + 20 &&
+          rect.bottom <= mapRect.bottom - 20
+        )
+      })
+      if (!node) return null
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    if (!nodePoint) throw new Error('no visible mindmap node to drag')
+    const panBeforeNode = await page.$eval('.rd-map-scroll', (node) => Number(node.getAttribute('data-pan-x')))
+    await page.mouse.move(nodePoint.x, nodePoint.y)
+    await page.mouse.down()
+    await page.mouse.move(nodePoint.x - 100, nodePoint.y - 20, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const panAfterNode = await page.$eval('.rd-map-scroll', (node) => Number(node.getAttribute('data-pan-x')))
+    record('mindmap can be dragged from a node as well', panAfterNode !== panBeforeNode, `${panBeforeNode} -> ${panAfterNode}`)
+    await page.evaluate(() => document.querySelector('.rd-map-scroll').focus())
+    const panBeforeKeyboard = await page.$eval('.rd-map-scroll', (node) => Number(node.getAttribute('data-pan-x')))
+    await page.keyboard.press('ArrowRight')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const panAfterKeyboard = await page.$eval('.rd-map-scroll', (node) => Number(node.getAttribute('data-pan-x')))
+    record('mindmap can be panned with the keyboard', panAfterKeyboard !== panBeforeKeyboard, `${panBeforeKeyboard} -> ${panAfterKeyboard}`)
     await page.evaluate(() => {
       const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
       reset.click()
@@ -1096,6 +1295,29 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 250))
     const resetMapWidth = await page.$eval('.rd-map-scroll svg', (node) => Number(node.getAttribute('width')))
     record('mindmap zoom resets to 1:1', resetMapWidth === baseMapWidth, `${resetMapWidth}px`)
+
+    await page.setViewport({ width: 800, height: 860, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const narrowResizerBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const narrowResizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(narrowResizerPoint.x, narrowResizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(narrowResizerPoint.x + 60, narrowResizerPoint.y, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const narrowResizerAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record(
+      'map sidebar can be resized in a narrow host',
+      Math.abs(narrowResizerAfter - narrowResizerBefore) > 20,
+      `${Math.round(narrowResizerBefore)} -> ${Math.round(narrowResizerAfter)}`,
+    )
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 400))
 
     await clickAny('.rd-toolbar button', ['概念', 'Concepts'])
     await page.waitForSelector('[data-scope="doc"]', { timeout: 8000 })
@@ -1107,6 +1329,24 @@ async function main() {
     }))
     record('concept scope defaults to the current book', scope.doc === 'true', `${scope.rows} rows`)
     record('current-book concepts are filtered', scope.rows === 2 && scope.allCount.includes('3'), `${scope.docCount} / ${scope.allCount}`)
+    const conceptsResizer = await page.$('.rd-drawer-resizer')
+    const conceptsWidthBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const conceptsResizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(conceptsResizerPoint.x, conceptsResizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(conceptsResizerPoint.x - 60, conceptsResizerPoint.y, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const conceptsWidthAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('concept list shares the sidebar resize behavior', Boolean(conceptsResizer) && conceptsWidthAfter > conceptsWidthBefore + 30, `${Math.round(conceptsWidthBefore)} -> ${Math.round(conceptsWidthAfter)}`)
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const conceptDrawerWidth = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('concept sidebar returns to the shared default width', Math.abs(conceptDrawerWidth - 320) <= 2, `${Math.round(conceptDrawerWidth)}px`)
+    await page.mouse.move(4, 4)
     await shot('05b-concepts-scope')
 
     await page.evaluate(() => document.querySelector('[data-concept-id] .rd-row-delete').click())
@@ -1383,6 +1623,54 @@ async function main() {
     if (enVerdict.write) await fs.writeFile(enVerdict.write, enBuffer)
     record('shot 14-en-reader', enVerdict.pass, enVerdict.detail)
     await enBrowser.close()
+
+    // State survives the reader view unmounting when the user visits the DSH
+    // conversation and comes back: same session restores the book, drawer and
+    // reading position from localStorage.
+    await page.evaluate(() => {
+      const guide = [...document.querySelectorAll('.rd-toolbar button')].find((button) => button.textContent.includes('导读'))
+      if (guide) guide.click()
+    })
+    await page.waitForSelector('.rd-drawer', { timeout: 8000 }).catch(() => {})
+    await page.evaluate(() => {
+      const main = document.querySelector('.rd-main')
+      if (main) main.scrollTop = 160
+    })
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    const beforeReload = await page.evaluate(() => {
+      const saved = JSON.parse(localStorage.getItem(`dsh-reader:view:${new URLSearchParams(location.search).get('session') || ''}`) || 'null')
+      return {
+        path: document.querySelector('.rd-title')?.textContent || '',
+        drawer: Boolean(document.querySelector('.rd-drawer')),
+        scroll: document.querySelector('.rd-main')?.scrollTop || 0,
+        savedScroll: saved ? saved.scrollTop : null,
+        savedDrawer: saved ? saved.drawer : null,
+        mains: [...document.querySelectorAll('.rd-main')].map((node) => ({
+          scroll: node.scrollTop,
+          height: node.scrollHeight,
+          client: node.clientHeight,
+          text: (node.textContent || '').slice(0, 18),
+        })),
+      }
+    })
+    await page.reload({ waitUntil: 'networkidle0' })
+    await page.waitForSelector('.rd-prose', { timeout: 15000 })
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    const afterReload = await page.evaluate(() => ({
+      path: document.querySelector('.rd-title')?.textContent || '',
+      drawer: Boolean(document.querySelector('.rd-drawer')),
+      scroll: document.querySelector('.rd-main')?.scrollTop || 0,
+    }))
+    record(
+      'returning to a session restores the open book and drawer',
+      Boolean(beforeReload.path) && afterReload.path === beforeReload.path && afterReload.drawer,
+      `${beforeReload.path} -> ${afterReload.path}, drawer ${afterReload.drawer}`,
+    )
+    record(
+      'returning to a session restores the reading position',
+      afterReload.scroll > 100 && Math.abs(afterReload.scroll - beforeReload.scroll) < 80,
+      `${beforeReload.scroll} -> ${afterReload.scroll} saved=${beforeReload.savedScroll} mains=${JSON.stringify(beforeReload.mains)}`,
+    )
   } catch (error) {
     try {
       const dump = await page.evaluate(() => ({

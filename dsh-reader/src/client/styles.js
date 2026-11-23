@@ -58,7 +58,10 @@ export const READER_CSS = `
 .rd-term:focus-visible,.rd-hl:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .rd-hl{background:color-mix(in srgb,var(--hl,#f2c94c) 38%,transparent);border-radius:3px;padding:0 1px;cursor:pointer}
 .rd-drawer.rd-drawer-wide{flex-basis:min(760px,62vw);max-width:min(760px,62vw)}
-.rd-drawer{flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
+.rd-drawer{position:relative;flex:0 0 320px;min-width:0;max-width:320px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-base)}
+.rd-drawer-resizer{position:absolute;left:-6px;top:0;bottom:0;width:12px;z-index:6;cursor:col-resize;touch-action:none;border-radius:4px}
+.rd-drawer-resizer:after{content:'';position:absolute;left:5px;top:50%;width:2px;height:36px;transform:translateY(-50%);border-radius:2px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 14%,transparent)}
+.rd-drawer-resizer:hover,.rd-drawer-resizer:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent);outline:none}
 .rd-drawer-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
@@ -103,6 +106,7 @@ export const READER_CSS = `
 .rd-editor .rd-input{width:100%;margin-top:6px}
 .rd-editor{max-height:min(64vh,520px)}
 .rd-editor textarea{width:100%;min-height:64px;margin-top:8px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:8px 10px;font-size:12.5px;line-height:1.6;font-family:inherit}
+.rd-annotation-editor textarea{min-height:96px;max-height:min(34vh,260px);overflow:auto;overscroll-behavior:contain}
 .rd-card .rd-actions.rd-sticky-actions{position:sticky;bottom:-1px;z-index:2;background:var(--dsw-alias-bg-overlay);padding:8px 0 2px;margin-top:10px;border-top:1px solid var(--dsw-alias-border-l1)}
 .rd-trans-card{position:fixed;z-index:95;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.22);padding:12px 13px;overflow:auto}
 .rd-trans{margin-top:6px;padding-left:10px;border-left:2px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:.92em;line-height:1.6}
@@ -137,7 +141,9 @@ export const READER_CSS = `
 .rd-map-stage-fullscreen{position:fixed;inset:0;z-index:130;display:flex;flex-direction:column;min-height:0;padding:14px 16px;background:var(--dsw-alias-bg-base)}
 .rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
-.rd-map-scroll{max-width:100%;max-height:46vh;overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.rd-map-scroll{position:relative;max-width:100%;height:min(46vh,520px);max-height:46vh;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-canvas{position:absolute;left:0;top:0;will-change:transform}.rd-map-canvas svg{display:block}
 .rd-map-scroll:active{cursor:grabbing}
 .rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}
 .rd-map-detail-title{font-weight:600;margin-bottom:4px}
@@ -169,7 +175,7 @@ export const READER_CSS = `
 .rd-pdf-hl{position:absolute;background:color-mix(in srgb,var(--hl,#f2c94c) 30%,transparent);pointer-events:none;border-radius:2px}
 .rd-note-mask{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
 .rd-note-box{width:min(420px,90vw);background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:16px;box-shadow:0 16px 48px rgba(0,0,0,.28)}
-.rd-note-box textarea{width:100%;min-height:110px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:9px 10px;font-size:13px;line-height:1.6;font-family:inherit}
+.rd-note-box textarea{width:100%;min-height:110px;overscroll-behavior:contain;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:9px 10px;font-size:13px;line-height:1.6;font-family:inherit}
 .rd-note-box .rd-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
 .rd-input{height:28px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:0 9px;font-size:12px;font-family:inherit}
 .rd-select{height:28px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 6px}
