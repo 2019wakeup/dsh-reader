@@ -916,6 +916,8 @@ async function main() {
       singleTitleCount: (document.querySelector('.rd-drawer-body').textContent.match(/第二部分 · 直觉/g) || []).length,
     }))
     record('single-section parts are not duplicated', partRows.parts === 1 && partRows.singleTitleCount === 1, JSON.stringify(partRows))
+    const guideHeaderButtons = await page.$$eval('.rd-drawer-head button', (nodes) => nodes.map((node) => ({ text: node.textContent.trim(), title: node.getAttribute('title'), display: getComputedStyle(node).display, width: node.getBoundingClientRect().width })))
+    record('guide header has width controls', guideHeaderButtons.length >= 3, JSON.stringify(guideHeaderButtons))
     await shot('04-guide')
     const resizerBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
     const resizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
@@ -1037,6 +1039,20 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 300))
     const mapResizerReset = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
     record('double-click resets the mindmap sidebar width', Math.abs(mapResizerReset - 760) <= 2, `${Math.round(mapResizerReset)}px`)
+    const headerWiden = await page.$$eval('.rd-drawer-head button', (nodes) => {
+      const button = nodes.find((node) => node.getAttribute('title') === '加宽侧栏' || node.getAttribute('title') === 'Widen sidebar')
+      if (!button) return false
+      button.click()
+      return true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const headerWidened = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('map sidebar width has header controls', headerWiden && headerWidened > mapResizerReset + 20, `${Math.round(headerWidened)}px`)
+    await page.$$eval('.rd-drawer-head button', (nodes) => {
+      const button = nodes.find((node) => node.getAttribute('title') === '收窄侧栏' || node.getAttribute('title') === 'Narrow sidebar')
+      if (button) button.click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
     await page.mouse.move(4, 4)
     await page.evaluate(() => {
       const scroll = document.querySelector('.rd-map-scroll')
@@ -1159,7 +1175,7 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 250))
     const baseMapWidth = await page.$eval('.rd-map-scroll svg', (node) => Number(node.getAttribute('width')))
     await page.evaluate(() => {
-      const plus = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '+')
+      const plus = [...document.querySelectorAll('.rd-map-toolbar button')].find((button) => button.textContent.trim() === '+')
       for (let index = 0; index < 5; index += 1) plus.click()
     })
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -1247,12 +1263,48 @@ async function main() {
     const keyboardPan = await page.$eval('.rd-map-scroll', (node) => node.scrollLeft)
     record('mindmap can be panned with the keyboard', keyboardPan > 20, `${keyboardPan}px`)
     await page.evaluate(() => {
+      document.querySelector('.rd-map-scroll').scrollLeft = 0
+    })
+    const panButtonClicked = await page.$$eval('.rd-map-toolbar button', (nodes) => {
+      const button = nodes.find((node) => node.getAttribute('title') === '向右平移导图' || node.getAttribute('title') === 'Pan map right')
+      if (!button) return false
+      button.click()
+      return true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const buttonPan = await page.$eval('.rd-map-scroll', (node) => node.scrollLeft)
+    record('map sidebar has explicit horizontal pan buttons', panButtonClicked && buttonPan > 20, `${buttonPan}px`)
+
+    await page.evaluate(() => {
       const reset = [...document.querySelectorAll('.rd-drawer button')].find((button) => button.textContent.trim() === '1:1')
       reset.click()
     })
     await new Promise((resolve) => setTimeout(resolve, 250))
     const resetMapWidth = await page.$eval('.rd-map-scroll svg', (node) => Number(node.getAttribute('width')))
     record('mindmap zoom resets to 1:1', resetMapWidth === baseMapWidth, `${resetMapWidth}px`)
+
+    await page.setViewport({ width: 800, height: 860, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const narrowResizerBefore = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    const narrowResizerPoint = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(narrowResizerPoint.x, narrowResizerPoint.y)
+    await page.mouse.down()
+    await page.mouse.move(narrowResizerPoint.x + 60, narrowResizerPoint.y, { steps: 6 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const narrowResizerAfter = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record(
+      'map sidebar can be resized in a narrow host',
+      Math.abs(narrowResizerAfter - narrowResizerBefore) > 20,
+      `${Math.round(narrowResizerBefore)} -> ${Math.round(narrowResizerAfter)}`,
+    )
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 400))
 
     await clickAny('.rd-toolbar button', ['概念', 'Concepts'])
     await page.waitForSelector('[data-scope="doc"]', { timeout: 8000 })
@@ -1279,6 +1331,8 @@ async function main() {
     record('concept list shares the sidebar resize behavior', Boolean(conceptsResizer) && conceptsWidthAfter > conceptsWidthBefore + 30, `${Math.round(conceptsWidthBefore)} -> ${Math.round(conceptsWidthAfter)}`)
     await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
     await new Promise((resolve) => setTimeout(resolve, 300))
+    const conceptDrawerWidth = await page.$eval('.rd-drawer', (node) => node.getBoundingClientRect().width)
+    record('concept sidebar returns to the shared default width', Math.abs(conceptDrawerWidth - 320) <= 2, `${Math.round(conceptDrawerWidth)}px`)
     await page.mouse.move(4, 4)
     await shot('05b-concepts-scope')
 

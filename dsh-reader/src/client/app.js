@@ -616,8 +616,8 @@ export function ReaderView(props) {
   const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
   const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
   const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
-  const drawerWidth = drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
-  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 280))
+  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 240))
+  const drawerWidth = Math.min(drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault), drawerMaxWidth())
   const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
   const commitDrawerWidth = (width) => {
     const next = Math.round(clampDrawerWidth(width))
@@ -2187,6 +2187,34 @@ export function ReaderView(props) {
         h(
           'div',
           { className: 'rd-map-group' },
+          h(
+            'button',
+            {
+              className: 'rd-map-btn',
+              title: t('label.panMapLeft'),
+              onClick: () => {
+                const node = mapScrollRef.current
+                if (node) node.scrollLeft -= 120
+              },
+            },
+            '←',
+          ),
+          h(
+            'button',
+            {
+              className: 'rd-map-btn',
+              title: t('label.panMapRight'),
+              onClick: () => {
+                const node = mapScrollRef.current
+                if (node) node.scrollLeft += 120
+              },
+            },
+            '→',
+          ),
+        ),
+        h(
+          'div',
+          { className: 'rd-map-group' },
           h('button', { className: 'rd-map-btn', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
           h(
             'button',
@@ -3369,7 +3397,7 @@ export function ReaderView(props) {
       'div',
       {
         className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}`,
-        style: { flexBasis: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
+        style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
       },
       h('div', {
         className: 'rd-drawer-resizer',
@@ -3397,6 +3425,16 @@ export function ReaderView(props) {
         { className: 'rd-drawer-head' },
         h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, titles[drawer]),
         h('span', { className: 'rd-spacer' }),
+        h(
+          'button',
+          { className: 'rd-btn ghost rd-icon-btn', title: t('label.narrowSidebar'), 'aria-label': t('label.narrowSidebar'), onClick: () => commitDrawerWidth(drawerWidth - 48) },
+          '−',
+        ),
+        h(
+          'button',
+          { className: 'rd-btn ghost rd-icon-btn', title: t('label.widenSidebar'), 'aria-label': t('label.widenSidebar'), onClick: () => commitDrawerWidth(drawerWidth + 48) },
+          '+',
+        ),
         h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
       ),
       h(

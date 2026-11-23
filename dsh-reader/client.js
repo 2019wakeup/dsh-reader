@@ -254,6 +254,10 @@ const ZH = {
   'label.mapHint': '拖动或方向键可平移；点击节点查看摘要并跳到原文',
   'label.resizeSidebar': '拖动调整侧栏宽度，双击恢复默认',
   'label.mapNoPan': '导图已完整显示；点「+」放大后即可拖拽平移',
+  'label.narrowSidebar': '收窄侧栏',
+  'label.widenSidebar': '加宽侧栏',
+  'label.panMapLeft': '向左平移导图',
+  'label.panMapRight': '向右平移导图',
   'label.chunk': '分片',
   'label.expandAll': '展开全部',
   'label.collapseAll': '收起全部',
@@ -489,6 +493,10 @@ const EN = {
   'label.mapHint': 'Drag or use arrow keys to pan; click a node to read its summary and jump to the text',
   'label.resizeSidebar': 'Drag to resize the sidebar; double-click to reset',
   'label.mapNoPan': 'The map fits; zoom in with + to pan',
+  'label.narrowSidebar': 'Narrow sidebar',
+  'label.widenSidebar': 'Widen sidebar',
+  'label.panMapLeft': 'Pan map left',
+  'label.panMapRight': 'Pan map right',
   'label.chunk': 'Part',
   'label.expandAll': 'Expand all',
   'label.collapseAll': 'Collapse all',
@@ -3498,7 +3506,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.12.1'
+const READER_VERSION = '0.12.2'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3900,8 +3908,8 @@ function ReaderView(props) {
   const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
   const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
   const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
-  const drawerWidth = drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault)
-  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 280))
+  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(260, rootBounds().width - 240))
+  const drawerWidth = Math.min(drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault), drawerMaxWidth())
   const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
   const commitDrawerWidth = (width) => {
     const next = Math.round(clampDrawerWidth(width))
@@ -5471,6 +5479,34 @@ function ReaderView(props) {
         h(
           'div',
           { className: 'rd-map-group' },
+          h(
+            'button',
+            {
+              className: 'rd-map-btn',
+              title: t('label.panMapLeft'),
+              onClick: () => {
+                const node = mapScrollRef.current
+                if (node) node.scrollLeft -= 120
+              },
+            },
+            '←',
+          ),
+          h(
+            'button',
+            {
+              className: 'rd-map-btn',
+              title: t('label.panMapRight'),
+              onClick: () => {
+                const node = mapScrollRef.current
+                if (node) node.scrollLeft += 120
+              },
+            },
+            '→',
+          ),
+        ),
+        h(
+          'div',
+          { className: 'rd-map-group' },
           h('button', { className: 'rd-map-btn', onClick: () => setCollapsedIds(new Set()) }, t('label.expandAll')),
           h(
             'button',
@@ -6653,7 +6689,7 @@ function ReaderView(props) {
       'div',
       {
         className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}`,
-        style: { flexBasis: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
+        style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
       },
       h('div', {
         className: 'rd-drawer-resizer',
@@ -6681,6 +6717,16 @@ function ReaderView(props) {
         { className: 'rd-drawer-head' },
         h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, titles[drawer]),
         h('span', { className: 'rd-spacer' }),
+        h(
+          'button',
+          { className: 'rd-btn ghost rd-icon-btn', title: t('label.narrowSidebar'), 'aria-label': t('label.narrowSidebar'), onClick: () => commitDrawerWidth(drawerWidth - 48) },
+          '−',
+        ),
+        h(
+          'button',
+          { className: 'rd-btn ghost rd-icon-btn', title: t('label.widenSidebar'), 'aria-label': t('label.widenSidebar'), onClick: () => commitDrawerWidth(drawerWidth + 48) },
+          '+',
+        ),
         h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
       ),
       h(
