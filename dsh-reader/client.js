@@ -225,6 +225,7 @@ const ZH = {
   'action.copyDiagnostics': '复制诊断信息',
   'label.readerError': '阅读器出错了',
   'label.nestLimit': '嵌套最多 3 层',
+  'label.ancestorRevisit': '这个词本链路上层已有解释，已为你打开原卡片（不重复生成）',
   'label.conceptSaved': '已收下',
   'label.pinned': '已固定',
   'label.openFromSession': '请从会话中打开阅读视图',
@@ -457,6 +458,7 @@ const EN = {
   'action.copyDiagnostics': 'Copy diagnostics',
   'label.readerError': 'The reader hit an error',
   'label.nestLimit': 'Nesting is limited to 3 levels',
+  'label.ancestorRevisit': 'This term is already explained one level up; showing that card instead of repeating it',
   'label.conceptSaved': 'Saved',
   'label.pinned': 'Pinned',
   'label.openFromSession': 'Open the reader from a session',
@@ -4293,6 +4295,13 @@ function ReaderView(props) {
       })
       const concept = result.concept
       if (result.store) mergeStore(result.store)
+      if (result.ancestor) {
+        // The reader walked down the chain and asked about a term that raised it:
+        // show that card with the reason instead of pretending it is new.
+        setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect, hint: t('label.ancestorRevisit') }))
+        flash(t('label.ancestorRevisit'))
+        return
+      }
       setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect }))
       flash(`${t('label.conceptSaved')}：${concept.term}`)
     } catch (e) {
@@ -6749,6 +6758,7 @@ function ReaderView(props) {
         chain.length
           ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, chain.map((item) => item.term).join(' › '))
           : null,
+        card.hint ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, card.hint) : null,
         h('div', { className: 'rd-def' }, concept.definition || ''),
         concept.intuition
           ? h('div', { className: 'rd-sec' }, h('b', null, t('label.intuition') + '  '), concept.intuition)

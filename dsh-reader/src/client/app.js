@@ -1019,6 +1019,13 @@ export function ReaderView(props) {
       })
       const concept = result.concept
       if (result.store) mergeStore(result.store)
+      if (result.ancestor) {
+        // The reader walked down the chain and asked about a term that raised it:
+        // show that card with the reason instead of pretending it is new.
+        setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect, hint: t('label.ancestorRevisit') }))
+        flash(t('label.ancestorRevisit'))
+        return
+      }
       setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect }))
       flash(`${t('label.conceptSaved')}：${concept.term}`)
     } catch (e) {
@@ -3475,6 +3482,7 @@ export function ReaderView(props) {
         chain.length
           ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, chain.map((item) => item.term).join(' › '))
           : null,
+        card.hint ? h('div', { className: 'rd-muted', style: { fontSize: '11px', marginBottom: '7px' } }, card.hint) : null,
         h('div', { className: 'rd-def' }, concept.definition || ''),
         concept.intuition
           ? h('div', { className: 'rd-sec' }, h('b', null, t('label.intuition') + '  '), concept.intuition)
