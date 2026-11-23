@@ -275,6 +275,42 @@ const ZH = {
   'label.deleteConceptConfirm': '确定从概念栏删除？',
   'label.deleteConceptChildren': '从它下钻的概念会接到它的上一层',
   'label.conceptDeleted': '已删除概念',
+  'tab.chat': '对话',
+  'label.chatEmpty': '选中正文任意一段，点“问 AI”开始对话。',
+  'label.chatShowAll': '显示全部',
+  'label.chatCollapse': '只看最近',
+  'label.chatJump': '在对话页打开',
+  'label.chatBackToBottom': '回到底部',
+  'label.chatBusy': '生成中…',
+  'label.chatUnread': '有新回答',
+  'action.askChat': '问 AI',
+  'action.quickAsk': '快捷追问',
+  'quick.explain': '解释这段',
+  'quick.example': '举个例子',
+  'quick.relation': '和上文什么关系',
+  'quick.intent': '作者为什么这么说',
+  'label.composerBusy': '输入框正在忙，稍后再试',
+  'label.chatUnavailable': '当前 DSH 版本不支持对话面板',
+  'label.chatReasoning': '思考过程',
+  'label.chatImage': '[图片]',
+  'label.chatTool': '工具',
+  'label.chatToolRunning': '运行中',
+  'tool.read': '已读取文件',
+  'tool.write': '已修改文件',
+  'tool.command': '执行了命令',
+  'tool.search': '搜索了代码',
+  'tool.webSearch': '搜索了网页',
+  'tool.webFetch': '访问了网页',
+  'tool.plan': '更新了计划',
+  'tool.subagents': '协调了子智能体',
+  'label.chatRoleUser': '你',
+  'label.chatRoleAssistant': '助手',
+  'label.chatProcess': '过程',
+  'label.chatRunning': '正在执行',
+  'label.chatToolDone': '完成',
+  'label.chatToolError': '失败',
+  'label.chatStopped': '（已停止）',
+  'label.chatError': '这一轮没有返回内容。',
 }
 
 const EN = {
@@ -516,6 +552,42 @@ const EN = {
   'label.deleteConceptConfirm': 'Remove it from the concept list?',
   'label.deleteConceptChildren': 'Cards explained inside it move one level up',
   'label.conceptDeleted': 'Concept deleted',
+  'tab.chat': 'Chat',
+  'label.chatEmpty': 'Select any passage in the book and choose Ask AI to start chatting.',
+  'label.chatShowAll': 'Show all',
+  'label.chatCollapse': 'Recent only',
+  'label.chatJump': 'Open in conversation',
+  'label.chatBackToBottom': 'Back to bottom',
+  'label.chatBusy': 'Generating…',
+  'label.chatUnread': 'New answer',
+  'action.askChat': 'Ask AI',
+  'action.quickAsk': 'Quick ask',
+  'quick.explain': 'Explain this',
+  'quick.example': 'Give an example',
+  'quick.relation': 'How does it relate',
+  'quick.intent': 'Why does the author say this',
+  'label.composerBusy': 'The composer is busy; try again in a moment',
+  'label.chatUnavailable': 'This DSH version does not support the chat panel',
+  'label.chatReasoning': 'Reasoning',
+  'label.chatImage': '[Image]',
+  'label.chatTool': 'Tool',
+  'label.chatToolRunning': 'Running',
+  'tool.read': 'Read file',
+  'tool.write': 'Edited file',
+  'tool.command': 'Ran command',
+  'tool.search': 'Searched code',
+  'tool.webSearch': 'Searched web',
+  'tool.webFetch': 'Fetched page',
+  'tool.plan': 'Updated plan',
+  'tool.subagents': 'Coordinated subagents',
+  'label.chatRoleUser': 'You',
+  'label.chatRoleAssistant': 'Assistant',
+  'label.chatProcess': 'Process',
+  'label.chatRunning': 'Running',
+  'label.chatToolDone': 'Done',
+  'label.chatToolError': 'Failed',
+  'label.chatStopped': '(stopped)',
+  'label.chatError': 'This turn returned no content.',
 }
 
 const isZh = typeof navigator !== 'undefined' && /^zh/i.test(navigator.language || '')
@@ -675,6 +747,13 @@ const api = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
+    })
+  },
+  context(sessionId, payload) {
+    return request(`/api/context?sessionId=${encodeURIComponent(sessionId || '')}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: sessionId || '', ...(payload || {}) }),
     })
   },
   models(sessionId) {
@@ -915,8 +994,63 @@ const READER_CSS = `
 .rd-page-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .rd-title{max-width:30%}}
 @media (max-width:900px){.rd-drawer{position:absolute;right:0;top:44px;bottom:0;z-index:70;box-shadow:-8px 0 28px rgba(0,0,0,.15)}.rd-page{padding:28px 18px 100px}}
-`
 
+.rd-drawer-body.rd-drawer-chat{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.rd-chat{display:flex;flex-direction:column;flex:1;min-height:0;position:relative;font-size:13px;color:var(--dsw-alias-label-primary)}
+.rd-chat-tools{display:flex;align-items:center;gap:6px;flex:0 0 auto;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.rd-chat-tools .rd-btn{height:24px;font-size:11.5px;padding:0 8px}
+.rd-chat-busy{flex:0 0 auto;padding:5px 10px;font-size:11.5px;color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.rd-chat-scroll{flex:1;min-height:0;overflow:auto;padding:10px 12px 22px;overscroll-behavior:contain;scrollbar-width:thin}
+.rd-chat-row{margin:0 0 16px;overflow-wrap:anywhere;display:flex;flex-direction:column}
+.rd-chat-user{align-items:flex-end}
+.rd-chat-role{font-size:10.5px;font-weight:600;letter-spacing:.03em;color:var(--dsw-alias-label-secondary);margin:0 2px 4px}
+.rd-chat-bubble{max-width:88%;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:7px 10px}
+.rd-chat-source{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);margin-bottom:4px;word-break:break-word}
+.rd-chat-body{min-width:0}
+.rd-chat-md{font-size:13px;line-height:1.65}
+.rd-chat-md p{margin:.45em 0}
+.rd-chat-md ul,.rd-chat-md ol{margin:.45em 0;padding-left:1.35em}
+.rd-chat-md pre{margin:.6em 0;padding:9px 11px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);overflow:auto;font-size:12px;line-height:1.55}
+.rd-chat-md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;background:var(--dsw-alias-bg-layer-2);padding:1px 4px;border-radius:4px}
+.rd-chat-md pre code{background:transparent;padding:0}
+.rd-chat-md blockquote{margin:.5em 0;padding:.1em 0 .1em .8em;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12.5px}
+.rd-chat-md h1,.rd-chat-md h2,.rd-chat-md h3,.rd-chat-md h4{font-size:1.05em;margin:.7em 0 .35em}
+.rd-chat-md a{color:var(--dsw-alias-brand-primary)}
+.rd-chat-process{margin:3px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-process>summary{cursor:pointer;width:fit-content;list-style:none;padding:1px 0}
+.rd-chat-process>summary::-webkit-details-marker{display:none}
+.rd-chat-process>summary:before{content:'▸';display:inline-block;margin-right:4px;transform:translateY(-1px)}
+.rd-chat-process[open]>summary:before{content:'▾'}
+.rd-chat-process-tools{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 2px}
+.rd-chat-chip{border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:1px 6px;font-size:11px;background:var(--dsw-alias-bg-layer-1)}
+.rd-chat-process-reasoning{margin-top:4px;white-space:pre-wrap;max-height:38vh;overflow:auto}
+.rd-chat-reasoning-sub{margin:4px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-reasoning-sub>summary{cursor:pointer;width:fit-content;list-style:none;padding:1px 0}
+.rd-chat-reasoning-sub>summary::-webkit-details-marker{display:none}
+.rd-chat-reasoning-sub>summary:before{content:'▸';display:inline-block;margin-right:4px;transform:translateY(-1px)}
+.rd-chat-reasoning-sub[open]>summary:before{content:'▾'}
+.rd-chat-streaming-dot{display:inline-block;width:6px;height:6px;margin-left:2px;border-radius:50%;background:var(--dsw-alias-brand-primary);opacity:.7}
+.rd-chat-status{display:flex;align-items:center;gap:6px;margin:0 0 12px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-dot-running{background:var(--dsw-alias-brand-primary)}
+.rd-chat-reasoning{margin:2px 0 6px}
+.rd-chat-reasoning>summary{cursor:pointer;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-muted{color:var(--dsw-alias-label-secondary);font-size:12px}
+.rd-chat-tool{display:flex;align-items:center;gap:6px;margin:5px 0;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-tool-name{font-weight:600;color:var(--dsw-alias-label-primary);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rd-chat-tool-status{margin-left:auto;font-size:11px}
+.rd-chat-dot{width:6px;height:6px;flex:0 0 auto;border-radius:50%;background:var(--dsw-alias-label-secondary)}
+.rd-chat-tool-running .rd-chat-dot{background:var(--dsw-alias-brand-primary)}
+.rd-chat-tool-error .rd-chat-dot{background:var(--dsw-alias-state-error-primary)}
+.rd-chat-error{font-size:12px;line-height:1.55;color:var(--dsw-alias-state-error-primary)}
+.rd-chat-interrupted{font-size:11.5px;color:var(--dsw-alias-label-secondary);font-style:italic}
+.rd-chat-empty{padding:30px 14px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:1.7}
+.rd-chat-unavailable{padding:24px 14px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12.5px}
+.rd-chat-back-to-bottom{position:sticky;left:50%;bottom:4px;transform:translateX(-50%);z-index:3;box-shadow:0 6px 18px rgba(0,0,0,.16)}
+.rd-chat-unread{display:inline-block;width:6px;height:6px;margin-left:5px;border-radius:50%;background:var(--dsw-alias-brand-primary);vertical-align:middle}
+.rd-mini{flex-wrap:wrap;max-width:min(720px,calc(100vw - 16px))}
+.rd-mini-error{flex-basis:100%;padding:0 6px 2px;color:var(--dsw-alias-state-error-primary);font-size:11.5px;line-height:1.4}
+.rd-mini .rd-quick-ask{height:26px;max-width:132px;border:0;background:transparent;font-size:12px;color:var(--dsw-alias-label-secondary);padding:0 6px}
+`
 
 const BLOCKED = new Set([
   'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'link', 'meta', 'base', 'style',
@@ -3298,6 +3432,1128 @@ function fitHostHeight(node, viewportHeight) {
 }
 
 
+/**
+ * Pure row model for the in-reader conversation panel.
+ *
+ * The panel never keeps a second copy of the conversation: it projects the
+ * platform `ChatSnapshot` into a flat list of rows with `buildTranscript`,
+ * and every helper here is side-effect free so it can be unit tested without
+ * React or a DOM. See docs/superpowers/specs/2026-11-23-reader-chat-panel-design.md §3.
+ */
+
+/** Node kinds that are platform bookkeeping, never shown in the panel. */
+const SKIP_KINDS = new Set([
+  'context',
+  'system-prompt',
+  'command',
+  'command-input',
+  'model-retry',
+  'compaction',
+  'manual-compaction',
+  'unknown',
+  'turn-start',
+  'turn-end',
+  'turn-trigger',
+  'turn-process',
+  'turn-tail',
+  'turn-abort',
+  'notification',
+])
+
+/** Node kinds that render as a message row. */
+const USER_KINDS = new Set(['user', 'steering', 'question-reply'])
+const ASSISTANT_KINDS = new Set(['assistant-step', 'assistant'])
+
+const DEFAULT_LIMIT_TURNS = 8
+const DEFAULT_MAX_TEXT = 16000
+const QUOTE_MAX_TEXT = 2000
+const MAX_ROWS = 240
+
+/**
+ * How much of the assistant's working is shown.
+ *
+ * `compact` is the reading default: only the answer text is a row of its own,
+ * while reasoning and tool calls fold into one collapsible process summary per
+ * assistant step. `full` keeps every block and every tool-call node as a row,
+ * for readers who want the trace.
+ */
+const DEFAULT_DETAIL = 'compact'
+const DETAIL_FULL = 'full'
+
+/** Quick follow-up questions offered next to the selection toolbar, in a fixed order. */
+const QUICK_ASKS = Object.freeze([
+  { id: 'explain', question: '请解释这段内容' },
+  { id: 'example', question: '请举个例子' },
+  { id: 'relation', question: '这段和上文有什么关系' },
+  { id: 'intent', question: '作者为什么这么说' },
+])
+
+function truncate(text, maxText) {
+  const value = String(text || '')
+  if (!(maxText > 0) || value.length <= maxText) return value
+  return value.slice(0, maxText) + '…'
+}
+
+/**
+ * Tolerant text extraction: the platform wraps message text in several shapes
+ * (`string`, `{ text }`, `{ content: [...] }`, `{ blocks: [...] }`, `{ message }`).
+ * @param {unknown} value
+ * @param {number} [depth]
+ * @returns {string}
+ */
+function textOf(value, depth = 0) {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (depth > 4) return ''
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => textOf(item, depth + 1))
+      .filter(Boolean)
+      .join('\n')
+  }
+  if (typeof value !== 'object') return ''
+  if (typeof value.text === 'string') return value.text
+  if (value.content != null) return textOf(value.content, depth + 1)
+  if (value.blocks != null) return textOf(value.blocks, depth + 1)
+  if (value.message != null) return textOf(value.message, depth + 1)
+  return ''
+}
+
+/** Merge two folded process summaries from steps of the same turn. */
+function mergeProcess(left, right) {
+  if (!left) return right
+  if (!right) return left
+  return {
+    tools: left.tools.concat(right.tools),
+    reasoning: left.reasoning.concat(right.reasoning),
+    count: left.count + right.count,
+  }
+}
+
+/** Normalize one assistant block; unknown shapes fall back to their text. */
+function normalizeBlock(block, maxText) {
+  if (typeof block === 'string') return { kind: 'text', text: truncate(block, maxText) }
+  if (!block || typeof block !== 'object') return null
+  const kind = String(block.kind || block.type || '')
+  if (kind === 'tool-call' || kind === 'tool') {
+    return {
+      kind: 'tool-call',
+      name: String(block.name || block.toolName || block.tool || ''),
+      callId: String(block.callId || block.id || ''),
+    }
+  }
+  if (kind === 'image') return { kind: 'image' }
+  const text = truncate(textOf(block), maxText)
+  if (!text) return null
+  return { kind: kind === 'reasoning' ? 'reasoning' : 'text', text }
+}
+
+/** Fold reasoning text and tool names into the compact process summary. */
+function summarizeProcess(blocks) {
+  const tools = []
+  const reasoning = []
+  for (const block of blocks) {
+    if (!block) continue
+    if (block.kind === 'tool-call') tools.push(block.name || '')
+    else if (block.kind === 'reasoning') reasoning.push(block.text)
+  }
+  if (tools.length === 0 && reasoning.length === 0) return null
+  return { tools, reasoning, count: tools.length + reasoning.length }
+}
+
+function normalizeBlocks(value, maxText) {
+  const list = Array.isArray(value) ? value : Array.isArray(value && value.blocks) ? value.blocks : []
+  return list.map((block) => normalizeBlock(block, maxText)).filter(Boolean)
+}
+
+function nodeTurn(node) {
+  const located = node && node.location && node.location.turn ? node.location.turn.turn : undefined
+  const value = Number.isFinite(located) ? located : node && node.data ? node.data.turn : undefined
+  return Number.isFinite(value) ? Number(value) : 0
+}
+
+function toolStatus(node) {
+  const data = node && node.data ? node.data : {}
+  const root = data.root && typeof data.root === 'object' ? data.root : data
+  if (root.isError === true || root.error != null) return 'error'
+  const phase = String(root.phase || root.status || '').toLowerCase()
+  if (phase === 'preparing' || phase === 'start' || phase === 'started' || phase === 'running' || phase === 'pending' || phase === 'waiting') {
+    return 'running'
+  }
+  if (phase === 'error' || phase === 'failed' || phase === 'failure' || phase === 'rejected') return 'error'
+  return 'done'
+}
+
+function toolArgs(node) {
+  const data = node && node.data ? node.data : {}
+  const root = data.root && typeof data.root === 'object' ? data.root : data
+  return root.call && root.call.argsRaw != null ? root.call.argsRaw : root.argsRaw != null ? root.argsRaw : data.argsRaw
+}
+
+function toolCallId(node) {
+  const data = node && node.data ? node.data : {}
+  const root = data.root && typeof data.root === 'object' ? data.root : data
+  return String((root.call && (root.call.callId || root.call.id)) || root.callId || data.callId || '')
+}
+
+function getNode(chat, key) {
+  const nodes = chat && chat.nodes
+  if (!nodes) return null
+  if (typeof nodes.get === 'function') return nodes.get(key) || null
+  if (typeof nodes === 'object') return nodes[key] || null
+  return null
+}
+
+function orderedNodes(chat) {
+  if (!chat) return []
+  if (Array.isArray(chat.order)) {
+    return chat.order.map((key) => getNode(chat, key)).filter(Boolean)
+  }
+  const legacy = chat.legacy && Array.isArray(chat.legacy.nodes) ? chat.legacy.nodes : []
+  return legacy.filter(Boolean)
+}
+
+function rowOf(node, maxText, detail) {
+  const kind = node.kind
+  if (SKIP_KINDS.has(kind)) return null
+  const turn = nodeTurn(node)
+  const data = node.data || {}
+  if (USER_KINDS.has(kind)) {
+    return { kind: 'user', key: node.key, turn, text: truncate(textOf(data), maxText) }
+  }
+  if (ASSISTANT_KINDS.has(kind)) {
+    let blocks = normalizeBlocks(data, maxText)
+    // A settled step can keep its visible text only on the finalized message.
+    if (!blocks.some((block) => block.kind === 'text' || block.kind === 'image') && data.finalNode) {
+      const finalized = normalizeBlocks(data.finalNode, maxText)
+      if (finalized.length > 0) blocks = finalized
+    }
+    const full = detail === DETAIL_FULL
+    const visible = full ? blocks : blocks.filter((block) => block.kind === 'text' || block.kind === 'image')
+    if (data.status === 'interrupted') {
+      // A stopped answer keeps the prefix it had already streamed.
+      return { kind: 'interrupted', key: node.key, turn, blocks: visible }
+    }
+    return {
+      kind: 'assistant',
+      key: node.key,
+      turn,
+      step: Number.isFinite(data.step) ? Number(data.step) : 0,
+      blocks: visible,
+      process: full ? null : summarizeProcess(blocks),
+      streaming: data.status === 'running' || data.streaming === true,
+    }
+  }
+  if (kind === 'tool-call') {
+    // A tool call is process, not conversation: the compact reading view folds
+    // it into the assistant step's summary instead of spending a row on it.
+    if (detail !== DETAIL_FULL) return null
+    return {
+      kind: 'tool',
+      key: node.key,
+      turn,
+      callId: toolCallId(node),
+      name: String(data.name || (data.root && data.root.name) || ''),
+      status: toolStatus(node),
+      detail: truncate(textOf(toolArgs(node)), 200),
+    }
+  }
+  if (kind === 'turn-error' || kind === 'turn-max-tokens') {
+    return { kind: 'error', key: node.key, turn, text: truncate(textOf(data), maxText) || kind }
+  }
+  return null
+}
+
+function limitRows(rows, limitTurns, maxRows) {
+  let out = rows
+  if (maxRows > 0 && out.length > maxRows) out = out.slice(-maxRows)
+  if (limitTurns > 0) {
+    const turns = [...new Set(out.map((row) => row.turn).filter((turn) => turn > 0))].sort((a, b) => a - b)
+    if (turns.length > limitTurns) {
+      const cutoff = turns[turns.length - limitTurns]
+      out = out.filter((row) => row.turn >= cutoff)
+    }
+  }
+  return out
+}
+
+/**
+ * Project a `ChatSnapshot` into panel rows.
+ *
+ * @param {{order?: string[], nodes?: {get: (key: string) => any}, legacy?: {nodes?: any[], partial?: any, runningCalls?: any[]}} | null | undefined} chat
+ * @param {{limitTurns?: number, all?: boolean, maxText?: number, detail?: 'compact' | 'full'}} [options]
+ * @returns {Array<Record<string, any>>}
+ */
+function buildTranscript(chat, options = {}) {
+  const all = options.all === true
+  const limitTurns = Number.isFinite(options.limitTurns) ? Math.max(0, Math.floor(options.limitTurns)) : DEFAULT_LIMIT_TURNS
+  const maxText = Number.isFinite(options.maxText) ? Math.max(0, Math.floor(options.maxText)) : DEFAULT_MAX_TEXT
+  const detail = options.detail === DETAIL_FULL ? DETAIL_FULL : DEFAULT_DETAIL
+  const rows = []
+  for (const node of orderedNodes(chat)) {
+    if (!node || node.visibility === 'hidden') continue
+    const row = rowOf(node, maxText, detail)
+    if (row) rows.push(row)
+  }
+  // One turn commonly produces several assistant steps (reasoning + tool calls
+  // between text). The reading panel shows the turn, not the steps: merge them so
+  // a long tool loop reads as one answer with one collapsed process line.
+  if (detail !== DETAIL_FULL) {
+    const merged = []
+    for (const row of rows) {
+      const previous = merged[merged.length - 1]
+      if (row.kind === 'assistant' && previous && previous.kind === 'assistant' && previous.turn === row.turn) {
+        previous.blocks = previous.blocks.concat(row.blocks)
+        previous.process = mergeProcess(previous.process, row.process)
+        previous.streaming = previous.streaming || row.streaming
+        continue
+      }
+      merged.push(row)
+    }
+    // A step with no text of its own is only process; the merged turn row already
+    // carries it, so a text-less assistant row would be pure noise.
+    rows.length = 0
+    for (const row of merged) {
+      if (row.kind === 'assistant' && row.blocks.length === 0 && !row.streaming) continue
+      rows.push(row)
+    }
+  }
+  // The platform publishes one streaming answer twice: a running `assistant`
+  // Node and the derived `legacy.partial`. Render whichever exists exactly once.
+  const streamingSteps = new Set(
+    rows.filter((row) => row.kind === 'assistant' && row.streaming).map((row) => `${row.turn}:${row.step}`),
+  )
+  const streamingTurns = new Set(rows.filter((row) => row.kind === 'assistant' && row.streaming).map((row) => row.turn))
+  const renderedCalls = new Set(rows.filter((row) => row.kind === 'tool' && row.callId).map((row) => row.callId))
+  const legacy = (chat && chat.legacy) || {}
+  const partial = legacy.partial
+  if (partial && typeof partial === 'object') {
+    const blocks = normalizeBlocks(partial, maxText)
+    const turn = Number.isFinite(partial.turn) ? Number(partial.turn) : rows.length ? rows[rows.length - 1].turn : 0
+    const step = Number.isFinite(partial.step) ? Number(partial.step) : 0
+    const alreadyRendered = streamingSteps.has(`${turn}:${step}`) || streamingTurns.has(turn)
+    if (!alreadyRendered && (blocks.length > 0 || rows.length === 0)) {
+      const full = detail === DETAIL_FULL
+      rows.push({
+        kind: 'assistant',
+        key: `partial:${turn}:${step}`,
+        turn,
+        step,
+        blocks: full ? blocks : blocks.filter((block) => block.kind === 'text' || block.kind === 'image'),
+        process: full ? null : summarizeProcess(blocks),
+        streaming: partial.status !== 'settled',
+      })
+    }
+  }
+  const calls = (Array.isArray(legacy.runningCalls) ? legacy.runningCalls : []).filter(
+    (call) => call && typeof call === 'object' && !renderedCalls.has(String(call.callId || call.id || '')),
+  )
+  if (calls.length > 0 && detail !== DETAIL_FULL) {
+    // One status line for all live work keeps the reading transcript quiet.
+    const names = calls.map((call) => String(call.name || '')).filter(Boolean)
+    rows.push({
+      kind: 'status',
+      key: 'status:running',
+      turn: Number.isFinite(calls[0].turn) ? Number(calls[0].turn) : rows.length ? rows[rows.length - 1].turn : 0,
+      names,
+      text: names.join(' · '),
+    })
+  }
+  for (const call of calls) {
+    if (detail !== DETAIL_FULL) break
+    rows.push({
+      kind: 'tool',
+      key: `call:${call.callId || call.id || rows.length}`,
+      turn: Number.isFinite(call.turn) ? Number(call.turn) : rows.length ? rows[rows.length - 1].turn : 0,
+      name: String(call.name || ''),
+      status: 'running',
+      detail: truncate(textOf(call.argsRaw), 200),
+    })
+  }
+  return all ? rows : limitRows(rows, limitTurns, MAX_ROWS)
+}
+
+/**
+ * Human location line for a quote: book name plus the most precise position
+ * the document type offers (PDF page, EPUB/Markdown chapter and percent).
+ */
+function formatLocation(doc, position) {
+  const name = String((doc && (doc.name || doc.path)) || '')
+  if (!name) return ''
+  const head = `《${name}》`
+  const pos = position || {}
+  const isPdf = (doc && doc.ext === '.pdf') || /\.pdf$/i.test(name)
+  if (isPdf) {
+    const page = Number(pos.page)
+    if (!Number.isFinite(page) || page <= 0) return head
+    const total = Number(pos.total)
+    if (Number.isFinite(total) && total > 0) {
+      return `${head} 第 ${Math.round(page)} 页 / 共 ${Math.round(total)} 页`
+    }
+    return `${head} 第 ${Math.round(page)} 页`
+  }
+  const parts = [head]
+  const chapter = Number(pos.chapter)
+  const title = String(pos.chapterTitle || '').trim()
+  const percent = Number(pos.percent)
+  if (Number.isFinite(chapter) && chapter > 0) parts.push(`第 ${Math.round(chapter) + 1} 章`)
+  if (title) parts.push(title)
+  if (Number.isFinite(percent)) parts.push(`${Math.round(Math.min(100, Math.max(0, percent)))}%`)
+  return `${head}${parts.length > 1 ? ' ' + parts.slice(1).join(' · ') : ''}`
+}
+
+/**
+ * Quote block handed to `inputActions.insertQuote`: location first line, then
+ * the selected passage with whitespace flattened and length capped.
+ */
+function buildQuoteText(location, text, maxText = QUOTE_MAX_TEXT) {
+  const head = String(location || '').trim()
+  let body = String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .trim()
+    .replace(/[ \t]*\n(?:[ \t]*\n)*[ \t]*/g, ' ')
+  const limit = Number.isFinite(maxText) ? Math.max(0, Math.floor(maxText)) : QUOTE_MAX_TEXT
+  if (limit > 0 && body.length > limit) body = body.slice(0, limit) + '…'
+  if (!head) return body
+  return body ? `${head}\n${body}` : head
+}
+
+/** Number of visible user/assistant messages, used for the unread dot. */
+function chatMessageCount(chat) {
+  let count = 0
+  for (const node of orderedNodes(chat)) {
+    if (!node || node.visibility === 'hidden') continue
+    if (USER_KINDS.has(node.kind) || ASSISTANT_KINDS.has(node.kind)) count += 1
+  }
+  return count
+}
+
+
+
+
+
+
+/**
+ * In-reader conversation panel.
+ *
+ * This is a module-level component on purpose: it owns the `useChat` /
+ * `useInput` / `useSession` subscriptions so a streaming token re-renders the
+ * panel only, never `ReaderView` (which covers the whole book).
+ * See docs/superpowers/specs/2026-11-23-reader-chat-panel-design.md §3.2.
+ */
+
+const el = React.createElement
+
+/** Wrap an optional platform hook so a missing one degrades instead of throwing. */
+function safeHook(hook, fallback) {
+  return (selector) => {
+    if (typeof hook !== 'function') return typeof fallback === 'function' ? fallback() : fallback
+    try {
+      return hook(selector)
+    } catch {
+      return typeof fallback === 'function' ? fallback() : fallback
+    }
+  }
+}
+
+function renderMarkdown(text) {
+  const source = String(text || '')
+  if (!source.trim()) return ''
+  try {
+    return sanitizeHtml(markdownRender(source), () => null)
+  } catch {
+    return ''
+  }
+}
+
+const STATUS_LABEL = {
+  running: 'label.chatToolRunning',
+  done: 'label.chatToolDone',
+  error: 'label.chatToolError',
+}
+
+function renderBlock(block, index, t) {
+  if (!block) return null
+  if (block.kind === 'text') {
+    return el('div', {
+      key: index,
+      className: 'rd-chat-md',
+      dangerouslySetInnerHTML: { __html: renderMarkdown(block.text) },
+    })
+  }
+  if (block.kind === 'reasoning') {
+    return el(
+      'details',
+      { key: index, className: 'rd-chat-reasoning' },
+      el('summary', null, t('label.chatReasoning')),
+      el('div', { className: 'rd-chat-md rd-chat-muted' }, String(block.text || '')),
+    )
+  }
+  if (block.kind === 'image') {
+    return el('div', { key: index, className: 'rd-chat-image' }, t('label.chatImage'))
+  }
+  if (block.kind === 'tool-call') {
+    return el(
+      'div',
+      { key: index, className: 'rd-chat-tool rd-chat-tool-done' },
+      el('span', { className: 'rd-chat-dot', 'aria-hidden': 'true' }),
+      el('span', { className: 'rd-chat-tool-name' }, block.name || t('label.chatTool')),
+    )
+  }
+  return null
+}
+
+/** Native-chat style phrasing for the common tools, so process reads as actions. */
+const TOOL_PHRASES = {
+  read: 'tool.read',
+  read_image: 'tool.read',
+  write: 'tool.write',
+  edit: 'tool.write',
+  apply_patch: 'tool.write',
+  bash: 'tool.command',
+  pwsh: 'tool.command',
+  terminal: 'tool.command',
+  grep: 'tool.search',
+  glob: 'tool.search',
+  search: 'tool.search',
+  web_search: 'tool.webSearch',
+  web_fetch: 'tool.webFetch',
+  todo_write: 'tool.plan',
+  task: 'tool.subagents',
+  subagent: 'tool.subagents',
+  workflow: 'tool.subagents',
+}
+
+function toolPhrase(name, t) {
+  const key = TOOL_PHRASES[String(name || '').trim()]
+  return key ? t(key) : String(name || '').trim() || t('label.chatTool')
+}
+
+/** First meaningful line of one reasoning text, stripped of Markdown markers. */
+function reasoningSummary(text, max = 60) {
+  const line = String(text || '')
+    .split('\n')
+    .map((value) => value.replace(/[*_`#>]/g, '').trim())
+    .find(Boolean)
+  if (!line) return ''
+  return line.length > max ? line.slice(0, max) + '…' : line
+}
+
+/** Aggregate repeated tool names so a long loop reads as `bash × 12`, not 12 chips. */
+function aggregateTools(tools) {
+  const counts = new Map()
+  for (const name of tools) {
+    const label = String(name || '').trim() || 'tool'
+    counts.set(label, (counts.get(label) || 0) + 1)
+  }
+  return [...counts.entries()].map(([name, count]) => ({ name, count }))
+}
+
+/**
+ * Folded process of one assistant step: counts on the summary, tool names on the
+ * first level, and the reasoning one level further down. Expanding the process
+ * must not dump a long chain of thought into the reading panel; the reasoning
+ * opens only when the reader asks for it again.
+ */
+function renderProcess(process, t) {
+  if (!process) return null
+  const tools = aggregateTools(process.tools || [])
+  const reasoning = process.reasoning || []
+  return el(
+    'details',
+    { className: 'rd-chat-process', 'data-chat-process': '' },
+    el('summary', null, `${t('label.chatProcess')} · ${process.count}`),
+    tools.length > 0
+      ? el(
+          'div',
+          { className: 'rd-chat-process-tools' },
+          tools.map(({ name, count }, index) => {
+            const phrase = toolPhrase(name, t)
+            return el('span', { key: index, className: 'rd-chat-chip' }, count > 1 ? `${phrase} × ${count}` : phrase)
+          }),
+        )
+      : null,
+    reasoning.length > 0
+      ? el(
+          'details',
+          { className: 'rd-chat-reasoning-sub', 'data-chat-reasoning': '' },
+          el('summary', null, `${t('label.chatReasoning')} ${reasoningSummary(reasoning[0])}`),
+          el('div', {
+            className: 'rd-chat-md rd-chat-muted rd-chat-process-reasoning',
+            dangerouslySetInnerHTML: { __html: renderMarkdown(reasoning.join('\n\n')) },
+          }),
+        )
+      : null,
+  )
+}
+
+/**
+ * Split a quoted user message into its location line and the passage, so the
+ * citation reads as a source chip instead of one long preformatted block.
+ */
+function splitUserText(text) {
+  const value = String(text || '')
+  const newline = value.indexOf('\n')
+  const first = (newline >= 0 ? value.slice(0, newline) : value).trim()
+  // Only the shape `buildQuoteText` writes becomes a source line: a book name
+  // followed by a position marker. A plain question that happens to open with a
+  // book title stays a normal message.
+  const looksLikeSource = /^《[^》]{1,120}》/.test(first) && /第\s*\d|%|·/.test(first)
+  if (!looksLikeSource) return { source: '', body: value }
+  const body = newline >= 0 ? value.slice(newline + 1).trim() : ''
+  return { source: first, body }
+}
+
+function roleLabel(role, t) {
+  return el('div', { className: `rd-chat-role rd-chat-role-${role}` }, t(role === 'user' ? 'label.chatRoleUser' : 'label.chatRoleAssistant'))
+}
+
+function renderRow(row, t) {
+  if (row.kind === 'user') {
+    const parts = splitUserText(row.text)
+    return el(
+      'div',
+      {
+        key: row.key,
+        className: 'rd-chat-row rd-chat-user',
+        'data-chat-row': '',
+        'data-kind': 'user',
+        'data-role': 'user',
+      },
+      roleLabel('user', t),
+      el(
+        'div',
+        { className: 'rd-chat-bubble' },
+        parts.source ? el('div', { className: 'rd-chat-source' }, parts.source) : null,
+        parts.body
+          ? el('div', {
+              className: 'rd-chat-md',
+              dangerouslySetInnerHTML: { __html: renderMarkdown(parts.body) },
+            })
+          : null,
+      ),
+    )
+  }
+  if (row.kind === 'assistant') {
+    return el(
+      'div',
+      {
+        key: row.key,
+        className: `rd-chat-row rd-chat-assistant${row.streaming ? ' rd-chat-streaming' : ''}`,
+        'data-chat-row': '',
+        'data-kind': 'assistant',
+        'data-role': 'assistant',
+      },
+      roleLabel('assistant', t),
+      el(
+        'div',
+        { className: 'rd-chat-body' },
+        row.blocks.map((block, index) => renderBlock(block, index, t)),
+        renderProcess(row.process, t),
+        row.streaming ? el('span', { className: 'rd-chat-streaming-dot', 'aria-hidden': 'true' }) : null,
+      ),
+    )
+  }
+  if (row.kind === 'status') {
+    return el(
+      'div',
+      { key: row.key, className: 'rd-chat-status', 'data-chat-row': '', 'data-kind': 'status' },
+      el('span', { className: 'rd-chat-dot rd-chat-dot-running', 'aria-hidden': 'true' }),
+      `${t('label.chatRunning')}${row.text ? ` ${row.text}` : ''}`,
+    )
+  }
+  if (row.kind === 'tool') {
+    return el(
+      'div',
+      {
+        key: row.key,
+        className: `rd-chat-tool rd-chat-tool-${row.status}`,
+        'data-chat-row': '',
+        'data-kind': 'tool',
+        title: row.detail || undefined,
+      },
+      el('span', { className: 'rd-chat-dot', 'aria-hidden': 'true' }),
+      el('span', { className: 'rd-chat-tool-name' }, row.name || t('label.chatTool')),
+      el('span', { className: 'rd-chat-tool-status' }, t(STATUS_LABEL[row.status] || STATUS_LABEL.done)),
+    )
+  }
+  if (row.kind === 'error') {
+    return el(
+      'div',
+      { key: row.key, className: 'rd-chat-row rd-chat-error', 'data-chat-row': '', 'data-kind': 'error' },
+      row.text || t('label.chatError'),
+    )
+  }
+  if (row.kind === 'interrupted') {
+    return el(
+      'div',
+      { key: row.key, className: 'rd-chat-row rd-chat-interrupted', 'data-chat-row': '', 'data-kind': 'interrupted' },
+      el('div', { className: 'rd-chat-role rd-chat-role-assistant' }, t('label.chatRoleAssistant')),
+      el(
+        'div',
+        { className: 'rd-chat-body' },
+        (row.blocks || []).map((block, index) => renderBlock(block, index, t)),
+        el('span', { className: 'rd-chat-stopped' }, t('label.chatStopped')),
+      ),
+    )
+  }
+  return null
+}
+
+/** Follow threshold for the transcript scroller: within 40px of the bottom counts as pinned. */
+function isNearBottom(metrics, threshold = 40) {
+  if (!metrics) return true
+  const scrollHeight = Number(metrics.scrollHeight) || 0
+  const scrollTop = Number(metrics.scrollTop) || 0
+  const clientHeight = Number(metrics.clientHeight) || 0
+  return scrollHeight - scrollTop - clientHeight <= threshold
+}
+
+/**
+ * @param {{t?: (key: string) => string, doc?: object|null, position?: object|null,
+ *          useChat?: Function, useInput?: Function, useSession?: Function,
+ *          openView?: Function, onClose?: Function}} props
+ */
+function ReaderChatPanel(props) {
+  const safeProps = props || {}
+  const t = typeof safeProps.t === 'function' ? safeProps.t : (key) => key
+  const useChat = safeHook(safeProps.useChat, () => null)
+  const useInput = safeHook(safeProps.useInput, () => null)
+  const useSession = safeHook(safeProps.useSession, () => null)
+  const chat = useChat((snapshot) => snapshot)
+  const phase = useInput((snapshot) => (snapshot ? snapshot.phase : null))
+  const running = useSession((snapshot) => Boolean(snapshot && snapshot.running))
+  const [showAll, setShowAll] = React.useState(false)
+  const [showProcess, setShowProcess] = React.useState(false)
+  const [nearBottom, setNearBottom] = React.useState(true)
+  const scrollRef = React.useRef(null)
+  const unavailable =
+    typeof safeProps.useChat !== 'function' ||
+    typeof safeProps.useInput !== 'function' ||
+    typeof safeProps.useSession !== 'function'
+  const rows = React.useMemo(
+    () => (chat ? buildTranscript(chat, { all: showAll, detail: showProcess ? 'full' : 'compact' }) : []),
+    [chat, showAll, showProcess],
+  )
+  const busy = Boolean(phase && phase !== 'plain') || running
+
+  React.useEffect(() => {
+    const node = scrollRef.current
+    if (!node || !nearBottom) return
+    node.scrollTop = node.scrollHeight
+  }, [rows, nearBottom])
+
+  if (unavailable) {
+    return el(
+      'div',
+      { className: 'rd-chat' },
+      el('div', { className: 'rd-chat-unavailable' }, t('label.chatUnavailable')),
+    )
+  }
+
+  const onScroll = (event) => setNearBottom(isNearBottom(event.currentTarget))
+  const backToBottom = () => {
+    const node = scrollRef.current
+    setNearBottom(true)
+    if (node) node.scrollTop = node.scrollHeight
+  }
+  const canOpenView = typeof safeProps.openView === 'function'
+
+  return el(
+    'div',
+    { className: 'rd-chat', 'data-chat-panel': '' },
+    rows.length > 0 || canOpenView
+      ? el(
+          'div',
+          { className: 'rd-chat-tools' },
+          rows.length > 0
+            ? el(
+                'button',
+                {
+                  className: 'rd-btn ghost rd-chat-toggle',
+                  onClick: () => setShowAll((current) => !current),
+                },
+                t(showAll ? 'label.chatCollapse' : 'label.chatShowAll'),
+              )
+            : null,
+          rows.length > 0
+            ? el(
+                'button',
+                {
+                  className: 'rd-btn ghost rd-chat-toggle',
+                  'data-chat-action': 'toggle-process',
+                  'aria-pressed': showProcess ? 'true' : 'false',
+                  title: t('label.chatProcess'),
+                  onClick: () => setShowProcess((current) => !current),
+                },
+                t('label.chatProcess'),
+              )
+            : null,
+          el('span', { className: 'rd-spacer' }),
+          canOpenView
+            ? el(
+                'button',
+                {
+                  className: 'rd-btn ghost rd-chat-open-view',
+                  'data-chat-action': 'open-view',
+                  title: t('label.chatJump'),
+                  onClick: () => safeProps.openView('chat', ''),
+                },
+                t('label.chatJump'),
+              )
+            : null,
+        )
+      : null,
+    busy ? el('div', { className: 'rd-chat-busy', role: 'status' }, t('label.chatBusy')) : null,
+    el(
+      'div',
+      { className: 'rd-chat-scroll', ref: scrollRef, onScroll },
+      rows.length > 0
+        ? rows.map((row) => renderRow(row, t))
+        : el(
+            'div',
+            { className: 'rd-chat-empty' },
+            t('label.chatEmpty'),
+            safeProps.doc && safeProps.doc.name
+              ? el('div', { className: 'rd-chat-empty-book' }, `《${safeProps.doc.name}》`)
+              : null,
+          ),
+      !nearBottom && rows.length > 0
+        ? el(
+            'button',
+            { className: 'rd-btn rd-chat-back-to-bottom', onClick: backToBottom },
+            t('label.chatBackToBottom'),
+          )
+        : null,
+    ),
+  )
+}
+
+/**
+ * Toolbar entry with the in-memory unread dot. Own component so chat snapshots
+ * re-render only this button.
+ */
+function ChatToolbarButton(props) {
+  const safeProps = props || {}
+  const t = typeof safeProps.t === 'function' ? safeProps.t : (key) => key
+  const open = safeProps.open === true
+  const useChat = safeHook(safeProps.useChat, () => null)
+  const chat = useChat((snapshot) => snapshot)
+  const count = chatMessageCount(chat)
+  const [seen, setSeen] = React.useState(0)
+  const initialized = React.useRef(false)
+
+  React.useEffect(() => {
+    if (open) {
+      setSeen(count)
+      initialized.current = true
+      return
+    }
+    if (!initialized.current && chat) {
+      setSeen(count)
+      initialized.current = true
+    }
+  }, [open, count, chat])
+
+  if (typeof safeProps.useChat !== 'function') return null
+  const unread = !open && initialized.current && count > seen
+  return el(
+    'button',
+    {
+      className: 'rd-btn rd-chat-btn',
+      'aria-pressed': open ? 'true' : 'false',
+      'data-action': 'toggle-chat',
+      title: t('tab.chat'),
+      onClick: safeProps.onToggle,
+    },
+    t('tab.chat'),
+    unread
+      ? el('span', { className: 'rd-chat-unread', role: 'status', 'aria-label': t('label.chatUnread') })
+      : null,
+  )
+}
+
+/**
+ * Renders nothing: watches the composer phase and reports the transition from
+ * `plain` to busy once, so submitting from the native composer opens the panel.
+ */
+function ChatSubmitWatcher(props) {
+  const safeProps = props || {}
+  const useInput = safeHook(safeProps.useInput, () => null)
+  const phase = useInput((snapshot) => (snapshot ? snapshot.phase : null)) || 'plain'
+  const lastRef = React.useRef(phase)
+  const onSendRef = React.useRef(safeProps.onSend)
+  onSendRef.current = safeProps.onSend
+  React.useEffect(() => {
+    const previous = lastRef.current
+    lastRef.current = phase
+    if (previous === 'plain' && phase !== 'plain' && typeof onSendRef.current === 'function') {
+      onSendRef.current()
+    }
+  }, [phase])
+  return null
+}
+
+
+/**
+ * Reading-context helpers for the in-reader conversation panel.
+ *
+ * Pure functions only: they turn the reader's own state into the small payload
+ * the host needs for quotes and for the `reader_context` / `reader_read` tools.
+ * See docs/superpowers/specs/2026-11-23-reader-chat-panel-design.md §4 and §6.
+ */
+
+function toPercent(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return undefined
+  return Math.round(Math.min(100, Math.max(0, number)))
+}
+
+/**
+ * Normalize the current reading position for the current document.
+ *
+ * PDF documents report the page and the total; text documents report the
+ * chapter (0-based), its title when known, and a percentage.
+ *
+ * @param {object|null} doc
+ * @param {{chapter?: number, chapterTitle?: string, page?: number, percent?: number}} [state]
+ * @returns {{path: string, name: string, ext: string, chapter: number, chapterTitle: string,
+ *            page: number, total: number, percent?: number} | null}
+ */
+function currentPosition(doc, state = {}) {
+  if (!doc) return null
+  const known = state && typeof state === 'object' ? state : {}
+  const ext = String(doc.ext || '')
+  const name = String(doc.name || '')
+  const path = String(doc.path || '')
+  const chapters = doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null
+  const isPdf = ext === '.pdf' || /\.pdf$/i.test(name)
+  if (isPdf) {
+    const totalPages = doc.pdf ? Number(doc.pdf.numPages) : NaN
+    const total = Number.isFinite(totalPages) && totalPages > 0 ? Math.floor(totalPages) : 0
+    const requestedPage = Number(known.page)
+    const page = Number.isFinite(requestedPage) && requestedPage >= 1 ? Math.floor(requestedPage) : 1
+    const percent = total > 1 ? Math.round(((page - 1) / (total - 1)) * 100) : 0
+    return { path, name, ext, chapter: 0, chapterTitle: '', page, total, percent }
+  }
+  const requestedChapter = Number(known.chapter)
+  const chapter = Number.isFinite(requestedChapter) && requestedChapter > 0 ? Math.floor(requestedChapter) : 0
+  const chapterTitle = String(
+    known.chapterTitle || (chapters && chapters[chapter] ? chapters[chapter].label : '') || '',
+  )
+  let percent = toPercent(known.percent)
+  if (percent === undefined && chapters && chapters.length > 0) {
+    percent = Math.round((chapter / chapters.length) * 100)
+  }
+  return { path, name, ext, chapter, chapterTitle, page: 0, total: 0, percent }
+}
+
+
+/** Upper bound for the text window the host caches for `reader_read` (§6.1). */
+const CONTEXT_LIMIT = 24000
+const CONTEXT_PAGE_RADIUS = 1
+
+function decodeBytes(bytes) {
+  try {
+    return new TextDecoder('utf-8').decode(bytes || new ArrayBuffer(0))
+  } catch {
+    return ''
+  }
+}
+
+/** Plain text for HTML-bearing documents (EPUB chapters, HTML files). */
+function stripHtml(value) {
+  return String(value || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Slice the markdown source at the heading that matches the reader's section. */
+/**
+ * Window around one absolute offset, so a long text book reports the passage
+ * near the reader's scroll position instead of the chapter start.
+ * @param {string} source full text
+ * @param {number} offset absolute character offset
+ * @returns {string}
+ */
+function windowAround(source, offset) {
+  const text = String(source || '')
+  if (text.length <= CONTEXT_LIMIT) return text
+  const safeOffset = Math.min(text.length, Math.max(0, Math.round(offset)))
+  const start = Math.max(0, Math.min(text.length - CONTEXT_LIMIT, safeOffset - Math.floor(CONTEXT_LIMIT / 3)))
+  return text.slice(start, start + CONTEXT_LIMIT)
+}
+
+function chapterSlice(source, chapterTitle) {
+  const title = String(chapterTitle || '').trim()
+  const text = String(source || '')
+  if (!title) return text
+  const lines = text.split('\n')
+  const heading = new RegExp(`^(#{1,6})\\s+${escapeRegExp(title)}\\s*$`)
+  let start = -1
+  let level = 0
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^(#{1,6})\s+/.exec(lines[index])
+    if (!match) continue
+    if (heading.test(lines[index])) {
+      start = index
+      level = match[1].length
+      break
+    }
+  }
+  if (start < 0) return text
+  let end = lines.length
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const match = /^(#{1,6})\s+/.exec(lines[index])
+    if (match && match[1].length <= level) {
+      end = index
+      break
+    }
+  }
+  return lines.slice(start, end).join('\n')
+}
+
+/**
+ * Text window around the reading position, uploaded with the position so the
+ * host can answer "what does this passage mean" without re-reading the file.
+ * Capped at 24000 characters. Returns null when the document body is unknown.
+ *
+ * @param {object|null} doc
+ * @param {{chapter?: number, chapterTitle?: string, page?: number}} [state]
+ * @returns {Promise<{title: string, text: string} | null>}
+ */
+async function buildContextWindow(doc, state = {}) {
+  if (!doc) return null
+  const known = state && typeof state === 'object' ? state : {}
+  const ext = String(doc.ext || '')
+  const name = String(doc.name || doc.path || '')
+  const isPdf = ext === '.pdf' || /\.pdf$/i.test(name)
+  let title = name
+  let text = ''
+  if (isPdf) {
+    const pdf = doc.pdf
+    if (!pdf || !pdf.doc) return null
+    const total = Number(pdf.numPages) > 0 ? Math.floor(Number(pdf.numPages)) : 0
+    const requestedPage = Number(known.page)
+    const page = Number.isFinite(requestedPage) && requestedPage >= 1 ? Math.floor(requestedPage) : 1
+    const pages = []
+    for (let number = page - CONTEXT_PAGE_RADIUS; number <= page + CONTEXT_PAGE_RADIUS; number += 1) {
+      if (number < 1 || (total > 0 && number > total)) continue
+      pages.push(number)
+    }
+    const parts = []
+    for (const number of pages) {
+      try {
+        const blocks = await pdfPageBlocks(pdf, number)
+        const pageText = (blocks || [])
+          .map((block) => String((block && block.text) || '').trim())
+          .filter(Boolean)
+          .join('\n')
+        if (pageText) parts.push(pageText)
+      } catch {
+        return null
+      }
+    }
+    if (pages.length === 0) return null
+    text = parts.join('\n\n')
+    title = `${name} · 第 ${pages[0] === pages[pages.length - 1] ? pages[0] : `${pages[0]}-${pages[pages.length - 1]}`} 页`
+  } else if (ext === '.epub') {
+    const chapters = doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null
+    if (!chapters) return null
+    const requestedChapter = Number(known.chapter)
+    const index = Number.isFinite(requestedChapter) && requestedChapter > 0 ? Math.floor(requestedChapter) : 0
+    const chapter = chapters[index]
+    if (!chapter) return null
+    text = stripHtml(chapter.html || chapter.text || '')
+    if (chapter.label) title = `${name} · ${chapter.label}`
+  } else {
+    const source = typeof doc.text === 'string' ? doc.text : decodeBytes(doc.bytes)
+    if (!source) return null
+    const chapterTitle = String(known.chapterTitle || '')
+    const percent = Number(known.percent)
+    if (Number.isFinite(percent) && percent > 0 && percent <= 100) {
+      text = windowAround(source, (percent / 100) * source.length)
+    } else {
+      text = chapterSlice(source, chapterTitle)
+    }
+    if (chapterTitle) title = `${name} · ${chapterTitle}`
+  }
+  if (!text) return null
+  return { title, text: text.slice(0, CONTEXT_LIMIT) }
+}
+
+/**
+ * Throttled reading-position reporter.
+ *
+ * `report` keeps only the newest position and sends at most one request per
+ * `throttleMs`; `flush` sends the pending position right away; `dispose` flushes
+ * once and ignores later reports. Network failures are swallowed: reporting is
+ * best effort and must never disturb reading.
+ *
+ * @param {{api?: {context?: Function}, sessionId?: string, throttleMs?: number}} [options]
+ * @returns {{report: (position: object, window?: object) => void, flush: () => void, dispose: () => void}}
+ */
+function createPositionReporter(options = {}) {
+  const api = options.api || null
+  const sessionId = String(options.sessionId || '')
+  const throttleMs = Number.isFinite(options.throttleMs) && options.throttleMs >= 0 ? Number(options.throttleMs) : 1500
+  let timer = null
+  let latest = null
+  let disposed = false
+  const send = () => {
+    timer = null
+    if (!latest) return
+    const payload = latest
+    latest = null
+    if (!api || typeof api.context !== 'function') return
+    try {
+      const result = api.context(sessionId, payload)
+      if (result && typeof result.catch === 'function') result.catch(() => {})
+    } catch {
+      /* the position is a hint for the host; losing it must not surface */
+    }
+  }
+  return {
+    report(position, contextWindow) {
+      if (disposed || !position) return
+      latest = contextWindow ? { position, window: contextWindow } : { position }
+      if (timer === null) timer = setTimeout(send, throttleMs)
+    },
+    flush() {
+      if (disposed) return
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+      send()
+    },
+    dispose() {
+      if (disposed) return
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+      send()
+      disposed = true
+    },
+  }
+}
+
+
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
 function viewStateKey(sessionId) {
@@ -3542,7 +4798,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.12.5'
+const READER_VERSION = '0.13.0'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -3611,6 +4867,7 @@ function ReaderView(props) {
   const [fontSize, setFontSize] = React.useState(18)
   const [drawer, setDrawer] = React.useState(null)
   const [menu, setMenu] = React.useState(null)
+  const [menuError, setMenuError] = React.useState('')
   const [childMenu, setChildMenu] = React.useState(null)
   const [cards, setCards] = React.useState([])
   const [cardOffsets, setCardOffsets] = React.useState({})
@@ -3688,6 +4945,7 @@ function ReaderView(props) {
   const importInputRef = React.useRef(null)
   const guideAbortRef = React.useRef(null)
   const historyRef = React.useRef(null)
+  const reporterRef = React.useRef(null)
 
   const docKey = doc ? doc.fingerprint || doc.path : null
   const concepts = React.useMemo(() => Object.values(store.concepts || {}), [store.concepts])
@@ -4010,12 +5268,18 @@ function ReaderView(props) {
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
 
-  const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
-  const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
+  const drawerWidthKey =
+    drawer === 'chat' ? 'chatWidth' : drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
+  const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : drawerWidthKey === 'chatWidth' ? 420 : 320
+  const drawerWidthMin = drawerWidthKey === 'chatWidth' ? 320 : 240
   const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
-  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(320, rootBounds().width - 180))
+  const drawerMaxWidth = () =>
+    Math.min(
+      drawerWidthKey === 'mapWidth' ? 1200 : drawerWidthKey === 'chatWidth' ? 720 : 1000,
+      Math.max(320, rootBounds().width - 180),
+    )
   const drawerWidth = Math.min(drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault), drawerMaxWidth())
-  const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
+  const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(drawerWidthMin, width))
   const commitDrawerWidth = (width) => {
     const next = Math.round(clampDrawerWidth(width))
     setDrawerDraft({ key: drawerWidthKey, width: next })
@@ -4060,6 +5324,39 @@ function ReaderView(props) {
   const readingScroller = () => {
     const root = contentRef.current
     return root ? root.closest('.rd-main') || root.parentElement : null
+  }
+
+  // Title of the chapter/section currently on screen, used for quote locations.
+  const docChapterTitle = () => {
+    if (!doc) return ''
+    if (doc.ext === '.epub' && doc.epub && doc.epub.chapters[chapter]) {
+      return String(doc.epub.chapters[chapter].label || '')
+    }
+    if (doc.ext === '.pdf') return ''
+    const root = contentRef.current
+    const main = readingScroller()
+    if (!root || !main) return ''
+    const top = main.getBoundingClientRect().top + 24
+    let title = ''
+    for (const heading of root.querySelectorAll('h1,h2,h3')) {
+      if (heading.getBoundingClientRect().top <= top) title = String(heading.textContent || '').trim()
+      else break
+    }
+    return title
+  }
+
+  // Percentage through the whole document, measured from the live scroller.
+  const currentReadingPercent = () => {
+    if (!doc) return 0
+    const main = readingScroller()
+    if (!main) return Math.round((readingProgress || 0) * 100)
+    const local = scrollProgress({
+      scrollTop: main.scrollTop,
+      scrollHeight: main.scrollHeight,
+      clientHeight: main.clientHeight,
+    })
+    if (doc.ext === '.epub' && doc.epub) return Math.round(chapterProgress(chapter, local, doc.epub.chapters.length) * 100)
+    return Math.round(local * 100)
   }
 
   latestViewRef.current = {
@@ -4450,6 +5747,54 @@ function ReaderView(props) {
     )
   }, [sessionId, entries, doc])
 
+  // Reading-position reporting (spec §6.1): one throttled POST per document /
+  // page / chapter change, with the context window the host caches for tools.
+  React.useEffect(() => {
+    if (!sessionId || !docKey) {
+      if (reporterRef.current) {
+        reporterRef.current.dispose()
+        reporterRef.current = null
+      }
+      return undefined
+    }
+    const reporter = createPositionReporter({ api, sessionId })
+    reporterRef.current = reporter
+    return () => {
+      if (reporterRef.current === reporter) reporterRef.current = null
+      reporter.dispose()
+    }
+  }, [sessionId, docKey])
+
+  const reportCurrentPosition = () => {
+    const reporter = reporterRef.current
+    if (!reporter || !doc) return undefined
+    const position = currentPosition(doc, {
+      chapter,
+      chapterTitle: docChapterTitle(),
+      page,
+      percent: currentReadingPercent(),
+    })
+    if (!position) return undefined
+    let cancelled = false
+    Promise.resolve()
+      .then(() => buildContextWindow(doc, position))
+      .then((contextWindow) => {
+        if (!cancelled) reporter.report(position, contextWindow || undefined)
+      })
+      .catch(() => {
+        if (!cancelled) reporter.report(position)
+      })
+    return () => {
+      cancelled = true
+    }
+  }
+
+  React.useEffect(() => {
+    const cancel = reportCurrentPosition()
+    return cancel
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, docKey, chapter, page])
+
   React.useEffect(() => {
     if (!doc || pendingScrollRef.current == null) return
     const target = pendingScrollRef.current
@@ -4487,12 +5832,18 @@ function ReaderView(props) {
     const main = readingScroller()
     if (!root && !main) return
     let timer = null
+    let reportTimer = null
     const onScroll = (event) => {
       const target = event.target
       const inReader = target && target.closest && target.closest('.rd-main')
       if (!inReader && target !== main) return
       clearTimeout(timer)
       timer = setTimeout(persistCurrentView, 250)
+      // Text books have no page turns: scrolling is the only position change.
+      if (doc.ext !== '.pdf') {
+        clearTimeout(reportTimer)
+        reportTimer = setTimeout(() => reportCurrentPosition(), 600)
+      }
     }
     // Scroll does not bubble; capture it at the reader root so the position is
     // still recorded when the inner prose node was replaced by a re-render.
@@ -4500,6 +5851,7 @@ function ReaderView(props) {
     main?.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       clearTimeout(timer)
+      clearTimeout(reportTimer)
       root?.removeEventListener('scroll', onScroll, true)
       main?.removeEventListener('scroll', onScroll)
       persistCurrentView()
@@ -4889,12 +6241,15 @@ function ReaderView(props) {
       return
     }
     const root = contentRef.current
-    if (!root || !root.contains(range.commonAncestorContainer)) {
+    const chatRoot = rootRef.current ? rootRef.current.querySelector('.rd-chat') : null
+    const inChat = Boolean(chatRoot && chatRoot.contains(range.commonAncestorContainer))
+    if (!inChat && (!root || !root.contains(range.commonAncestorContainer))) {
       setMenu(null)
       return
     }
     const rect = range.getBoundingClientRect()
-    setMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top })
+    setMenuError('')
+    setMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top, inChat })
   }
 
   const closeCardsSoon = (delay = 600) => {
@@ -6072,6 +7427,13 @@ function ReaderView(props) {
           },
           t('tab.concepts'),
         ),
+        h(ChatToolbarButton, {
+          key: 'chat',
+          t,
+          open: drawer === 'chat',
+          onToggle: () => setDrawer(drawer === 'chat' ? null : 'chat'),
+          useChat: props.useChat,
+        }),
         h(
           'button',
           {
@@ -6222,6 +7584,56 @@ function ReaderView(props) {
     )
   }
 
+  // One shell for every drawer tab: resizer + title bar + scrolling body.
+  // Mirrors the original per-branch markup so existing tabs keep their output.
+  const renderDrawerShell = (title, body, options = {}) =>
+    h(
+      'div',
+      {
+        className: `rd-drawer${options.wide ? ' rd-drawer-wide' : ''}`,
+        style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
+      },
+      h('div', {
+        className: 'rd-drawer-resizer',
+        role: 'separator',
+        tabIndex: 0,
+        'aria-orientation': 'vertical',
+        'aria-label': t('label.resizeSidebar'),
+        'aria-valuemin': drawerWidthMin,
+        'aria-valuemax': drawerMaxWidth(),
+        'aria-valuenow': Math.round(drawerWidth),
+        title: t('label.resizeSidebar'),
+        onPointerDown: startDrawerResize,
+        onPointerMove: moveDrawerResize,
+        onPointerUp: endDrawerResize,
+        onPointerCancel: endDrawerResize,
+        onDoubleClick: resetDrawerWidth,
+        onKeyDown: (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
+        },
+      }),
+      h(
+        'div',
+        { className: 'rd-drawer-head' },
+        h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, title),
+        h('span', { className: 'rd-spacer' }),
+        h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
+      ),
+      h(
+        'div',
+        {
+          className: `rd-drawer-body${options.bodyClassName ? ` ${options.bodyClassName}` : ''}`,
+          ref: drawerBodyRef,
+          onScroll: (event) => {
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
+          },
+        },
+        body,
+      ),
+    )
+
   const renderDrawer = () => {
     if (!drawer || !doc) return null
     let body = null
@@ -6244,29 +7656,7 @@ function ReaderView(props) {
         )
       } else if (doc.ext === '.pdf') {
         if (doc.pdf.structureReady === false) {
-          body = h('div', { className: 'rd-empty' }, t('label.analyzingOutline'))
-          return h(
-            'div',
-            { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
-            h(
-              'div',
-              { className: 'rd-drawer-head' },
-              h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, t('tab.toc')),
-              h('span', { className: 'rd-spacer' }),
-              h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
-            ),
-            h(
-        'div',
-        {
-          className: 'rd-drawer-body',
-          ref: drawerBodyRef,
-          onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
-          },
-        },
-        body,
-      ),
-          )
+          return renderDrawerShell(t('tab.toc'), h('div', { className: 'rd-empty' }, t('label.analyzingOutline')))
         }
         const outline = doc.pdf.tocReliable ? doc.pdf.toc || [] : []
         const fallbackChapters = !doc.pdf.tocReliable && doc.pdf.structure ? doc.pdf.structure.chapters || [] : []
@@ -6947,60 +8337,29 @@ function ReaderView(props) {
         ),
       )
     }
+    if (drawer === 'chat') {
+      body = h(ReaderChatPanel, {
+        t,
+        doc,
+        useChat: props.useChat,
+        useInput: props.useInput,
+        useSession: props.useSession,
+        openView: props.openView,
+      })
+    }
     const titles = {
       toc: t('tab.toc'),
       anno: t('tab.anno'),
       concepts: `${t('tab.concepts')} · ${concepts.length}`,
       guide: t('tab.guide'),
       translate: t('tab.translate'),
+      chat: t('tab.chat'),
       settings: t('label.settings'),
     }
-    return h(
-      'div',
-      {
-        className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}`,
-        style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
-      },
-      h('div', {
-        className: 'rd-drawer-resizer',
-        role: 'separator',
-        tabIndex: 0,
-        'aria-orientation': 'vertical',
-        'aria-label': t('label.resizeSidebar'),
-        'aria-valuemin': 240,
-        'aria-valuemax': drawerMaxWidth(),
-        'aria-valuenow': Math.round(drawerWidth),
-        title: t('label.resizeSidebar'),
-        onPointerDown: startDrawerResize,
-        onPointerMove: moveDrawerResize,
-        onPointerUp: endDrawerResize,
-        onPointerCancel: endDrawerResize,
-        onDoubleClick: resetDrawerWidth,
-        onKeyDown: (event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
-          commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
-        },
-      }),
-      h(
-        'div',
-        { className: 'rd-drawer-head' },
-        h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, titles[drawer]),
-        h('span', { className: 'rd-spacer' }),
-        h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
-      ),
-      h(
-        'div',
-        {
-          className: 'rd-drawer-body',
-          ref: drawerBodyRef,
-          onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
-          },
-        },
-        body,
-      ),
-    )
+    return renderDrawerShell(titles[drawer], body, {
+      wide: drawer === 'guide' && guideView === 'map',
+      bodyClassName: drawer === 'chat' ? 'rd-drawer-chat' : '',
+    })
   }
 
   const renderEditor = () => {
@@ -7455,39 +8814,132 @@ function ReaderView(props) {
     )
   }
 
+  // Hand the selected passage to the native composer as an atomic quote block;
+  // the optional question is inserted after it (spec §4.3: the span must be
+  // captured again after the quote, because insertText is revision-guarded).
+  const askChatSelection = (question) => {
+    const actions = props.inputActions
+    if (!actions || typeof actions.insertQuote !== 'function') {
+      setMenuError(t('label.chatUnavailable'))
+      return false
+    }
+    const text = menu && menu.text ? String(menu.text).trim() : ''
+    if (!text) return false
+    const position = currentPosition(doc, {
+      chapter,
+      chapterTitle: docChapterTitle(),
+      page,
+      percent: currentReadingPercent(),
+    })
+    const quote = buildQuoteText(formatLocation(doc, position), text)
+    let span = null
+    if (question && typeof actions.captureInsertion === 'function') {
+      try {
+        span = actions.captureInsertion()
+      } catch {
+        span = null
+      }
+    }
+    let inserted = false
+    try {
+      inserted = actions.insertQuote(quote) !== false
+    } catch {
+      inserted = false
+    }
+    if (!inserted) {
+      setMenuError(t('label.composerBusy'))
+      return false
+    }
+    if (question && typeof actions.insertText === 'function' && typeof actions.captureInsertion === 'function') {
+      let after = null
+      try {
+        after = actions.captureInsertion()
+      } catch {
+        after = null
+      }
+      if (after || span) {
+        try {
+          actions.insertText(question, after || span)
+        } catch {
+          /* the quote already landed; a failed question is not fatal */
+        }
+      }
+    }
+    setMenuError('')
+    setMenu(null)
+    dismissSelection(window)
+    setDrawer('chat')
+    return true
+  }
+
   const renderMenu = () => {
     if (!menu) return null
     const bounds = rootBounds()
     const left = Math.max(bounds.left + 8, Math.min(bounds.right - 320, menu.x - 150))
     const rawTop = menu.y > bounds.top + 70 ? menu.y - 46 : menu.y + 26
     const top = Math.max(bounds.top + 52, Math.min(bounds.bottom - 52, rawTop))
+    const composerReady = Boolean(props.inputActions && typeof props.inputActions.insertQuote === 'function')
+    const selectedText = menu.text ? String(menu.text).trim() : ''
+    // Chat text is a conversation, not the book: highlight and note annotate
+    // book positions and would write annotations the book never renders.
+    const inChat = menu.inChat === true
     return h(
       'div',
       { className: 'rd-mini', style: { left, top } },
-      h('button', { className: 'rd-btn', onClick: () => createConcept(menu.text, menu.range, null) }, t('action.explain')),
-      h(
-        'button',
-        {
-          className: 'rd-btn',
-          onClick: (event) => {
-            event.stopPropagation()
-            void translateSelection()
-          },
-        },
-        t('action.translateSelection'),
-      ),
-      h('button', { className: 'rd-btn', onClick: startNote }, t('action.note')),
-      COLORS.map((color) =>
-        h('button', {
-          key: color,
-          type: 'button',
-          className: 'rd-swatch',
-          'aria-label': t('action.highlight'),
-          title: t('action.highlight'),
-          style: { background: color },
-          onClick: () => addHighlight(color),
-        }),
-      ),
+      menuError ? h('div', { key: 'chat-error', className: 'rd-mini-error' }, menuError) : null,
+      composerReady && selectedText
+        ? h('button', { key: 'ask-chat', className: 'rd-btn', onClick: () => askChatSelection() }, t('action.askChat'))
+        : null,
+      composerReady && selectedText
+        ? h(
+            'select',
+            {
+              key: 'quick-ask',
+              className: 'rd-select rd-quick-ask',
+              'data-action': 'quick-ask',
+              'aria-label': t('action.quickAsk'),
+              title: t('action.quickAsk'),
+              defaultValue: '',
+              onChange: (event) => {
+                const id = event.target.value
+                event.target.value = ''
+                if (id) askChatSelection(t(`quick.${id}`))
+              },
+            },
+            h('option', { value: '' }, t('action.quickAsk')),
+            QUICK_ASKS.map((item) => h('option', { key: item.id, value: item.id }, t(`quick.${item.id}`))),
+          )
+        : null,
+      inChat
+        ? null
+        : h('button', { className: 'rd-btn', onClick: () => createConcept(menu.text, menu.range, null) }, t('action.explain')),
+      inChat
+        ? null
+        : h(
+            'button',
+            {
+              className: 'rd-btn',
+              onClick: (event) => {
+                event.stopPropagation()
+                void translateSelection()
+              },
+            },
+            t('action.translateSelection'),
+          ),
+      inChat ? null : h('button', { className: 'rd-btn', onClick: startNote }, t('action.note')),
+      inChat
+        ? null
+        : COLORS.map((color) =>
+            h('button', {
+              key: color,
+              type: 'button',
+              className: 'rd-swatch',
+              'aria-label': t('action.highlight'),
+              title: t('action.highlight'),
+              style: { background: color },
+              onClick: () => addHighlight(color),
+            }),
+          ),
       h(
         'button',
         {
@@ -7577,6 +9029,7 @@ function ReaderView(props) {
       onMouseOver: onTermOver,
       onMouseOut: onTermOut,
     },
+    h(ChatSubmitWatcher, { key: 'chat-submit-watcher', useInput: props.useInput, onSend: () => setDrawer('chat') }),
     renderToolbar(),
     doc
       ? h(

@@ -11,8 +11,18 @@ import { buildTranslatePrompt, parseTranslationReply, TRANSLATE_LANGUAGES, TRANS
 import { docFingerprint } from './lib/fingerprint.js'
 import { buildExplainPrompt, buildQuickExplainPrompt, parseExplanation, buildContextPrompt, parseContextNote, buildAskPrompt } from './lib/explain.js'
 import { sectionHash, buildSectionPrompt, buildOverviewPrompt, buildPartPrompt, parseSectionReply, parseOverviewReply, parsePartReply } from './lib/guide.js'
+import {
+  buildReaderContextPayload,
+  buildReaderReadPayload,
+  buildReadingReport,
+  MAX_SESSION_ID_CHARS,
+  pickReaderTarget,
+  readReadingContext,
+  sameReaderPosition,
+  writeReadingSession,
+} from './lib/reader-context.js'
 
-export const inject = ['webServer', 'sessionPersistence', 'llm', 'agentDefaultModel', 'workingDirectory']
+export const inject = ['webServer', 'sessionPersistence', 'llm', 'agentDefaultModel', 'workingDirectory', 'tools']
 
 const ROOT = '/dsh-reader-live'
 const inflightExplains = new Map()
@@ -534,6 +544,11 @@ function applyPrefs(store, patch) {
     const value = Number(patch.hoverDelay)
     if (!Number.isFinite(value) || value < 80 || value > 600) throw httpError(400, 'invalid hoverDelay')
     next.hoverDelay = value
+  }
+  if ('chatWidth' in patch) {
+    const value = Number(patch.chatWidth)
+    if (!Number.isFinite(value) || value < 320 || value > 720) throw httpError(400, 'invalid chatWidth')
+    next.chatWidth = value
   }
   if ('cardTrigger' in patch) {
     if (!['hover', 'click', 'off'].includes(patch.cardTrigger)) throw httpError(400, 'invalid cardTrigger')
@@ -1255,6 +1270,244 @@ async function restoreRoute(ctx, req, res) {
   }
 }
 
+function storedReadingEntry(store, sessionId) {
+  if (!isRecordObject(store.reading)) return undefined
+  const entry = store.reading[sessionId]
+  return isRecordObject(entry) ? entry : undefined
+}
+
+async function persistReadingPosition(cwd, sessionId, storeEntry) {
+  const current = storedReadingEntry(await readStore(cwd), sessionId)
+  // The reader reports the same spot repeatedly while only the window slides;
+  // skipping the unchanged case keeps the store backup rotation quiet.
+  if (current && sameReaderPosition(current, storeEntry)) return
+  await mutateStore(cwd, (store) => {
+    if (!isRecordObject(store.reading)) store.reading = {}
+    store.reading[sessionId] = storeEntry
+    return store
+  })
+}
+
+async function contextRoute(ctx, req, res) {
+  try {
+    if (req.method !== 'POST') {
+      send(res, 405, { error: 'method not allowed' })
+      return
+    }
+    const body = await readBody(req)
+    if (!isRecordObject(body) || typeof body.sessionId !== 'string' || !body.sessionId.trim()) {
+      throw httpError(400, 'sessionId required')
+    }
+    const sessionId = body.sessionId.trim().slice(0, MAX_SESSION_ID_CHARS)
+    const cwd = await workspaceFor(ctx, sessionId)
+    const report = buildReadingReport({ sessionId, position: body.position, window: body.window })
+    if (!report) throw httpError(400, 'sessionId required')
+    // context.json carries the window that reader_read projects; store.reading
+    // carries the book position only, so older consumers see a small record.
+    await writeReadingSession(cwd, sessionId, report.entry)
+    await persistReadingPosition(cwd, sessionId, report.storeEntry)
+    send(res, 200, { ok: true })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+}
+
+function readerToolScope(ctx, toolName, exec) {
+  const agent = exec && exec.agent
+  if (!agent) throw new Error(`${toolName} 需要在一个会话中调用：当前工具调用没有关联会话。`)
+  try {
+    return { agent, cwd: ctx.workingDirectory.get(agent.session) }
+  } catch (error) {
+    throw new Error(`无法确定阅读位置所在工作区：${String(error?.message || error)}`)
+  }
+}
+
+function readerFailurePayload(error) {
+  return `读取阅读位置失败：${String(error?.message || error)}`
+}
+
+/**
+ * Reader tools are authored once in the `defineTool` dialect and prefer the
+ * runtime-provided `@deepseek-ai/dsh-tools` implementation. A bundle linked from
+ * outside the profile cannot resolve that shipped peer unless its package.json
+ * declares the peer (the profile runtime routes linked importers through their
+ * own peer declarations), so a plain registry definition compiled from the same
+ * author spec is used as a fallback instead of silently dropping the tools.
+ */
+function compileValueSchema(node) {
+  if (!isRecordObject(node)) return { type: 'json' }
+  if (node.type === 'object') {
+    const properties = {}
+    const required = []
+    for (const [key, child] of Object.entries(isRecordObject(node.properties) ? node.properties : {})) {
+      properties[key] = compileValueSchema(child)
+      if (isRecordObject(child) && child.required === true) required.push(key)
+    }
+    return {
+      type: 'object',
+      additionalProperties: node.additionalProperties === true,
+      properties,
+      ...(required.length ? { required } : {}),
+    }
+  }
+  if (node.type === 'array') {
+    return { type: 'array', ...(isRecordObject(node.items) ? { items: compileValueSchema(node.items) } : {}) }
+  }
+  const out = { type: node.type }
+  if (typeof node.description === 'string') out.description = node.description
+  if (Array.isArray(node.enum)) out.enum = [...node.enum]
+  return out
+}
+
+function compileParameterSchema(parameters) {
+  return compileValueSchema({ type: 'object', properties: parameters, additionalProperties: false })
+}
+
+function fallbackToolDefinition(spec) {
+  return {
+    name: spec.name,
+    description: spec.description,
+    parameters: compileParameterSchema(spec.parameters),
+    output: {
+      schema: compileValueSchema(spec.output.schema),
+      render: spec.output.render,
+      ...(typeof spec.output.presentationMeta === 'function' ? { presentationMeta: spec.output.presentationMeta } : {}),
+    },
+    execute: spec.execute,
+    ...(typeof spec.presentCall === 'function' ? { presentCall: spec.presentCall } : {}),
+    ...(typeof spec.presentResult === 'function' ? { presentResult: spec.presentResult } : {}),
+    ...(typeof spec.isConcurrencySafe === 'function' ? { isConcurrencySafe: spec.isConcurrencySafe } : {}),
+  }
+}
+
+function readerToolSpecs(ctx) {
+  return [
+    {
+      name: 'reader_context',
+      description:
+        '读取用户当前正在阅读的电子书、章节与阅读位置。当前会话的阅读位置由 dsh-reader 插件从阅读器客户端上报；用户说“这段”“上文”“接着往下”时先调用它。',
+      parameters: {},
+      presentCall: () => ({ card: 'generic', title: '读取阅读位置', kind: 'read' }),
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', required: true, description: '是否已收到当前会话的阅读位置。' },
+            summary: { type: 'string', required: true, description: '可直接展示给模型的阅读位置摘要。' },
+            book: { type: 'string', required: true },
+            path: { type: 'string', required: true, description: '相对工作区的书籍路径。' },
+            chapterTitle: { type: 'string', required: true },
+            page: { type: 'integer', required: true },
+            total: { type: 'integer', required: true },
+            percent: { type: 'integer', required: true },
+            hasWindow: { type: 'boolean', required: true, description: '是否已收到当前阅读窗口文本。' },
+            windowTitle: { type: 'string', required: true },
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: value.summary }],
+      },
+      async execute(_args, exec) {
+        const { agent, cwd } = readerToolScope(ctx, 'reader_context', exec)
+        try {
+          const context = await readReadingContext(cwd)
+          return buildReaderContextPayload(pickReaderTarget(context, agent.id))
+        } catch (error) {
+          return { ...buildReaderContextPayload(undefined), summary: readerFailurePayload(error) }
+        }
+      },
+    },
+    {
+      name: 'reader_read',
+      description:
+        '读取用户最近一次上报的阅读窗口正文。窗口由阅读器客户端上报：PDF 是当前页前后几页，文本类书是当前滚动位置附近的片段，单次最多返回 8000 字；宿主不解析 PDF/EPUB 源文件，无法跨章或检索全书。',
+      parameters: {
+        mode: {
+          type: 'string',
+          enum: ['around', 'chapter', 'toc', 'search'],
+          description: '读取方式：around=窗口正文（默认）；chapter=窗口正文并在前面标出当前章节标题；toc=只返回当前章节标题（不是全书目录）；search=只在窗口内查找关键词。窗口不包含用户要看的内容时，请让用户翻页或滚动后再读。',
+        },
+        query: { type: 'string', description: 'search 模式下在窗口内查找的关键词。' },
+        limit: { type: 'integer', description: '返回文本的最大字数，默认 8000，上限 8000。' },
+      },
+      presentCall: (args) => ({
+        card: 'generic',
+        title: `读取阅读窗口（${args?.mode || 'around'}）`,
+        kind: 'read',
+        ...(args?.query ? { rawInput: { query: args.query } } : {}),
+      }),
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            found: { type: 'boolean', required: true },
+            mode: { type: 'string', required: true },
+            title: { type: 'string', required: true, description: '书名或窗口标题。' },
+            text: { type: 'string', required: true },
+            truncated: { type: 'boolean', required: true },
+            chapters: { type: 'array', required: true, items: { type: 'string' } },
+            matches: { type: 'array', required: true, items: { type: 'string' } },
+          },
+        },
+        render: (_args, value) => [{ type: 'text', text: value.title ? `《${value.title}》\n\n${value.text}` : value.text }],
+      },
+      isConcurrencySafe: () => true,
+      async execute(args, exec) {
+        const { agent, cwd } = readerToolScope(ctx, 'reader_read', exec)
+        try {
+          const context = await readReadingContext(cwd)
+          return buildReaderReadPayload(pickReaderTarget(context, agent.id), args || {})
+        } catch (error) {
+          return { ...buildReaderReadPayload(undefined, args || {}), text: readerFailurePayload(error) }
+        }
+      },
+    },
+  ]
+}
+
+async function registerReaderTools(ctx, disposers, isReleased) {
+  let defineTool = null
+  try {
+    const tools = await import('@deepseek-ai/dsh-tools')
+    if (typeof tools.defineTool === 'function') defineTool = tools.defineTool
+  } catch {
+    // The linked-bundle fallback below registers the same tools without the peer.
+  }
+  const specs = readerToolSpecs(ctx)
+  const registerAll = (build) => {
+    const registered = []
+    try {
+      for (const spec of specs) {
+        const dispose = ctx.tools.register(build(spec))
+        if (isReleased()) dispose()
+        else registered.push(dispose)
+      }
+      return registered
+    } catch (error) {
+      for (const dispose of registered) {
+        try {
+          dispose()
+        } catch {
+          /* half-registered set is already gone */
+        }
+      }
+      throw error
+    }
+  }
+  try {
+    const registered = registerAll(defineTool ? (spec) => defineTool(spec) : fallbackToolDefinition)
+    for (const dispose of registered) disposers.push(dispose)
+    return
+  } catch (error) {
+    if (!defineTool) throw error
+    // A shipped implementation rejected the spec; keep the capability through
+    // the plain definitions instead of leaving the tools missing.
+  }
+  const registered = registerAll(fallbackToolDefinition)
+  for (const dispose of registered) disposers.push(dispose)
+}
+
 async function handleGet(ctx, request) {
   const url = new URL(request.url, 'http://local')
   const pathname = url.pathname
@@ -1293,6 +1546,7 @@ export function apply(ctx) {
   add({ kind: 'exact', path: `${ROOT}/api/translate`, handler: (req, res) => translateRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/backups`, handler: (req, res) => backupsRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/restore`, handler: (req, res) => restoreRoute(ctx, req, res) })
+  add({ kind: 'exact', path: `${ROOT}/api/context`, handler: (req, res) => contextRoute(ctx, req, res) })
   let released = false
   const release = () => {
     if (released) return
@@ -1304,6 +1558,16 @@ export function apply(ctx) {
         /* already released */
       }
     }
+  }
+  if (ctx.tools && typeof ctx.tools.register === 'function') {
+    // Importing the shipped tool package and registering are both best-effort:
+    // a failure must keep every reader route above alive, and the linked-bundle
+    // fallback inside registerReaderTools still registers both tools.
+    registerReaderTools(ctx, disposers, () => released).catch((error) => {
+      if (typeof ctx.logger?.warn === 'function') {
+        ctx.logger.warn(`dsh-reader: reader_context/reader_read 注册失败：${String(error?.message || error)}`)
+      }
+    })
   }
   // Own the registrations on this plugin's fiber as well as on unload.
   ctx.effect(() => release)

@@ -2,6 +2,8 @@
 
 在 DeepSeek Harness 的工作区里读 PDF、EPUB 和 Markdown。主要用在论文、技术文档、新领域入门和系统学习：阅读保持连续，遇到问题在原文处解决，解释和笔记沉淀成可以再次使用的概念卡。
 
+需要更长的对话时，选中原文点「问 AI」，引用直接进入 DSH 底部的原生输入框；回答实时流回阅读器右侧的「对话」页签，逐层追问不用离开书页。
+
 ![CI](https://github.com/2019wakeup/dsh-reader/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Status](https://img.shields.io/badge/status-1.0%20RC-orange)
@@ -44,9 +46,19 @@
 
 概念卡支持边读边问：读到哪、问到哪里，卡片就长到哪里。
 
+## 和原生对话连着读
+
+卡片内追问适合解决一个概念；需要工具、联网、会话记忆或多轮推演时，直接把原文交给原生对话。
+
+选中正文点「问 AI」，这段文字带着书名、章节和位置进入底部输入框，回车即由当前会话的智能体回答。回答逐字流进右侧「对话」页签：用户消息右对齐、标「你」，助手回答左对齐、标「助手」，引用的出处单独一行。同一轮里模型可能分多步调用工具，面板把它们合并成一条回答，只显示这一轮的正文和一行「过程 · N」，纯工具步骤不单独占行；展开先看到动作名，思考内容再点一级才展开，和原生对话页一致。
+
+追问沿用同一个会话：再选一段、在面板里选词再引用，或者直接打字都可以。面板可以拖宽（默认 420px），也可以一键「在对话页打开」回到完整对话页。智能体还能通过 `reader_context` / `reader_read` 读到当前阅读位置附近的原文，回答不必依赖用户复制长段。
+
+![对话面板](dsh-reader/eval/visual/baseline/16-chat-panel.png)
+
 ## 阅读的其他环节
 
-概念卡之外，阅读本身需要标注、导航和翻译。
+概念卡和对话之外，阅读本身还需要标注、导航和翻译。
 
 ### 标注与笔记
 
@@ -105,6 +117,7 @@
 | 划线 | 工具条浮在选区旁：解释、翻译、笔记、高亮、复制 |
 | 理解 | 快速概念卡；需要时深入解释或追问 |
 | 深挖 | 解释中的新词生成子卡片；卡片记录出处 |
+| 对话 | 选中正文「问 AI」，引用进原生输入框；回答流进「对话」页签，可跳完整对话页 |
 | 读整本 | 导读和导图提供章节骨架，可跳回原文 |
 | 外文 | 段落对照、仅译文或 PDF 译文抽屉，按可见区域渐进 |
 | 收尾 | 概念库、标注 Markdown、导图导出、JSON 备份 |
@@ -131,6 +144,7 @@
 ## 数据与隐私
 
 - 标注、概念、导读、译文保存在当前工作区 `.dsh-reader/store.json`，无遥测；
+- 对话消息不写进插件数据：面板只读当前会话的对话快照，消息由 DSH 会话日志保存；阅读位置与窗口文本存在 `.dsh-reader/context.json`，位置摘要写进 `store.json` 的 `reading` 字段；
 - 文档以内容指纹为主键，改名、移动后标注仍然有效；
 - 写入前自动备份最近 5 份，支持恢复；v1 数据自动迁移；
 - JSON 导入导出、标注 Markdown 导出；
@@ -142,17 +156,17 @@
 cd dsh-reader
 pnpm install
 pnpm build            # 生成 client.js
-pnpm test             # 263 条单元/DOM 测试
-pnpm eval             # 13 项产品级 eval
-pnpm eval:visual      # 141 项视觉检查（需要 DSH GUI + Chrome）
+pnpm test             # 353 条单元/DOM 测试
+pnpm eval             # 17 项产品级 eval
+pnpm eval:visual      # 157 项视觉检查（需要 DSH GUI + Chrome）
 pnpm release:check    # 11 项发布门禁
 ```
 
 | 门禁 | 数量 |
 | --- | --- |
-| 单元 / DOM 测试 | 263 |
-| 产品级 eval | 13 |
-| 视觉回归（无头 Chrome + 真实鼠标交互） | 141 |
+| 单元 / DOM 测试 | 353 |
+| 产品级 eval | 17 |
+| 视觉回归（无头 Chrome + 真实鼠标交互） | 157 |
 | 宿主布局探针 | 6 |
 | 发布检查（迁移、导出回环、资产、文档） | 11 |
 
@@ -178,6 +192,8 @@ dsh-reader/        插件本体
 - 快速导读按篇采样，每篇取头尾代表性文本，部分小节可能省略；
 - 「仅译文」模式用于译文阅读；需要划词时请切回段落对照；
 - 段落对照翻译保留代码块原文；PDF 译文按页文本块，图注也会被翻译；
+- 对话面板只展示文字问答；工具调用与推理默认折叠，审批、提问等需要操作的轮次仍需回到完整对话页；
+- `reader_read` 只读最近一次上报的窗口（PDF 当前页前后、文本类书当前滚动位置附近），跨章与全书检索暂不提供；
 - 移动端未适配，阅读区按 DSH 主区域布局。
 
 ## 文档
@@ -191,7 +207,7 @@ dsh-reader/        插件本体
 
 ## English
 
-DSH Reader is a reading workspace plugin for DeepSeek Harness, built for papers, technical documentation and learning a new field. It keeps reading continuous: select a term to get an in-place explanation, follow up without leaving the page, and keep the result as a reusable concept card anchored to the source text. PDF, EPUB and Markdown reading, structure-aware guides, mind maps and visible-first translation are built around that workflow. Reading data stays in the workspace `.dsh-reader/` store. Status: 1.0 release candidate (plugin 0.11.2).
+DSH Reader is a reading workspace plugin for DeepSeek Harness, built for papers, technical documentation and learning a new field. It keeps reading continuous: select a term to get an in-place explanation, follow up without leaving the page, and keep the result as a reusable concept card anchored to the source text. PDF, EPUB and Markdown reading, structure-aware guides, mind maps and visible-first translation are built around that workflow. Select a passage and Ask AI sends it into the native DSH composer; answers stream into a reading-side chat panel, so you can keep asking without leaving the page. Reading data stays in the workspace `.dsh-reader/` store. Status: 1.0 release candidate (plugin 0.13.0).
 
 ## License
 

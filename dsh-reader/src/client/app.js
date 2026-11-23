@@ -311,6 +311,7 @@ export function ReaderView(props) {
   const [fontSize, setFontSize] = React.useState(18)
   const [drawer, setDrawer] = React.useState(null)
   const [menu, setMenu] = React.useState(null)
+  const [menuError, setMenuError] = React.useState('')
   const [childMenu, setChildMenu] = React.useState(null)
   const [cards, setCards] = React.useState([])
   const [cardOffsets, setCardOffsets] = React.useState({})
@@ -388,6 +389,7 @@ export function ReaderView(props) {
   const importInputRef = React.useRef(null)
   const guideAbortRef = React.useRef(null)
   const historyRef = React.useRef(null)
+  const reporterRef = React.useRef(null)
 
   const docKey = doc ? doc.fingerprint || doc.path : null
   const concepts = React.useMemo(() => Object.values(store.concepts || {}), [store.concepts])
@@ -710,12 +712,18 @@ export function ReaderView(props) {
   }
   const placePanel = (rect, estimatedHeight) => positionCard(rect, estimatedHeight, rootBounds())
 
-  const drawerWidthKey = drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
-  const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : 320
+  const drawerWidthKey =
+    drawer === 'chat' ? 'chatWidth' : drawer === 'guide' && guideView === 'map' ? 'mapWidth' : 'drawerWidth'
+  const drawerWidthDefault = drawerWidthKey === 'mapWidth' ? 760 : drawerWidthKey === 'chatWidth' ? 420 : 320
+  const drawerWidthMin = drawerWidthKey === 'chatWidth' ? 320 : 240
   const drawerDraftWidth = drawerDraft && drawerDraft.key === drawerWidthKey ? drawerDraft.width : null
-  const drawerMaxWidth = () => Math.min(drawerWidthKey === 'mapWidth' ? 1200 : 1000, Math.max(320, rootBounds().width - 180))
+  const drawerMaxWidth = () =>
+    Math.min(
+      drawerWidthKey === 'mapWidth' ? 1200 : drawerWidthKey === 'chatWidth' ? 720 : 1000,
+      Math.max(320, rootBounds().width - 180),
+    )
   const drawerWidth = Math.min(drawerDraftWidth ?? (Number(prefs[drawerWidthKey]) || drawerWidthDefault), drawerMaxWidth())
-  const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(240, width))
+  const clampDrawerWidth = (width) => Math.min(drawerMaxWidth(), Math.max(drawerWidthMin, width))
   const commitDrawerWidth = (width) => {
     const next = Math.round(clampDrawerWidth(width))
     setDrawerDraft({ key: drawerWidthKey, width: next })
@@ -760,6 +768,39 @@ export function ReaderView(props) {
   const readingScroller = () => {
     const root = contentRef.current
     return root ? root.closest('.rd-main') || root.parentElement : null
+  }
+
+  // Title of the chapter/section currently on screen, used for quote locations.
+  const docChapterTitle = () => {
+    if (!doc) return ''
+    if (doc.ext === '.epub' && doc.epub && doc.epub.chapters[chapter]) {
+      return String(doc.epub.chapters[chapter].label || '')
+    }
+    if (doc.ext === '.pdf') return ''
+    const root = contentRef.current
+    const main = readingScroller()
+    if (!root || !main) return ''
+    const top = main.getBoundingClientRect().top + 24
+    let title = ''
+    for (const heading of root.querySelectorAll('h1,h2,h3')) {
+      if (heading.getBoundingClientRect().top <= top) title = String(heading.textContent || '').trim()
+      else break
+    }
+    return title
+  }
+
+  // Percentage through the whole document, measured from the live scroller.
+  const currentReadingPercent = () => {
+    if (!doc) return 0
+    const main = readingScroller()
+    if (!main) return Math.round((readingProgress || 0) * 100)
+    const local = scrollProgress({
+      scrollTop: main.scrollTop,
+      scrollHeight: main.scrollHeight,
+      clientHeight: main.clientHeight,
+    })
+    if (doc.ext === '.epub' && doc.epub) return Math.round(chapterProgress(chapter, local, doc.epub.chapters.length) * 100)
+    return Math.round(local * 100)
   }
 
   latestViewRef.current = {
@@ -1150,6 +1191,54 @@ export function ReaderView(props) {
     )
   }, [sessionId, entries, doc])
 
+  // Reading-position reporting (spec §6.1): one throttled POST per document /
+  // page / chapter change, with the context window the host caches for tools.
+  React.useEffect(() => {
+    if (!sessionId || !docKey) {
+      if (reporterRef.current) {
+        reporterRef.current.dispose()
+        reporterRef.current = null
+      }
+      return undefined
+    }
+    const reporter = createPositionReporter({ api, sessionId })
+    reporterRef.current = reporter
+    return () => {
+      if (reporterRef.current === reporter) reporterRef.current = null
+      reporter.dispose()
+    }
+  }, [sessionId, docKey])
+
+  const reportCurrentPosition = () => {
+    const reporter = reporterRef.current
+    if (!reporter || !doc) return undefined
+    const position = currentPosition(doc, {
+      chapter,
+      chapterTitle: docChapterTitle(),
+      page,
+      percent: currentReadingPercent(),
+    })
+    if (!position) return undefined
+    let cancelled = false
+    Promise.resolve()
+      .then(() => buildContextWindow(doc, position))
+      .then((contextWindow) => {
+        if (!cancelled) reporter.report(position, contextWindow || undefined)
+      })
+      .catch(() => {
+        if (!cancelled) reporter.report(position)
+      })
+    return () => {
+      cancelled = true
+    }
+  }
+
+  React.useEffect(() => {
+    const cancel = reportCurrentPosition()
+    return cancel
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, docKey, chapter, page])
+
   React.useEffect(() => {
     if (!doc || pendingScrollRef.current == null) return
     const target = pendingScrollRef.current
@@ -1187,12 +1276,18 @@ export function ReaderView(props) {
     const main = readingScroller()
     if (!root && !main) return
     let timer = null
+    let reportTimer = null
     const onScroll = (event) => {
       const target = event.target
       const inReader = target && target.closest && target.closest('.rd-main')
       if (!inReader && target !== main) return
       clearTimeout(timer)
       timer = setTimeout(persistCurrentView, 250)
+      // Text books have no page turns: scrolling is the only position change.
+      if (doc.ext !== '.pdf') {
+        clearTimeout(reportTimer)
+        reportTimer = setTimeout(() => reportCurrentPosition(), 600)
+      }
     }
     // Scroll does not bubble; capture it at the reader root so the position is
     // still recorded when the inner prose node was replaced by a re-render.
@@ -1200,6 +1295,7 @@ export function ReaderView(props) {
     main?.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       clearTimeout(timer)
+      clearTimeout(reportTimer)
       root?.removeEventListener('scroll', onScroll, true)
       main?.removeEventListener('scroll', onScroll)
       persistCurrentView()
@@ -1589,12 +1685,15 @@ export function ReaderView(props) {
       return
     }
     const root = contentRef.current
-    if (!root || !root.contains(range.commonAncestorContainer)) {
+    const chatRoot = rootRef.current ? rootRef.current.querySelector('.rd-chat') : null
+    const inChat = Boolean(chatRoot && chatRoot.contains(range.commonAncestorContainer))
+    if (!inChat && (!root || !root.contains(range.commonAncestorContainer))) {
       setMenu(null)
       return
     }
     const rect = range.getBoundingClientRect()
-    setMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top })
+    setMenuError('')
+    setMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top, inChat })
   }
 
   const closeCardsSoon = (delay = 600) => {
@@ -2772,6 +2871,13 @@ export function ReaderView(props) {
           },
           t('tab.concepts'),
         ),
+        h(ChatToolbarButton, {
+          key: 'chat',
+          t,
+          open: drawer === 'chat',
+          onToggle: () => setDrawer(drawer === 'chat' ? null : 'chat'),
+          useChat: props.useChat,
+        }),
         h(
           'button',
           {
@@ -2922,6 +3028,56 @@ export function ReaderView(props) {
     )
   }
 
+  // One shell for every drawer tab: resizer + title bar + scrolling body.
+  // Mirrors the original per-branch markup so existing tabs keep their output.
+  const renderDrawerShell = (title, body, options = {}) =>
+    h(
+      'div',
+      {
+        className: `rd-drawer${options.wide ? ' rd-drawer-wide' : ''}`,
+        style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
+      },
+      h('div', {
+        className: 'rd-drawer-resizer',
+        role: 'separator',
+        tabIndex: 0,
+        'aria-orientation': 'vertical',
+        'aria-label': t('label.resizeSidebar'),
+        'aria-valuemin': drawerWidthMin,
+        'aria-valuemax': drawerMaxWidth(),
+        'aria-valuenow': Math.round(drawerWidth),
+        title: t('label.resizeSidebar'),
+        onPointerDown: startDrawerResize,
+        onPointerMove: moveDrawerResize,
+        onPointerUp: endDrawerResize,
+        onPointerCancel: endDrawerResize,
+        onDoubleClick: resetDrawerWidth,
+        onKeyDown: (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
+        },
+      }),
+      h(
+        'div',
+        { className: 'rd-drawer-head' },
+        h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, title),
+        h('span', { className: 'rd-spacer' }),
+        h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
+      ),
+      h(
+        'div',
+        {
+          className: `rd-drawer-body${options.bodyClassName ? ` ${options.bodyClassName}` : ''}`,
+          ref: drawerBodyRef,
+          onScroll: (event) => {
+            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
+          },
+        },
+        body,
+      ),
+    )
+
   const renderDrawer = () => {
     if (!drawer || !doc) return null
     let body = null
@@ -2944,29 +3100,7 @@ export function ReaderView(props) {
         )
       } else if (doc.ext === '.pdf') {
         if (doc.pdf.structureReady === false) {
-          body = h('div', { className: 'rd-empty' }, t('label.analyzingOutline'))
-          return h(
-            'div',
-            { className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}` },
-            h(
-              'div',
-              { className: 'rd-drawer-head' },
-              h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, t('tab.toc')),
-              h('span', { className: 'rd-spacer' }),
-              h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
-            ),
-            h(
-        'div',
-        {
-          className: 'rd-drawer-body',
-          ref: drawerBodyRef,
-          onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
-          },
-        },
-        body,
-      ),
-          )
+          return renderDrawerShell(t('tab.toc'), h('div', { className: 'rd-empty' }, t('label.analyzingOutline')))
         }
         const outline = doc.pdf.tocReliable ? doc.pdf.toc || [] : []
         const fallbackChapters = !doc.pdf.tocReliable && doc.pdf.structure ? doc.pdf.structure.chapters || [] : []
@@ -3647,60 +3781,29 @@ export function ReaderView(props) {
         ),
       )
     }
+    if (drawer === 'chat') {
+      body = h(ReaderChatPanel, {
+        t,
+        doc,
+        useChat: props.useChat,
+        useInput: props.useInput,
+        useSession: props.useSession,
+        openView: props.openView,
+      })
+    }
     const titles = {
       toc: t('tab.toc'),
       anno: t('tab.anno'),
       concepts: `${t('tab.concepts')} · ${concepts.length}`,
       guide: t('tab.guide'),
       translate: t('tab.translate'),
+      chat: t('tab.chat'),
       settings: t('label.settings'),
     }
-    return h(
-      'div',
-      {
-        className: `rd-drawer${drawer === 'guide' && guideView === 'map' ? ' rd-drawer-wide' : ''}`,
-        style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
-      },
-      h('div', {
-        className: 'rd-drawer-resizer',
-        role: 'separator',
-        tabIndex: 0,
-        'aria-orientation': 'vertical',
-        'aria-label': t('label.resizeSidebar'),
-        'aria-valuemin': 240,
-        'aria-valuemax': drawerMaxWidth(),
-        'aria-valuenow': Math.round(drawerWidth),
-        title: t('label.resizeSidebar'),
-        onPointerDown: startDrawerResize,
-        onPointerMove: moveDrawerResize,
-        onPointerUp: endDrawerResize,
-        onPointerCancel: endDrawerResize,
-        onDoubleClick: resetDrawerWidth,
-        onKeyDown: (event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
-          commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
-        },
-      }),
-      h(
-        'div',
-        { className: 'rd-drawer-head' },
-        h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, titles[drawer]),
-        h('span', { className: 'rd-spacer' }),
-        h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
-      ),
-      h(
-        'div',
-        {
-          className: 'rd-drawer-body',
-          ref: drawerBodyRef,
-          onScroll: (event) => {
-            if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
-          },
-        },
-        body,
-      ),
-    )
+    return renderDrawerShell(titles[drawer], body, {
+      wide: drawer === 'guide' && guideView === 'map',
+      bodyClassName: drawer === 'chat' ? 'rd-drawer-chat' : '',
+    })
   }
 
   const renderEditor = () => {
@@ -4155,39 +4258,132 @@ export function ReaderView(props) {
     )
   }
 
+  // Hand the selected passage to the native composer as an atomic quote block;
+  // the optional question is inserted after it (spec §4.3: the span must be
+  // captured again after the quote, because insertText is revision-guarded).
+  const askChatSelection = (question) => {
+    const actions = props.inputActions
+    if (!actions || typeof actions.insertQuote !== 'function') {
+      setMenuError(t('label.chatUnavailable'))
+      return false
+    }
+    const text = menu && menu.text ? String(menu.text).trim() : ''
+    if (!text) return false
+    const position = currentPosition(doc, {
+      chapter,
+      chapterTitle: docChapterTitle(),
+      page,
+      percent: currentReadingPercent(),
+    })
+    const quote = buildQuoteText(formatLocation(doc, position), text)
+    let span = null
+    if (question && typeof actions.captureInsertion === 'function') {
+      try {
+        span = actions.captureInsertion()
+      } catch {
+        span = null
+      }
+    }
+    let inserted = false
+    try {
+      inserted = actions.insertQuote(quote) !== false
+    } catch {
+      inserted = false
+    }
+    if (!inserted) {
+      setMenuError(t('label.composerBusy'))
+      return false
+    }
+    if (question && typeof actions.insertText === 'function' && typeof actions.captureInsertion === 'function') {
+      let after = null
+      try {
+        after = actions.captureInsertion()
+      } catch {
+        after = null
+      }
+      if (after || span) {
+        try {
+          actions.insertText(question, after || span)
+        } catch {
+          /* the quote already landed; a failed question is not fatal */
+        }
+      }
+    }
+    setMenuError('')
+    setMenu(null)
+    dismissSelection(window)
+    setDrawer('chat')
+    return true
+  }
+
   const renderMenu = () => {
     if (!menu) return null
     const bounds = rootBounds()
     const left = Math.max(bounds.left + 8, Math.min(bounds.right - 320, menu.x - 150))
     const rawTop = menu.y > bounds.top + 70 ? menu.y - 46 : menu.y + 26
     const top = Math.max(bounds.top + 52, Math.min(bounds.bottom - 52, rawTop))
+    const composerReady = Boolean(props.inputActions && typeof props.inputActions.insertQuote === 'function')
+    const selectedText = menu.text ? String(menu.text).trim() : ''
+    // Chat text is a conversation, not the book: highlight and note annotate
+    // book positions and would write annotations the book never renders.
+    const inChat = menu.inChat === true
     return h(
       'div',
       { className: 'rd-mini', style: { left, top } },
-      h('button', { className: 'rd-btn', onClick: () => createConcept(menu.text, menu.range, null) }, t('action.explain')),
-      h(
-        'button',
-        {
-          className: 'rd-btn',
-          onClick: (event) => {
-            event.stopPropagation()
-            void translateSelection()
-          },
-        },
-        t('action.translateSelection'),
-      ),
-      h('button', { className: 'rd-btn', onClick: startNote }, t('action.note')),
-      COLORS.map((color) =>
-        h('button', {
-          key: color,
-          type: 'button',
-          className: 'rd-swatch',
-          'aria-label': t('action.highlight'),
-          title: t('action.highlight'),
-          style: { background: color },
-          onClick: () => addHighlight(color),
-        }),
-      ),
+      menuError ? h('div', { key: 'chat-error', className: 'rd-mini-error' }, menuError) : null,
+      composerReady && selectedText
+        ? h('button', { key: 'ask-chat', className: 'rd-btn', onClick: () => askChatSelection() }, t('action.askChat'))
+        : null,
+      composerReady && selectedText
+        ? h(
+            'select',
+            {
+              key: 'quick-ask',
+              className: 'rd-select rd-quick-ask',
+              'data-action': 'quick-ask',
+              'aria-label': t('action.quickAsk'),
+              title: t('action.quickAsk'),
+              defaultValue: '',
+              onChange: (event) => {
+                const id = event.target.value
+                event.target.value = ''
+                if (id) askChatSelection(t(`quick.${id}`))
+              },
+            },
+            h('option', { value: '' }, t('action.quickAsk')),
+            QUICK_ASKS.map((item) => h('option', { key: item.id, value: item.id }, t(`quick.${item.id}`))),
+          )
+        : null,
+      inChat
+        ? null
+        : h('button', { className: 'rd-btn', onClick: () => createConcept(menu.text, menu.range, null) }, t('action.explain')),
+      inChat
+        ? null
+        : h(
+            'button',
+            {
+              className: 'rd-btn',
+              onClick: (event) => {
+                event.stopPropagation()
+                void translateSelection()
+              },
+            },
+            t('action.translateSelection'),
+          ),
+      inChat ? null : h('button', { className: 'rd-btn', onClick: startNote }, t('action.note')),
+      inChat
+        ? null
+        : COLORS.map((color) =>
+            h('button', {
+              key: color,
+              type: 'button',
+              className: 'rd-swatch',
+              'aria-label': t('action.highlight'),
+              title: t('action.highlight'),
+              style: { background: color },
+              onClick: () => addHighlight(color),
+            }),
+          ),
       h(
         'button',
         {
@@ -4277,6 +4473,7 @@ export function ReaderView(props) {
       onMouseOver: onTermOver,
       onMouseOut: onTermOut,
     },
+    h(ChatSubmitWatcher, { key: 'chat-submit-watcher', useInput: props.useInput, onSend: () => setDrawer('chat') }),
     renderToolbar(),
     doc
       ? h(

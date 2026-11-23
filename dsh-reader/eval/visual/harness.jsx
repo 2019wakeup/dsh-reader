@@ -23,6 +23,14 @@ async function main() {
     if (path.startsWith('/dsh-reader-live/assets/')) return realFetch(input, init)
     if (path.startsWith('/fixtures.json')) return realFetch(input, init)
     if (path.startsWith('/dsh-reader-live/api/store')) return json({ store: currentStore })
+    if (path.startsWith('/dsh-reader-live/api/context')) {
+      try {
+        ;(window.__contextPosts ||= []).push(JSON.parse(init?.body || '{}'))
+      } catch {
+        /* keep the visual run alive even if a body is malformed */
+      }
+      return json({ ok: true })
+    }
     if (path.startsWith('/dsh-reader-live/api/list')) return json({ entries: fixtures.entries })
     if (path.startsWith('/dsh-reader-live/api/file')) {
       const response = await realFetch('/real' + path, { headers: init?.headers })
@@ -85,6 +93,126 @@ async function main() {
     return json({ error: 'not mocked: ' + path }, 400)
   }
 
+  // The reader view is a `conversation.view` entry: the real platform injects
+  // these standard props. The harness fakes them so the chat panel can be
+  // exercised without a live model.
+  const chat = { messages: [], listeners: new Set(), turn: 0, snapshot: null }
+  function makeSnapshot(messages) {
+    const nodes = messages.map((message) => ({
+      key: message.key,
+      kind: message.kind,
+      id: message.key,
+      data: message.data,
+      anchorSeq: 0,
+      location: { kind: 'turn', turn: { turn: message.data.turn ?? 1 } },
+      visibility: 'visible',
+    }))
+    const map = new Map(nodes.map((node) => [node.key, node]))
+    return {
+      order: nodes.map((node) => node.key),
+      nodes: { get: (key) => map.get(key) },
+      legacy: { nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [] },
+    }
+  }
+  function emitChat() {
+    chat.snapshot = makeSnapshot(chat.messages)
+    for (const listener of [...chat.listeners]) listener()
+  }
+  function pushChat(count = 1) {
+    for (let index = 0; index < count; index += 1) {
+      chat.turn += 1
+      // One turn, two steps: a tool-only step then the answer. The reading panel
+      // must merge them into one answer row (see chat-transcript mergeTurnSteps).
+      chat.messages.push({
+        key: `t${chat.turn}-s1`,
+        kind: 'assistant-step',
+        data: {
+          turn: chat.turn,
+          step: 1,
+          status: 'settled',
+          blocks: [
+            { kind: 'reasoning', text: '先判断这属于哪一类问题。' },
+            { kind: 'tool-call', name: 'bash', callId: `c${chat.turn}` },
+          ],
+        },
+      })
+      chat.messages.push({
+        key: `t${chat.turn}-s2`,
+        kind: 'assistant-step',
+        data: {
+          turn: chat.turn,
+          step: 2,
+          status: 'settled',
+          blocks: [{ kind: 'text', text: `第 ${chat.turn} 条流式回答：分布式系统把一致性拆成多个层级。` }],
+        },
+      })
+    }
+    emitChat()
+  }
+  function useChatSelector(selector) {
+    return React.useSyncExternalStore(
+      (listener) => {
+        chat.listeners.add(listener)
+        return () => chat.listeners.delete(listener)
+      },
+      () => selector(chat.snapshot),
+    )
+  }
+  const inputState = { phase: 'plain' }
+  const inputListeners = new Set()
+  function setPhase(phase) {
+    inputState.phase = phase
+    for (const listener of [...inputListeners]) listener()
+  }
+  function useInputSelector(selector) {
+    return React.useSyncExternalStore(
+      (listener) => {
+        inputListeners.add(listener)
+        return () => inputListeners.delete(listener)
+      },
+      () => selector(inputState),
+    )
+  }
+  const useSessionSelector = (selector) => selector({ running: false, removed: false, subagent: null })
+  window.__quotes = []
+  window.__inserted = []
+  window.__openedView = null
+  window.__contextPosts = []
+  window.__chatPush = pushChat
+  window.__chatClear = () => {
+    chat.messages = []
+    chat.turn = 0
+    emitChat()
+  }
+  window.__setPhase = setPhase
+  const inputActions = {
+    insertQuote(text) {
+      window.__quotes.push(String(text || ''))
+      return true
+    },
+    captureInsertion() {
+      window.__captureCount = (window.__captureCount || 0) + 1
+      return { revision: window.__captureCount }
+    },
+    insertText(text, span) {
+      window.__inserted.push({ text: String(text || ''), span })
+      return true
+    },
+    setDraft() {},
+    submit() {},
+    addAttachments() {},
+    removeAttachment() {},
+    persistDraft() {},
+  }
+  chat.turn = 1
+  chat.messages.push({
+    key: 'u1',
+    kind: 'user',
+    data: { turn: 1, content: [{ type: 'text', text: '这本书的核心观点是什么？' }] },
+  })
+  emitChat()
+  window.__chatPush(1)
+
   window.__ModuleLoader__ = {
     load({ factory }) {
       window.__bundle = factory((name) => {
@@ -107,7 +235,18 @@ async function main() {
   }
   window.__bundle.apply(ctx)
   createRoot(document.getElementById('root')).render(
-    React.createElement(window.__view, { sessionId }),
+    React.createElement(window.__view, {
+      sessionId,
+      useChat: useChatSelector,
+      useInput: useInputSelector,
+      useSession: useSessionSelector,
+      inputActions,
+      openView: (view, focus) => {
+        window.__openedView = { view, focus }
+      },
+      viewRequest: null,
+      completeViewRequest: () => {},
+    }),
   )
   window.__visualReady = true
 }

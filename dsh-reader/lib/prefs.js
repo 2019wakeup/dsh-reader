@@ -10,6 +10,7 @@ export function defaultPrefs() {
     model: null,
     drawerWidth: 320,
     mapWidth: 760,
+    chatWidth: 420,
     translateFrom: 'en',
     translateTo: 'zh',
     guideDepth: 'standard',

@@ -1,6 +1,6 @@
 {
   "name": "dsh-reader",
-  "version": "0.12.5",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "description": "Reading workspace with concept cards for DeepSeek Harness",
@@ -50,5 +50,8 @@
     "make:demo": "node scripts/make-demo-epub.mjs",
     "eval:visual": "node eval/visual.mjs",
     "eval:layout": "node eval/layout-host.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.1 <0.3.0-0"
   }
 }

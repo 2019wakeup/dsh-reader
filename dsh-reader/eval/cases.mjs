@@ -35,6 +35,8 @@ const { parseSectionReply, parseOverviewReply } = await import(path.join(root, '
 const { buildTree, layoutTree, chunkNodeTitle } = await import(path.join(root, 'src/client/mindmap.js'))
 const { clampCardPosition } = await import(path.join(root, 'src/client/card-drag.js'))
 const { takeTranslationBatch, isNearViewport } = await import(path.join(root, 'src/client/translation-schedule.js'))
+const { buildTranscript, formatLocation, buildQuoteText } = await import(path.join(root, 'src/client/chat-transcript.js'))
+const { buildReadingReport, buildReaderContextPayload, buildReaderReadPayload } = await import(path.join(root, 'lib/reader-context.js'))
 
 function mount(html) {
   const host = document.createElement('div')
@@ -190,6 +192,67 @@ export const cases = [
       const label = chunkNodeTitle({ chunkIndex: 2, page: 11, title: '一致性模型（2）' })
       if (label !== '一致性模型') throw new Error('chunk title still shows the ordinal badge')
       return { label }
+    },
+  },
+  {
+    name: 'chat.transcript',
+    async run() {
+      const nodes = [
+        { key: 'u1', kind: 'user', data: { turn: 1, content: [{ type: 'text', text: '问一' }] }, location: { kind: 'turn', turn: { turn: 1 } }, visibility: 'visible' },
+        { key: 'a1', kind: 'assistant-step', data: { turn: 1, step: 1, status: 'settled', blocks: [{ kind: 'text', text: '答一' }] }, location: { kind: 'turn', turn: { turn: 1 } }, visibility: 'visible' },
+      ]
+      const map = new Map(nodes.map((node) => [node.key, node]))
+      const rows = buildTranscript({
+        order: nodes.map((node) => node.key),
+        nodes: { get: (key) => map.get(key) },
+        legacy: { nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [] },
+      })
+      if (rows.length !== 2) throw new Error('transcript row count wrong')
+      if (rows[0].kind !== 'user' || rows[1].kind !== 'assistant') throw new Error('transcript kinds wrong')
+      return { rows: rows.length }
+    },
+  },
+  {
+    name: 'chat.quote',
+    async run() {
+      const location = formatLocation({ name: '书.md', ext: '.md' }, { chapter: 2, chapterTitle: '一致性模型', percent: 42 })
+      if (location !== '《书.md》 第 3 章 · 一致性模型 · 42%') throw new Error('location format wrong')
+      const quote = buildQuoteText(location, '  很多\n\n空白  ', 2000)
+      if (!quote.startsWith('《书.md》 第 3 章')) throw new Error('quote lost its location line')
+      if (!quote.endsWith('很多 空白')) throw new Error('quote did not normalize whitespace')
+      return { location }
+    },
+  },
+  {
+    name: 'reader.context',
+    async run() {
+      const report = buildReadingReport({
+        sessionId: 'session-eval',
+        position: { path: '示例-分布式系统阅读.md', name: '示例-分布式系统阅读.md', ext: '.md', chapter: 1, chapterTitle: 'CAP 定理', page: 0, total: 0, percent: 35 },
+        window: { title: 'CAP 定理', text: '一致性、可用性、分区容忍三者不可兼得。' },
+      })
+      const payload = buildReaderContextPayload(report.entry)
+      if (!payload.found) throw new Error('reading context was not found')
+      if (!payload.summary.includes('示例-分布式系统阅读.md')) throw new Error('context summary lost the book')
+      if (!payload.hasWindow) throw new Error('context lost the pushed window')
+      return { book: payload.book, hasWindow: payload.hasWindow }
+    },
+  },
+  {
+    name: 'reader.read',
+    async run() {
+      const report = buildReadingReport({
+        sessionId: 'session-eval',
+        position: { path: '书.md', name: '书.md', ext: '.md', chapter: 0, chapterTitle: '第一章', page: 0, total: 0, percent: 10 },
+        window: { title: '第一章', text: '一致性模型要求系统像单副本一样按实时顺序生效。' },
+      })
+      const around = buildReaderReadPayload(report.entry, { mode: 'around', limit: 10 })
+      if (!around.found || around.text.length > 10) throw new Error('around did not honor the limit')
+      const search = buildReaderReadPayload(report.entry, { mode: 'search', query: '单副本' })
+      if (search.matches.length !== 1) throw new Error('search did not find the passage')
+      const toc = buildReaderReadPayload(report.entry, { mode: 'toc' })
+      if (!toc.chapters.join('').includes('第一章')) throw new Error('toc lost the chapter title')
+      return { around: around.text.length, matches: search.matches.length }
     },
   },
   {

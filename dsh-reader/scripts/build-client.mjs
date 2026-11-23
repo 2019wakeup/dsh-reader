@@ -32,6 +32,9 @@ const files = [
   'src/client/relink.js',
   'src/client/search.js',
   'src/client/host-layout.js',
+  'src/client/chat-transcript.js',
+  'src/client/chat-panel.js',
+  'src/client/chat-context.js',
   'src/client/app.js',
   'src/client/entry.js',
 ]
@@ -39,7 +42,11 @@ const files = [
 const body = files
   .map((file) => {
     const source = fs.readFileSync(path.join(root, file), 'utf8')
+    // The bundle is one concatenated factory scope, so module syntax cannot
+    // survive. New client modules are written as normal ES modules (they are
+    // imported directly by node --test); drop their imports and exports here.
     return source
+      .replace(/^import\s+[^\n]*?from\s+['"][^'"]+['"]\s*;?\s*$/gm, '')
       .replace(/^export\s+(async\s+function|function|const|let|class)\s/gm, '$1 ')
       .replace(/^export\s*\{[\s\S]*?\}\s*;?\s*$/gm, '')
   })

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { migrateV1 } from './migrate.js'
 import { defaultPrefs } from './prefs.js'
+import { MAX_READING_SESSIONS, MAX_SESSION_ID_CHARS, normalizeReaderPosition } from './reader-context.js'
 
 const DATA_DIR = '.dsh-reader'
 const STORE_FILE = 'store.json'
@@ -11,7 +12,7 @@ const BACKUP_KEEP = 5
 let backupSequence = 0
 
 export function emptyStore() {
-  return { version: 2, revision: 0, prefs: defaultPrefs(), concepts: {}, docs: {}, debug: { lastSent: [], lastError: null, errors: [] } }
+  return { version: 2, revision: 0, prefs: defaultPrefs(), concepts: {}, docs: {}, reading: {}, debug: { lastSent: [], lastError: null, errors: [] } }
 }
 
 function isRecord(value) {
@@ -39,6 +40,7 @@ function normalizePrefs(raw) {
         : null,
     drawerWidth: number(raw.drawerWidth, base.drawerWidth, 240, 1100),
     mapWidth: number(raw.mapWidth, base.mapWidth, 320, 1200),
+    chatWidth: number(raw.chatWidth, base.chatWidth, 320, 720),
     translateFrom: ['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt'].includes(raw.translateFrom)
       ? raw.translateFrom
       : base.translateFrom,
@@ -121,6 +123,25 @@ function normalizeDebug(raw) {
   return { lastSent, lastError, errors }
 }
 
+function normalizeReading(raw) {
+  if (!isRecord(raw)) return {}
+  const entries = []
+  for (const [sessionId, entry] of Object.entries(raw)) {
+    if (typeof sessionId !== 'string' || !sessionId || sessionId.length > MAX_SESSION_ID_CHARS) continue
+    if (!isRecord(entry)) continue
+    entries.push([
+      sessionId,
+      {
+        ...normalizeReaderPosition(entry),
+        updatedAt:
+          typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt) && entry.updatedAt >= 0 ? entry.updatedAt : 0,
+      },
+    ])
+  }
+  entries.sort((left, right) => right[1].updatedAt - left[1].updatedAt)
+  return Object.fromEntries(entries.slice(0, MAX_READING_SESSIONS))
+}
+
 function normalizeV2(raw) {
   const base = emptyStore()
   return {
@@ -129,6 +150,7 @@ function normalizeV2(raw) {
     prefs: normalizePrefs(raw.prefs),
     concepts: isRecord(raw.concepts) ? raw.concepts : base.concepts,
     docs: normalizeDocs(raw.docs),
+    reading: normalizeReading(raw.reading),
     debug: normalizeDebug(raw.debug),
   }
 }

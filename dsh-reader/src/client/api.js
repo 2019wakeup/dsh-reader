@@ -134,6 +134,13 @@ export const api = {
       body: JSON.stringify(payload),
     })
   },
+  context(sessionId, payload) {
+    return request(`/api/context?sessionId=${encodeURIComponent(sessionId || '')}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: sessionId || '', ...(payload || {}) }),
+    })
+  },
   models(sessionId) {
     return request(`/api/models?sessionId=${encodeURIComponent(sessionId || '')}`)
   },

@@ -1671,6 +1671,189 @@ async function main() {
       afterReload.scroll > 100 && Math.abs(afterReload.scroll - beforeReload.scroll) < 80,
       `${beforeReload.scroll} -> ${afterReload.scroll} saved=${beforeReload.savedScroll} mains=${JSON.stringify(beforeReload.mains)}`,
     )
+
+    // Reading-position reporting (spec §6.1): the client posts the position and
+    // a context window on open/chapter/page changes, throttled to 1.5s.
+    await new Promise((resolve) => setTimeout(resolve, 1800))
+    const contextPosts = await page.evaluate(() => (window.__contextPosts || []).slice())
+    record(
+      'reading position is reported to the host',
+      contextPosts.length > 0 &&
+        Boolean(contextPosts[0].position) &&
+        contextPosts[0].sessionId === SESSION,
+      JSON.stringify(contextPosts[0] || null).slice(0, 140),
+    )
+
+    // In-reader conversation panel (spec 2026-11-23 §5). The harness fakes the
+    // standard conversation.view props: useChat / useInput / useSession /
+    // inputActions / openView, plus window.__chatPush for live messages.
+    const chatOpened = await clickAny('.rd-toolbar button', ['对话', 'Chat'])
+    const chatPanelReady = await page
+      .waitForSelector('.rd-chat', { timeout: 8000 })
+      .then(() => true)
+      .catch(() => false)
+    record('chat panel opens from toolbar', Boolean(chatOpened && chatPanelReady), '')
+    const chatRows = await page.$$('[data-chat-row]')
+    record('chat panel renders transcript rows', chatRows.length >= 2, `${chatRows.length} rows`)
+    const chatShape = await page.evaluate(() => ({
+      roles: Array.from(document.querySelectorAll('.rd-chat-role')).map((node) => node.textContent),
+      process: Boolean(document.querySelector('.rd-chat-process')),
+      toolRows: document.querySelectorAll('.rd-chat-tool').length,
+    }))
+    record(
+      'chat rows name the asking and answering sides',
+      chatShape.roles.includes('你') && chatShape.roles.includes('助手'),
+      chatShape.roles.slice(0, 4).join('/'),
+    )
+    record(
+      'chat folds reasoning and tool calls by default',
+      chatShape.process && chatShape.toolRows === 0,
+      `process=${chatShape.process} tools=${chatShape.toolRows}`,
+    )
+    const aggregated = await page.evaluate(() => ({
+      assistantRows: document.querySelectorAll('[data-role="assistant"]').length,
+      userRows: document.querySelectorAll('[data-role="user"]').length,
+      roles: Array.from(document.querySelectorAll('[data-role="assistant"] .rd-chat-role')).length,
+    }))
+    record(
+      'one assistant row per turn despite multi-step tool loops',
+      aggregated.assistantRows === 1 && aggregated.roles === 1 && aggregated.userRows === 1,
+      JSON.stringify(aggregated),
+    )
+    const processFold = await page.evaluate(() => {
+      const process = document.querySelector('.rd-chat-process')
+      if (!process) return null
+      process.querySelector('summary').click()
+      const reasoning = process.querySelector('details[data-chat-reasoning]')
+      return {
+        open: process.hasAttribute('open'),
+        reasoningOpen: reasoning ? reasoning.hasAttribute('open') : null,
+        chips: Array.from(process.querySelectorAll('.rd-chat-chip')).map((node) => node.textContent),
+      }
+    })
+    record(
+      'process expands without dumping the reasoning chain',
+      Boolean(processFold) && processFold.open && processFold.reasoningOpen === false,
+      JSON.stringify(processFold),
+    )
+    await shot('16-chat-panel')
+
+    const jumpClicked = await page.evaluate(() => {
+      const button = document.querySelector('[data-chat-action="open-view"]')
+      if (!button) return false
+      button.click()
+      return true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const openedView = await page.evaluate(() => window.__openedView)
+    record(
+      'open chat page delegates to openView',
+      jumpClicked && Boolean(openedView) && openedView.view === 'chat' && openedView.focus === '',
+      JSON.stringify(openedView),
+    )
+
+    const chatWidthBefore = await page.$eval('.rd-drawer', (node) => Math.round(node.getBoundingClientRect().width))
+    const chatResizer = await page.$eval('.rd-drawer-resizer', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    await page.mouse.move(chatResizer.x, chatResizer.y)
+    await page.mouse.down()
+    await page.mouse.move(chatResizer.x - 70, chatResizer.y, { steps: 8 })
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const chatWidthResized = await page.$eval('.rd-drawer', (node) => Math.round(node.getBoundingClientRect().width))
+    record(
+      'chat sidebar has its own resizable width',
+      chatWidthResized > chatWidthBefore + 30,
+      `${chatWidthBefore} -> ${chatWidthResized}`,
+    )
+    await page.$eval('.rd-drawer-resizer', (node) => node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const chatWidthReset = await page.$eval('.rd-drawer', (node) => Math.round(node.getBoundingClientRect().width))
+    record('double-click resets the chat sidebar width', Math.abs(chatWidthReset - 420) <= 2, `${chatWidthReset}px`)
+
+    await clickAny('.rd-toolbar button', ['对话', 'Chat'])
+    await page.waitForFunction(() => !document.querySelector('.rd-chat'), { timeout: 8000 })
+    await page.evaluate(() => window.__chatPush(1))
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const unreadDot = await page.evaluate(() => Boolean(document.querySelector('.rd-chat-unread')))
+    record('chat unread dot appears when closed', unreadDot, unreadDot ? '' : 'no dot')
+
+    await page.evaluate(() => window.__chatClear())
+    await clickAny('.rd-toolbar button', ['对话', 'Chat'])
+    await page.waitForSelector('.rd-chat', { timeout: 8000 })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const chatEmpty = await page.evaluate(() => Boolean(document.querySelector('.rd-chat-empty')))
+    record('chat empty state guides the reader', chatEmpty, '')
+    await shot('17-chat-empty')
+    await page.evaluate(() => window.__chatPush(2))
+
+    // Quote a book passage into the native composer (spec §4). The harness
+    // records insertQuote / insertText calls instead of a real composer.
+    const selectPassage = () =>
+      page.evaluate(() => {
+        const root = document.querySelector('.rd-prose')
+        if (!root) return ''
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+        let node
+        while ((node = walker.nextNode())) {
+          const text = (node.nodeValue || '').trim()
+          if (text.length < 20) continue
+          const snippet = text.slice(0, 10)
+          const index = node.nodeValue.indexOf(snippet)
+          if (index < 0) continue
+          const range = document.createRange()
+          range.setStart(node, index)
+          range.setEnd(node, index + snippet.length)
+          const selection = window.getSelection()
+          selection.removeAllRanges()
+          selection.addRange(range)
+          node.parentElement.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+          return snippet
+        }
+        return ''
+      })
+    const selectedText = await selectPassage()
+    await page.waitForSelector('.rd-mini', { timeout: 8000 }).catch(() => {})
+    const askedChat = await page.evaluate(() => {
+      const button = [...document.querySelectorAll('.rd-mini button')].find(
+        (node) => node.textContent.trim() === '问 AI',
+      )
+      if (!button) return false
+      button.click()
+      return true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const quotes = await page.evaluate(() => window.__quotes.slice())
+    const quoteDoc = await page.$eval('.rd-title', (node) => node.textContent.trim()).catch(() => '')
+    record(
+      'quote inserts passage with location',
+      askedChat &&
+        Boolean(selectedText) &&
+        quotes.length > 0 &&
+        quotes[0].includes(`《${quoteDoc}》`) &&
+        quotes[0].split('\n')[1] === selectedText,
+      (quotes[0] || 'no quote').slice(0, 90),
+    )
+
+    await selectPassage()
+    await page.waitForSelector('.rd-mini select', { timeout: 8000 }).catch(() => {})
+    const quickAsked = await page.evaluate(() => {
+      const select = document.querySelector('.rd-mini .rd-quick-ask')
+      if (!select) return false
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(select, 'explain')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const inserted = await page.evaluate(() => window.__inserted.slice())
+    record(
+      'quick ask inserts question after quote',
+      quickAsked && inserted.length > 0 && inserted[0].text === '解释这段' && Boolean(inserted[0].span),
+      inserted.length ? inserted[0].text : 'nothing inserted',
+    )
   } catch (error) {
     try {
       const dump = await page.evaluate(() => ({
