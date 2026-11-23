@@ -96,6 +96,7 @@ export const READER_CSS = `
 .rd-editor .rd-input{width:100%;margin-top:6px}
 .rd-editor{max-height:min(64vh,520px)}
 .rd-editor textarea{width:100%;min-height:64px;margin-top:8px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:8px 10px;font-size:12.5px;line-height:1.6;font-family:inherit}
+.rd-annotation-editor textarea{min-height:96px;max-height:min(34vh,260px);overflow:auto;overscroll-behavior:contain}
 .rd-card .rd-actions.rd-sticky-actions{position:sticky;bottom:-1px;z-index:2;background:var(--dsw-alias-bg-overlay);padding:8px 0 2px;margin-top:10px;border-top:1px solid var(--dsw-alias-border-l1)}
 .rd-trans-card{position:fixed;z-index:95;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.22);padding:12px 13px;overflow:auto}
 .rd-trans{margin-top:6px;padding-left:10px;border-left:2px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:.92em;line-height:1.6}
@@ -162,7 +163,7 @@ export const READER_CSS = `
 .rd-pdf-hl{position:absolute;background:color-mix(in srgb,var(--hl,#f2c94c) 30%,transparent);pointer-events:none;border-radius:2px}
 .rd-note-mask{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
 .rd-note-box{width:min(420px,90vw);background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:16px;box-shadow:0 16px 48px rgba(0,0,0,.28)}
-.rd-note-box textarea{width:100%;min-height:110px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:9px 10px;font-size:13px;line-height:1.6;font-family:inherit}
+.rd-note-box textarea{width:100%;min-height:110px;overscroll-behavior:contain;resize:vertical;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:9px 10px;font-size:13px;line-height:1.6;font-family:inherit}
 .rd-note-box .rd-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
 .rd-input{height:28px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);padding:0 9px;font-size:12px;font-family:inherit}
 .rd-select{height:28px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 6px}
