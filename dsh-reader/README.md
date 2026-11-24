@@ -1,46 +1,60 @@
 # dsh-reader
 
-DSH 的阅读插件：在会话主区域新增「阅读」视图，读工作区里的 PDF / EPUB / Markdown / TXT，划词高亮、写笔记，让模型解释概念并落库，之后悬停概念即浮出卡片。
+DSH 的阅读工作台：在会话主区域阅读**书、论文和长文档**（PDF / EPUB / Markdown / TXT）。核心是**概念卡**——划词解释后自动沉淀成一张留在原文旁边的卡片，记录定义、语境、例子和出处；下次遇到同一概念直接复看，跨书、跨论文复用「本书用法」。
 
-选中正文还能直接把原文引用进 DSH 底部输入框，和当前会话的原生智能体边读边聊：引用带书名、章节和位置，回答实时流到阅读器右侧的「对话」页签，逐层追问不用离开书页。
+选中正文（连同选区里的图、内联 SVG、MathML 公式）可以直接引用进 DSH 底部输入框，和当前会话的原生智能体边读边聊：引用带书名、章节和位置，回答实时流到阅读器右侧的「对话」页签，逐层追问不用离开书页。
 
-![选中原文点「问 AI」，引用和选区图形进入输入框，回答在右侧「对话」气泡里流式出现](https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/dsh-reader/docs/demos/02-read-and-ask.gif)
+![划词 → 解释 → 概念卡原地浮出](https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/dsh-reader/docs/demos/01-select-explain.gif)
 
-动图由 [`demo/`](demo/) 里的 Remotion 工程渲染，镜头与分镜见 [`demo/CAMERA.md`](demo/CAMERA.md)；划词解释、长书导读两条动线见[仓库首页](https://github.com/2019wakeup/dsh-reader)。
+*选中一个词或短语，解释在原文旁边变成概念卡；需要工具或多轮推演时再交给原生对话。*
+
+动图由 [`demo/`](demo/) 里的 Remotion 工程渲染，镜头与分镜见 [`demo/CAMERA.md`](demo/CAMERA.md)；划词解释、对话、长文档导读三条动线见[仓库首页](https://github.com/2019wakeup/dsh-reader)。
 
 工作区自带三份试读素材：`示例-分布式系统阅读.md`、`示例-分布式系统.epub`、`示例-分布式系统.pdf`。
 
+## 核心：概念卡
+
+- **划词即解释**：选中词或短语，工具条提供解释、翻译、笔记、高亮、复制；解释在卡片里完成，卡片贴在原文旁边。
+- **留在原文**：卡片记录出现位置，点一下跳回原文；可以固定、拖动、编辑、合并，原文改动后还能迁移旧标注。
+- **跨文档复用**：同一概念在第二本书或第二篇论文里再次遇到时，追加「本书用法」，原有解释保留。
+- **可以继续拆**：解释里的新词可以生成子卡，形成概念链；卡片上显示父子关系。
+
 ## 安装
 
-四种方式，按方便程度排列。
+需要 dsh `>= 0.2.2-rc.5`（更早版本缺少对话接口，「问 AI」和「对话」页签会自动隐藏）。
 
-### 方式一：插件市场索引（推荐，可一键安装与更新）
+### 普通用户：桌面端两步装好（推荐）
 
-1. 在插件页启用「实验性插件 → 自定义插件索引」；
-2. 打开「发现」标签页，添加索引地址：
+1. 下载安装 [DeepSeek 官方桌面端](https://www.deepseek.com/download/)，登录 DeepSeek 账号；
+2. 侧栏 → **插件** → **添加插件**，输入 `@2019wakeup/dsh-reader@latest`，装好后在插件详情打开「启用」，重启桌面端。
+
+> `@latest` 当前对应 npm 上的 0.13.1；仓库里的 0.14.0 尚未发布到 npm，想现在就用仓库版，走下面的插件市场索引。
+
+### 现在就用 0.14.0：插件市场索引
+
+1. 插件页启用「实验性插件 → 自定义插件索引」；
+2. 「发现 → 管理索引源」添加：
    ```
    https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json
    ```
 3. 在发现页找到「砚读 · DSH 阅读插件」安装；以后有新版本会直接显示更新按钮。
 
-### 方式二：npm
+### 开发者：命令行
 
 ```bash
-plugin_manager install_bundle @2019wakeup/dsh-reader@0.14.0
+dsh plugin --profile web add @2019wakeup/dsh-reader@latest
+# 或从仓库安装本地目录：
+dsh plugin --profile web add ./dsh-reader
 ```
 
-### 方式三：Git 固定版本（无需 npm）
+<details>
+<summary><b>安装排坑</b></summary>
 
-```bash
-plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.14.0&path:/dsh-reader"
-```
+- 升级后插件开关可能回到停用：重新打开「启用」并重启 dsh；
+- 添加插件时务必带 `@latest`，不带版本号对已安装插件是 no-op；
+- pnpm 供应链策略 `minimumReleaseAge` 拦截新包时，等过窗口期或把包名加进 profile 的豁免清单。
 
-### 方式四：本地目录
-
-```bash
-# 在 DSH Web GUI：插件 → 添加插件 → 选择本目录
-# 或由 agent 调用 plugin_manager install_bundle，target 为本目录绝对路径
-```
+</details>
 
 安装后刷新页面，在任意会话顶部切换到「阅读」。
 
