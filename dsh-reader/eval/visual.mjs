@@ -2075,6 +2075,30 @@ async function main() {
         reason: selectionAssets.reason,
       }),
     )
+    // Chat rich text: formulas and fenced code must survive the markdown pipeline.
+    await page.evaluate(() => window.__chatClear())
+    const chatOpenNow = await page.evaluate(() => Boolean(document.querySelector('.rd-chat')))
+    if (!chatOpenNow) await clickAny('.rd-toolbar button', ['对话', 'Chat'])
+    await page.waitForSelector('.rd-chat', { timeout: 8000 })
+    await page.evaluate(() =>
+      window.__chatPushUser('公式 $E=mc^2$ 与块公式 $$\\frac{a}{b}$$\n\n```js\nconst a = 1\n```'),
+    )
+    const rich = await page
+      .waitForFunction(
+        () => {
+          const root = document.querySelector('.rd-chat-md')
+          return root && root.querySelector('.katex') && root.querySelector('pre code')
+        },
+        { timeout: 20000 },
+      )
+      .then(() => true)
+      .catch(() => false)
+    const richShape = await page.evaluate(() => ({
+      inline: document.querySelectorAll('.rd-chat-md .katex').length,
+      blocks: document.querySelectorAll('.rd-chat-md pre code').length,
+    }))
+    record('chat renders formulas and code blocks', rich, JSON.stringify(richShape))
+
     // Word: open the generated fixture and assert the prose/TOC pipeline.
     await clickAny('.rd-toolbar button', ['←'])
     await page.waitForSelector('.rd-library', { timeout: 8000 })

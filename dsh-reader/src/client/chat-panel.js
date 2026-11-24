@@ -4,6 +4,7 @@ import { documentTitle } from './mindmap.js'
 import { markdownRender } from './markdown.js'
 import { sanitizeHtml } from './sanitize.js'
 import { AttachmentFileCard, AttachmentImage } from './attachments.js'
+import { ensureKatex, hasMath, loadedKatex, renderMathInHtml } from './math.js'
 
 /**
  * In-reader conversation panel.
@@ -32,7 +33,8 @@ function renderMarkdown(text) {
   const source = String(text || '')
   if (!source.trim()) return ''
   try {
-    return sanitizeHtml(markdownRender(source), () => null)
+    const clean = sanitizeHtml(markdownRender(source), () => null)
+    return loadedKatex() ? renderMathInHtml(clean) : clean
   } catch {
     return ''
   }
@@ -420,6 +422,26 @@ export function ReaderChatPanel(props) {
     if (!node || !nearBottom) return
     node.scrollTop = node.scrollHeight
   }, [rows, nearBottom])
+
+  const [, setMathTick] = React.useState(0)
+  React.useEffect(() => {
+    if (loadedKatex()) return undefined
+    const texts = []
+    for (const row of rows) {
+      if (row.text) texts.push(row.text)
+      for (const block of row.blocks || []) if (block.text) texts.push(block.text)
+    }
+    if (!texts.some(hasMath)) return undefined
+    let alive = true
+    ensureKatex()
+      .then(() => {
+        if (alive) setMathTick((tick) => tick + 1)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [rows])
 
   const motionRows = React.useRef({ mounted: false, seen: new Set(), marked: new Set() })
   const rowMotion = rows.map((row) => {

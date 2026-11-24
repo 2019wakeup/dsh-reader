@@ -13,6 +13,7 @@ const files = [
   'src/client/styles.js',
   'src/client/sanitize.js',
   'src/client/markdown.js',
+  'src/client/math.js',
   'src/client/epub.js',
   'src/client/docx.js',
   'src/client/pdf.js',

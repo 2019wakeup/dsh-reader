@@ -176,7 +176,7 @@ export const READER_CSS = `
 .rd-pdf-page canvas{display:block;max-width:100%}
 .rd-text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;opacity:1}
 .rd-text-layer span{position:absolute;color:transparent;white-space:pre;cursor:text;transform-origin:0 0}
-.rd-text-layer span::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}
+.rd-text-layer span::selection{background:rgba(47,111,237,.42);color:transparent}
 .rd-prose ::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent)}
 .rd-pdf-hl{position:absolute;background:color-mix(in srgb,var(--hl,#f2c94c) 30%,transparent);pointer-events:none;border-radius:2px}
 .rd-note-mask{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
@@ -248,6 +248,10 @@ export const READER_CSS = `
 .rd-chat-md th,.rd-chat-md td{border:1px solid var(--dsw-alias-border-l1);padding:4px 6px;text-align:left;vertical-align:top}
 .rd-chat-md th{background:var(--dsw-alias-bg-layer-2);font-weight:600}
 .rd-chat-md hr{border:0;border-top:1px solid var(--dsw-alias-border-l1);margin:1em 0}
+.rd-chat-md .rd-math-block{display:block;overflow-x:auto;overflow-y:hidden;margin:.6em 0;padding:1px 0}
+.rd-chat-md .rd-math-inline{display:inline-block;max-width:100%;vertical-align:-0.15em}
+.rd-chat-md .katex{font-size:1.02em}
+.rd-chat-md .katex-display{margin:.4em 0}
 .rd-chat-process{margin:7px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .rd-chat-process>summary{display:inline-flex;align-items:center;gap:5px;list-style:none;cursor:pointer;padding:2px 9px;border:0;border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);transition:background var(--rd-motion-fast) ease,color var(--rd-motion-fast) ease}
 .rd-chat-process>summary:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
