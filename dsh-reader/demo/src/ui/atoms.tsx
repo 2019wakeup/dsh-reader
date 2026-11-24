@@ -2,6 +2,7 @@ import React from 'react';
 import { AbsoluteFill } from 'remotion';
 import { ART, C, CAPTION_H, CAPTION_Y, COMPOSER_H, FONT, MONO, SHADOW, TOPBAR_H, WIN } from './theme';
 import { caretOpacity, lerp, prog } from './motion';
+import { ReplicaFigure } from './figure';
 import { useVideoConfig } from 'remotion';
 import { useCurrentFrame } from 'remotion';
 
@@ -90,7 +91,7 @@ export const Backdrop: React.FC = () => (
 
 const STEPS = ['划词解释', '边读边问', '长书导读'];
 
-export const TopStrip: React.FC<{ active: number }> = ({ active }) => (
+export const TopStrip: React.FC<{ active: number; opacity?: number }> = ({ active, opacity = 1 }) => (
   <div
     style={{
       position: 'absolute',
@@ -103,6 +104,7 @@ export const TopStrip: React.FC<{ active: number }> = ({ active }) => (
       justifyContent: 'space-between',
       padding: '0 30px',
       boxSizing: 'border-box',
+      opacity,
     }}
   >
     <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -190,6 +192,10 @@ const ICONS = {
   stop: 'M5 5h6v6H5z',
   layers: 'M8 2.6 2.6 5.8 8 9l5.4-3.2zM2.6 8.6 8 11.8l5.4-3.2M2.6 11.2 8 14.4l5.4-3.2',
   expand: 'M3 6V3h3M13 10v3h-3M3 10v3h3M13 6V3h-3',
+  history: 'M2.8 8a5.2 5.2 0 1 0 1.5-3.7M2.4 3.2V6h2.8M8 5.2V8l2 1.4',
+  external: 'M6.2 3H3.6A1.6 1.6 0 0 0 2 4.6v7.8A1.6 1.6 0 0 0 3.6 14h7.8a1.6 1.6 0 0 0 1.6-1.6V9.8M9 2h5v5M8.2 7.8 14 2',
+  image: 'M2.5 3.5h11v9h-11zM2.5 10l3.2-3 2.8 2.6 2.2-2.2 2.8 2.6M5.2 6.1h.01',
+  file: 'M4 2.5h5l3 3v8H4zM9 2.5v3h3',
   zoomIn: 'M7 2.4a4.6 4.6 0 1 0 0 9.2 4.6 4.6 0 0 0 0-9.2zM10.6 10.6 14 14M5 7h4M7 5v4',
   zoomOut: 'M7 2.4a4.6 4.6 0 1 0 0 9.2 4.6 4.6 0 0 0 0-9.2zM10.6 10.6 14 14M5 7h4',
   dots: 'M3 8h.01M8 8h.01M13 8h.01',
@@ -322,7 +328,8 @@ export const Composer: React.FC<{
   placeholder?: string;
   quote?: { source: string; text: string };
   quoteEnter?: number;
-}> = ({ height, mode, typed = '', frame, typing = false, placeholder = '选中正文即可引用提问，或直接输入…', quote, quoteEnter = 1 }) => (
+  attachment?: { label?: string } | null;
+}> = ({ height, mode, typed = '', frame, typing = false, placeholder = '选中正文即可引用提问，或直接输入…', quote, quoteEnter = 1, attachment = null }) => (
   <div
     style={{
       height,
@@ -366,6 +373,33 @@ export const Composer: React.FC<{
         >
           {quote.text}
         </div>
+      </div>
+    ) : null}
+    {mode === 'quoted' && attachment ? (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          marginBottom: 4,
+          opacity: quoteEnter,
+          transform: `translateY(${(1 - quoteEnter) * 4}px)`,
+        }}
+      >
+        <ReplicaFigure width={30} height={20} compact />
+        <span style={{ fontSize: 7.2, color: C.ink2 }}>{attachment.label || '图 1 · 线性一致性'}</span>
+        <span
+          style={{
+            fontSize: 6.4,
+            color: C.brand,
+            background: C.brandSoft,
+            border: `1px solid ${C.brandLine}`,
+            borderRadius: 4,
+            padding: '1px 4px',
+          }}
+        >
+          已附加
+        </span>
       </div>
     ) : null}
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

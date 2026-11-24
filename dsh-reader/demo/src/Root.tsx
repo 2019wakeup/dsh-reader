@@ -5,7 +5,7 @@ import { AskAI } from './scenes/AskAI';
 import { GuideMindmap } from './scenes/GuideMindmap';
 
 /**
- * README demo reels. 1600x1080 (2x artboard) -> 800x540 GIF.
+ * README demo reels. 1600x1080 (2x artboard) -> 640x432 GIF.
  */
 export const RemotionRoot: React.FC = () => {
   return (
@@ -13,7 +13,7 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="SelectExplain"
         component={SelectExplain}
-        durationInFrames={240}
+        durationInFrames={270}
         fps={30}
         width={1600}
         height={1080}
@@ -21,7 +21,7 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="AskAI"
         component={AskAI}
-        durationInFrames={240}
+        durationInFrames={300}
         fps={30}
         width={1600}
         height={1080}
@@ -29,7 +29,7 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="GuideMindmap"
         component={GuideMindmap}
-        durationInFrames={270}
+        durationInFrames={300}
         fps={30}
         width={1600}
         height={1080}

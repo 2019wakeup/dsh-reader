@@ -44,6 +44,549 @@ function debounce(fn, wait) {
 }
 
 
+const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
+const RING_CLASS = 'rd-jump-ring'
+const RING_STATIC_CLASS = 'rd-jump-ring-static'
+const TRACK_MS = 600
+const ratio = (value) => `${Math.round(Math.min(0.85, Math.max(0.15, value)) * 100)}%`
+
+function rectOf(value) {
+  if (!value) return { left: 0, top: 0, width: 0, height: 0 }
+  return { left: value.left || 0, top: value.top || 0, width: value.width || 0, height: value.height || 0 }
+}
+
+function prefersReducedMotion(media) {
+  if (media && typeof media.matches === 'boolean') return media.matches
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && Boolean(window.matchMedia(REDUCE_QUERY).matches)
+  } catch {
+    return false
+  }
+}
+
+function motionEnabled(prefs, media) {
+  return (!prefs || prefs.motion !== 'off') && !prefersReducedMotion(media)
+}
+
+function anchorOrigin(anchor, panel) {
+  const a = rectOf(anchor)
+  const p = rectOf(panel)
+  return {
+    x: ratio(p.width > 0 ? (a.left + a.width / 2 - p.left) / p.width : 0.5),
+    y: ratio(p.height > 0 ? (a.top + a.height / 2 - p.top) / p.height : 0.5),
+  }
+}
+
+function edgeOrigin(anchor, panel, side = 'above') {
+  return { ...anchorOrigin(anchor, panel), y: side === 'above' ? '100%' : '0%' }
+}
+
+function originVars(origin) {
+  return { '--rd-origin-x': (origin && origin.x) || '50%', '--rd-origin-y': (origin && origin.y) || '50%' }
+}
+
+function staggerDelay(index, step = 6, max = 140) {
+  return Math.min(Math.max(0, Number(step) || 0) * Math.max(0, Number(index) || 0), Math.max(0, Number(max) || 0))
+}
+
+function drawerWidthMotion(doc, maxBytes = 200 * 1024) {
+  if (!doc) return true
+  if (doc.ext === '.pdf') return false
+  return (Number(doc.size ?? (doc.bytes && doc.bytes.byteLength)) || 0) <= maxBytes
+}
+
+function markMotionIn(element, options = {}) {
+  if (!element || !element.dataset) return null
+  if (options.enabled === false || element.dataset.motion === 'in') return element
+  if (options.origin && element.style) {
+    for (const [name, value] of Object.entries(originVars(options.origin))) element.style.setProperty(name, value)
+  }
+  if (options.side) element.dataset.side = options.side
+  element.dataset.motion = 'in'
+  return element
+}
+
+function removeNode(node) {
+  if (node && node.parentNode) node.parentNode.removeChild(node)
+}
+
+function ringDoc(doc) {
+  return doc || (typeof document !== 'undefined' ? document : null)
+}
+
+function ringScope(doc, root) {
+  if (root && root.querySelectorAll) return root
+  return doc && doc.querySelector ? doc.querySelector('.rd-root') : null
+}
+
+function clearJumpRing(doc, root) {
+  const scope = ringScope(ringDoc(doc), root)
+  if (!scope || !scope.querySelectorAll) return 0
+  const nodes = [...scope.querySelectorAll(`.${RING_CLASS}`)]
+  for (const node of nodes) removeNode(node)
+  return nodes.length
+}
+
+function rectOfTarget(target) {
+  if (!target || typeof target.getBoundingClientRect !== 'function') return null
+  return rectOf(target.getBoundingClientRect())
+}
+
+function positionRing(ring, rect, padding) {
+  ring.style.left = `${Math.round(rect.left - padding)}px`
+  ring.style.top = `${Math.round(rect.top - padding)}px`
+  ring.style.width = `${Math.round(Math.max(8, rect.width) + padding * 2)}px`
+  ring.style.height = `${Math.round(Math.max(8, rect.height) + padding * 2)}px`
+}
+
+// enabled:false = reduced-motion static outline (no animation, staticMs cleanup).
+function pulseTarget(target, options = {}) {
+  const doc = ringDoc(options.doc)
+  if (!doc || !target) return null
+  const root = ringScope(doc, options.root)
+  if (!root || !root.appendChild) return null
+  const enabled = options.enabled === undefined ? motionEnabled(null, options.media) : Boolean(options.enabled)
+  clearJumpRing(doc, root)
+  const first = rectOfTarget(target)
+  if (!first) return null
+  const padding = options.padding ?? 4
+  const ring = doc.createElement('div')
+  ring.className = enabled ? RING_CLASS : `${RING_CLASS} ${RING_STATIC_CLASS}`
+  ring.setAttribute('aria-hidden', 'true')
+  positionRing(ring, first, padding)
+  root.appendChild(ring)
+  let disposed = false
+  const cleanup = () => {
+    if (disposed) return
+    disposed = true
+    removeNode(ring)
+  }
+  if (!enabled) {
+    setTimeout(cleanup, options.staticMs || 600)
+    return ring
+  }
+  ring.addEventListener('animationend', cleanup, { once: true })
+  setTimeout(cleanup, options.timeoutMs || 900)
+  const win = doc.defaultView
+  const frame = win && typeof win.requestAnimationFrame === 'function' ? win.requestAnimationFrame.bind(win) : null
+  if (options.track !== false && frame) {
+    const started = Date.now()
+    let previous = ''
+    let stable = 0
+    const step = () => {
+      if (disposed || Date.now() - started > TRACK_MS) return
+      const next = rectOfTarget(target)
+      if (next) {
+        const signature = [next.left, next.top, next.width, next.height].map((value) => Math.round(value)).join(':')
+        positionRing(ring, next, padding)
+        stable = signature === previous ? stable + 1 : 0
+        previous = signature
+        if (stable >= 2) return
+      }
+      frame(step)
+    }
+    frame(step)
+  }
+  return ring
+}
+
+const pulseRange = pulseTarget
+const pulseElement = pulseTarget
+
+
+
+/**
+ * Attachment presentation for the in-reader conversation panel.
+ *
+ * The reader panel projects the platform ChatSnapshot itself, so it never gets
+ * the native message-image slot. Durable image refs are resolved here through
+ * the same client Session API the native transcript uses
+ * (`sessions.binding(sessionId).session.readAttachment(ref)`), and cached as
+ * browser object URLs for the life of the view.
+ *
+ * Kept free of DOM access at import time: node --test imports this module.
+ */
+
+const attachmentEl = React.createElement
+const ATTACHABLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+const ATTACHMENT_ID_PATTERN = /^sha256:[0-9a-f]{64}$/
+
+function safeAttachmentName(value) {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : ''
+}
+
+/** Validate one durable image reference from a session message part. */
+function normalizeImageRef(value) {
+  if (!value || typeof value !== 'object') return null
+  const attachmentId = typeof value.attachmentId === 'string' ? value.attachmentId : ''
+  if (!ATTACHMENT_ID_PATTERN.test(attachmentId)) return null
+  const mediaType = ATTACHABLE_IMAGE_TYPES.has(value.mediaType) ? value.mediaType : 'image/png'
+  const number = (candidate) => (Number.isFinite(candidate) && candidate > 0 ? Math.round(candidate) : 0)
+  const name = safeAttachmentName(value.name)
+  return {
+    attachmentId,
+    mediaType,
+    bytes: number(value.bytes),
+    width: number(value.width),
+    height: number(value.height),
+    ...(name ? { name } : {}),
+  }
+}
+
+/** Validate one durable generic file reference from a session message part. */
+function normalizeFileRef(value) {
+  if (!value || typeof value !== 'object') return null
+  const attachmentId = typeof value.attachmentId === 'string' ? value.attachmentId : ''
+  const name = safeAttachmentName(value.name)
+  if (!ATTACHMENT_ID_PATTERN.test(attachmentId) || !name) return null
+  const bytes = Number.isFinite(value.bytes) && value.bytes > 0 ? Math.round(value.bytes) : 0
+  return { attachmentId, name, bytes }
+}
+
+function attachmentBytesToDataUrl(mediaType, bytes) {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  const base64 = typeof btoa === 'function' ? btoa(binary) : ''
+  return `data:${mediaType};base64,${base64}`
+}
+
+/**
+ * Per-view image resolver: one object URL per attachment, revoked on dispose.
+ * @param {{binding?: (id: string) => {session?: {readAttachment?: Function}}}|null} sessions
+ * @param {string} sessionId
+ */
+function createAttachmentResolver(sessions, sessionId) {
+  const entries = new Map()
+  const urls = new Set()
+
+  const toUrl = (mediaType, data) => {
+    const bytes = data instanceof Uint8Array ? data : Uint8Array.from(data || [])
+    if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && typeof Blob === 'function') {
+      try {
+        const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }))
+        urls.add(url)
+        return url
+      } catch {
+        /* fall through to a data URL */
+      }
+    }
+    return attachmentBytesToDataUrl(mediaType, bytes)
+  }
+
+  const sessionFor = () => {
+    if (!sessions || typeof sessions.binding !== 'function' || !sessionId) return null
+    try {
+      const binding = sessions.binding(sessionId)
+      return binding && binding.session && typeof binding.session.readAttachment === 'function' ? binding.session : null
+    } catch {
+      return null
+    }
+  }
+
+  const load = (attachment) => {
+    const ref = normalizeImageRef(attachment)
+    if (!ref) return Promise.reject(new Error('invalid image attachment'))
+    const existing = entries.get(ref.attachmentId)
+    if (existing) return existing.promise
+    const entry = { url: '', promise: null }
+    entry.promise = (async () => {
+      const session = sessionFor()
+      if (!session) throw new Error('image attachments are unavailable in this view')
+      const result = await session.readAttachment(ref)
+      if (!result || result.ok !== true) {
+        throw new Error(String((result && result.error && result.error.message) || 'image read failed'))
+      }
+      const stored = result.value || {}
+      const storedRef = stored.attachment || {}
+      const mediaType = ATTACHABLE_IMAGE_TYPES.has(storedRef.mediaType) ? storedRef.mediaType : ref.mediaType
+      const url = toUrl(mediaType, stored.data)
+      entry.url = url
+      return url
+    })().catch((error) => {
+      entries.delete(ref.attachmentId)
+      throw error
+    })
+    entries.set(ref.attachmentId, entry)
+    return entry.promise
+  }
+
+  return {
+    /** Already-resolved URL for this attachment, when available synchronously. */
+    peek: (attachment) => {
+      const ref = normalizeImageRef(attachment)
+      return (ref && entries.get(ref.attachmentId) && entries.get(ref.attachmentId).url) || ''
+    },
+    load,
+    dispose: () => {
+      for (const url of urls) {
+        try {
+          URL.revokeObjectURL(url)
+        } catch {
+          /* already revoked */
+        }
+      }
+      urls.clear()
+      entries.clear()
+    },
+  }
+}
+
+/**
+ * One durable image. Shows a quiet placeholder while the bytes load and a name
+ * chip if the attachment cannot be resolved (expired session, old profile).
+ */
+function AttachmentImage(props) {
+  const attachment = normalizeImageRef(props && props.attachment)
+  const resolver = (props && props.resolver) || null
+  const [src, setSrc] = React.useState(() => (attachment && resolver ? resolver.peek(attachment) : ''))
+  const [failed, setFailed] = React.useState(false)
+  React.useEffect(() => {
+    if (!attachment || !resolver) {
+      setFailed(true)
+      return undefined
+    }
+    const cached = resolver.peek(attachment)
+    if (cached) {
+      setSrc(cached)
+      return undefined
+    }
+    let live = true
+    resolver
+      .load(attachment)
+      .then((url) => {
+        if (live) setSrc(url)
+      })
+      .catch(() => {
+        if (live) setFailed(true)
+      })
+    return () => {
+      live = false
+    }
+  }, [attachment && attachment.attachmentId, resolver])
+  const label = (props && props.alt) || (attachment && attachment.name) || 'image'
+  if (failed) return attachmentEl('span', { className: 'rd-chat-image-failed', title: label }, label)
+  if (!src) return attachmentEl('span', { className: 'rd-chat-image-loading', 'aria-label': label })
+  return attachmentEl(
+    'a',
+    { className: 'rd-chat-image', href: src, target: '_blank', rel: 'noreferrer', title: label },
+    attachmentEl('img', { src, alt: label, loading: 'lazy', decoding: 'async', draggable: false }),
+  )
+}
+
+/** Human file size for attachment cards. */
+function formatBytes(value) {
+  const bytes = Number(value)
+  if (!Number.isFinite(bytes) || bytes <= 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+function attachmentFileExtension(name) {
+  const match = String(name || '').match(/\.([a-z0-9]{1,6})$/i)
+  return match ? match[1].toUpperCase() : ''
+}
+
+/**
+ * Generic file attachment card. Files are not read into the browser by the
+ * Session API, so the card reports name, type and size and leaves the bytes to
+ * the native conversation page.
+ */
+function AttachmentFileCard(props) {
+  const file = normalizeFileRef(props && props.file)
+  if (!file) return null
+  return attachmentEl(
+    'div',
+    { className: 'rd-chat-file', title: file.name },
+    attachmentEl('span', { className: 'rd-chat-file-ext', 'aria-hidden': 'true' }, attachmentFileExtension(file.name) || 'FILE'),
+    attachmentEl('span', { className: 'rd-chat-file-name' }, file.name),
+    attachmentEl('span', { className: 'rd-chat-file-size' }, formatBytes(file.bytes)),
+  )
+}
+
+
+/**
+ * Rich assets inside a reading selection.
+ *
+ * The composer quote itself is text, so a selection that only says "请看这里"
+ * loses the figure or formula it pointed at. This module reads the selected
+ * DOM range, describes images / inline SVG / math markup, and turns them into
+ * browser Files the conversation controller can attach to the draft.
+ *
+ * Kept DOM-only (no React, no plugin context) so node --test can exercise it.
+ */
+
+/** Media types the DSH attachment store accepts as prompt images. */
+const PROMPT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+const SVG_TYPE = 'image/svg+xml'
+const MAX_SVG_CHARS = 160_000
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024
+const MAX_ASSETS = 8
+
+const EXTENSIONS = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/svg+xml': 'svg',
+}
+
+function intersects(range, node) {
+  try {
+    return typeof range.intersectsNode === 'function' ? range.intersectsNode(node) : false
+  } catch {
+    return false
+  }
+}
+
+function trimmedText(value, limit = 80) {
+  const text = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : ''
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+
+function guessedImageType(src) {
+  const match = String(src || '').match(/^data:([^;,]+)[;,]/i) || String(src || '').match(/\.([a-z0-9]{2,5})(?:[?#]|$)/i)
+  if (!match) return ''
+  if (match[1] && match[1].includes('/')) return match[1].toLowerCase()
+  const extension = match[1] ? match[1].toLowerCase() : ''
+  return { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' }[extension] || ''
+}
+
+function captionOf(element) {
+  const figure = element.closest ? element.closest('figure') : null
+  const caption = figure ? figure.querySelector('figcaption') : null
+  return caption ? trimmedText(caption.textContent, 100) : ''
+}
+
+/**
+ * Walk the selected range and describe its rich content.
+ * @param {Range|null} range
+ * @param {Element|null} root content root that owns the rendered document
+ * @returns {Array<{kind: 'image'|'svg'|'formula', src?: string, markup?: string, tex?: string, alt?: string, caption?: string}>}
+ */
+function collectSelectionAssets(range, root) {
+  if (!range || !root || typeof root.querySelectorAll !== 'function') return []
+  const assets = []
+  const seen = new Set()
+  const push = (asset) => {
+    if (assets.length >= MAX_ASSETS) return
+    const key = `${asset.kind}:${asset.src || asset.markup || asset.tex}`
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    assets.push(asset)
+  }
+
+  for (const image of root.querySelectorAll('img')) {
+    if (!intersects(range, image)) continue
+    const src = image.currentSrc || image.getAttribute('src') || ''
+    if (!src) continue
+    push({
+      kind: 'image',
+      src,
+      alt: trimmedText(image.getAttribute('alt'), 80),
+      caption: captionOf(image),
+      width: image.naturalWidth || 0,
+      height: image.naturalHeight || 0,
+    })
+  }
+
+  for (const svg of root.querySelectorAll('svg')) {
+    if (!intersects(range, svg)) continue
+    const markup = String(svg.outerHTML || '')
+    if (!markup || markup.length > MAX_SVG_CHARS) continue
+    push({ kind: 'svg', markup, alt: trimmedText(svg.getAttribute('aria-label'), 80), caption: captionOf(svg) })
+  }
+
+  for (const math of root.querySelectorAll('math')) {
+    if (!intersects(range, math)) continue
+    const annotated = math.querySelector('annotation[encoding="application/x-tex"]')
+    const tex = annotated ? trimmedText(annotated.textContent, 600) : ''
+    if (tex) push({ kind: 'formula', tex })
+  }
+
+  return assets
+}
+
+/** Human-safe attachment name, with a stable extension for the media type. */
+function attachmentNameFor(asset, index, mediaType) {
+  const extension = EXTENSIONS[mediaType] || 'png'
+  const base = trimmedText(asset.alt || asset.caption, 60).replace(/[\\/:*?"<>|]+/g, ' ') || `选中图形${index + 1}`
+  return `${base}.${extension}`
+}
+
+function toFile(parts, name, type) {
+  try {
+    return new File(parts, name, { type })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch the bytes behind selected images and serialize inline SVG into Files.
+ * Images that cannot be read are dropped here; their labels still reach the
+ * model through the quote text.
+ * @param {Array<object>} assets
+ * @param {{fetchImpl?: typeof fetch}} [options]
+ * @returns {Promise<File[]>}
+ */
+async function prepareSelectionFiles(assets, options = {}) {
+  const fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : typeof fetch === 'function' ? fetch : null
+  const files = []
+  for (const [index, asset] of (assets || []).entries()) {
+    if (!asset || typeof asset !== 'object') continue
+    if (asset.kind === 'svg') {
+      if (asset.markup) {
+        const file = toFile([asset.markup], attachmentNameFor(asset, index, SVG_TYPE), SVG_TYPE)
+        if (file) files.push(file)
+      }
+      continue
+    }
+    if (asset.kind !== 'image' || !asset.src || !fetchImpl) continue
+    try {
+      const response = await fetchImpl(asset.src)
+      if (!response || response.ok === false) continue
+      const blob = await response.blob()
+      if (!blob || !blob.size || blob.size > MAX_IMAGE_BYTES) continue
+      const type = blob.type || guessedImageType(asset.src)
+      if (!type) continue
+      const name = attachmentNameFor(asset, index, type)
+      if (PROMPT_IMAGE_TYPES.has(type)) {
+        const file = toFile([blob], name, type)
+        if (file) files.push(file)
+      } else if (type === SVG_TYPE) {
+        // `<img src="...svg">` is not a prompt image; attach it as a document.
+        const file = toFile([blob], name, type)
+        if (file) files.push(file)
+      }
+    } catch {
+      /* a broken image URL falls back to the text label */
+    }
+  }
+  return files
+}
+
+/**
+ * Short description appended to the quote so the model knows the passage's
+ * figures/formulas exist even when their bytes cannot cross the composer.
+ * @param {Array<object>} assets
+ * @param {(key: string) => string} t
+ */
+function buildAssetQuoteSuffix(assets, t) {
+  const list = Array.isArray(assets) ? assets : []
+  const lines = []
+  const visuals = list.filter((asset) => asset && (asset.kind === 'image' || asset.kind === 'svg'))
+  const formulas = list.filter((asset) => asset && asset.kind === 'formula' && asset.tex)
+  if (visuals.length > 0) {
+    const label = (asset, index) => trimmedText(asset.alt || asset.caption, 40) || `${index + 1}`
+    lines.push(`${t('label.selectionAssetsNote')}：${visuals.map(label).join('、')}`)
+  }
+  for (const formula of formulas) lines.push(`$${formula.tex}$`)
+  return lines.length > 0 ? `\n\n${lines.join('\n')}` : ''
+}
+
+
 const ZH = {
   'view.label': '阅读',
   'library.title': '书库',
@@ -276,7 +819,11 @@ const ZH = {
   'label.deleteConceptChildren': '从它下钻的概念会接到它的上一层',
   'label.conceptDeleted': '已删除概念',
   'tab.chat': '对话',
-  'label.chatEmpty': '选中正文任意一段，点“问 AI”开始对话。',
+  'label.chatEmpty': '选中正文里的一段，点「问 AI」；回答按轮次留在这里，与原生对话页同源。',
+  'label.chatEmptyTitle': '边读边问',
+  'label.chatEmptyHintSelect': '选中原文 → 问 AI',
+  'label.chatEmptyHintSession': '引用带书名与位置',
+  'label.chatSubtitle': '与当前会话同步',
   'label.chatShowAll': '显示全部',
   'label.chatCollapse': '只看最近',
   'label.chatJump': '在对话页打开',
@@ -293,6 +840,10 @@ const ZH = {
   'label.chatUnavailable': '当前 DSH 版本不支持对话面板',
   'label.chatReasoning': '思考过程',
   'label.chatImage': '[图片]',
+  'label.selectionAssetsNote': '选区内图形（见附件）',
+  'label.selectionAssetsFailed': '图形附件添加失败，已用文字标出选区内容',
+  'label.selectionAssetsBusy': '输入框正忙，图形附件未加入',
+  'label.selectionAssetsUnavailable': '当前环境不支持添加图形附件',
   'label.chatTool': '工具',
   'label.chatToolRunning': '运行中',
   'tool.read': '已读取文件',
@@ -307,6 +858,14 @@ const ZH = {
   'label.chatRoleAssistant': '助手',
   'label.chatProcess': '过程',
   'label.chatRunning': '正在执行',
+  'label.chatThinking': '思考中…',
+  'tool.liveRead': '正在读取文件…',
+  'tool.liveWrite': '正在写入文件…',
+  'tool.liveCommand': '正在执行命令…',
+  'tool.liveSearch': '正在搜索…',
+  'tool.liveWebSearch': '正在搜索网页…',
+  'tool.liveWebFetch': '正在访问网页…',
+  'tool.livePlan': '正在更新计划…',
   'label.chatToolDone': '完成',
   'label.chatToolError': '失败',
   'label.chatStopped': '（已停止）',
@@ -553,7 +1112,11 @@ const EN = {
   'label.deleteConceptChildren': 'Cards explained inside it move one level up',
   'label.conceptDeleted': 'Concept deleted',
   'tab.chat': 'Chat',
-  'label.chatEmpty': 'Select any passage in the book and choose Ask AI to start chatting.',
+  'label.chatEmpty': 'Select a passage and choose Ask AI; each answer stays here and shares the session transcript.',
+  'label.chatEmptyTitle': 'Read and ask',
+  'label.chatEmptyHintSelect': 'Select text → Ask AI',
+  'label.chatEmptyHintSession': 'Quotes keep book + position',
+  'label.chatSubtitle': 'Synced with this session',
   'label.chatShowAll': 'Show all',
   'label.chatCollapse': 'Recent only',
   'label.chatJump': 'Open in conversation',
@@ -570,6 +1133,10 @@ const EN = {
   'label.chatUnavailable': 'This DSH version does not support the chat panel',
   'label.chatReasoning': 'Reasoning',
   'label.chatImage': '[Image]',
+  'label.selectionAssetsNote': 'Selected figures (attached)',
+  'label.selectionAssetsFailed': 'Could not attach the figures; the quote still describes them',
+  'label.selectionAssetsBusy': 'The composer is busy, so the figures were not attached',
+  'label.selectionAssetsUnavailable': 'Attaching figures is unavailable here',
   'label.chatTool': 'Tool',
   'label.chatToolRunning': 'Running',
   'tool.read': 'Read file',
@@ -584,6 +1151,14 @@ const EN = {
   'label.chatRoleAssistant': 'Assistant',
   'label.chatProcess': 'Process',
   'label.chatRunning': 'Running',
+  'label.chatThinking': 'Thinking…',
+  'tool.liveRead': 'Reading a file…',
+  'tool.liveWrite': 'Writing a file…',
+  'tool.liveCommand': 'Running a command…',
+  'tool.liveSearch': 'Searching…',
+  'tool.liveWebSearch': 'Searching the web…',
+  'tool.liveWebFetch': 'Fetching a page…',
+  'tool.livePlan': 'Updating the plan…',
   'label.chatToolDone': 'Done',
   'label.chatToolError': 'Failed',
   'label.chatStopped': '(stopped)',
@@ -858,7 +1433,13 @@ const READER_CSS = `
 .rd-drawer-resizer:after{content:'';position:absolute;left:5px;top:50%;width:2px;height:36px;transform:translateY(-50%);border-radius:2px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 14%,transparent)}
 .rd-drawer-resizer:hover,.rd-drawer-resizer:focus-visible{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent);outline:none}
 .rd-drawer-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain}
+.rd-drawer-sub{flex:0 0 auto;margin-left:2px;padding:1px 7px;border:0;border-radius:999px;font-size:10px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:nowrap;background:var(--dsw-alias-bg-layer-1)}
+.rd-drawer-head-actions{display:flex;align-items:center;gap:2px}
+.rd-drawer-head-btn{width:26px;min-width:26px;height:26px;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-secondary)}
+.rd-drawer-head-btn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.rd-drawer-head-btn.is-on{color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}
+.rd-drawer-head-btn svg{display:block;width:16px;height:16px}
+.rd-drawer-body{flex:1;min-width:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain;overflow-anchor:none}
 .rd-drawer-item{padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;cursor:pointer;font-size:12.5px;line-height:1.5}
 .rd-drawer-item:hover{background:var(--dsw-alias-bg-layer-1)}
 .rd-drawer-item .rd-muted{color:var(--dsw-alias-label-secondary);font-size:11.5px}
@@ -883,13 +1464,13 @@ const READER_CSS = `
 .rd-entry .rd-ext{flex:0 0 auto;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:5px;padding:2px 5px}
 .rd-entry .rd-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rd-hover-zone{position:fixed;z-index:80;padding:0}
-.rd-hover-zone .rd-card{position:absolute;left:16px;top:16px;z-index:auto}
-.rd-card{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:min(62vh,500px);overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:14px 15px;animation:rd-in .12s ease-out;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent) transparent}
+.rd-hover-zone .rd-card-stack{position:absolute;left:16px;top:16px;z-index:auto}
+.rd-hover-zone .rd-card{position:relative;left:0;top:0;z-index:auto}
+.rd-card{position:fixed;z-index:80;width:min(330px,calc(100vw - 16px));max-height:min(62vh,500px);overflow:auto;overscroll-behavior:contain;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:14px 15px;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent) transparent}
 .rd-card::-webkit-scrollbar{width:8px}
 .rd-card::-webkit-scrollbar-track{background:transparent;margin:8px 0}
 .rd-card::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent);border:2px solid transparent;background-clip:padding-box;border-radius:999px}
 .rd-card::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 30%,transparent);border:2px solid transparent;background-clip:padding-box}
-@keyframes rd-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .rd-card h3{position:sticky;top:-14px;z-index:3;margin:-14px 0 8px;padding:14px 0 8px;background:var(--dsw-alias-bg-overlay);font-size:15px;display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;touch-action:none}
 .rd-card .rd-def{font-size:13.5px;line-height:1.62}
 .rd-card .rd-sec{font-size:12.5px;line-height:1.6;color:var(--dsw-alias-label-secondary);margin-top:8px}
@@ -922,7 +1503,7 @@ const READER_CSS = `
 .rd-theme-sepia .rd-main{background:#f5ecd9;color:#3d2f24}
 .rd-theme-sepia .rd-page{color:#3d2f24}
 .rd-relink{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 12px;font-size:12px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
-\.rd-map-stage{display:flex;flex-direction:column;min-height:0}
+.rd-map-stage{display:flex;flex-direction:column;min-height:0}
 .rd-map-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .rd-map-group{display:flex;align-items:center;gap:2px;padding:3px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
 .rd-map-btn{height:26px;min-width:28px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap}
@@ -937,7 +1518,7 @@ const READER_CSS = `
 .rd-map-stage-fullscreen .rd-map-scroll{flex:1;min-height:0;max-height:none;height:auto}
 .rd-map-stage-fullscreen .rd-map-detail{max-height:160px}
 .rd-map-scroll:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
-.rd-map-scroll{position:relative;max-width:100%;height:min(46vh,520px);max-height:46vh;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none}
+.rd-map-scroll{position:relative;max-width:100%;height:min(46vh,520px);max-height:46vh;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-base);cursor:grab;touch-action:none;user-select:none;background-image:radial-gradient(circle,color-mix(in srgb,var(--dsw-alias-label-primary) 13%,transparent) 1px,transparent 1.15px);background-size:var(--rd-grid-size,24px) var(--rd-grid-size,24px);background-position:var(--rd-grid-x,12px) var(--rd-grid-y,12px)}
 .rd-map-canvas{position:absolute;left:0;top:0;will-change:transform}.rd-map-canvas svg{display:block}
 .rd-map-scroll:active{cursor:grabbing}
 .rd-map-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.65;max-height:160px;overflow:auto}
@@ -996,61 +1577,129 @@ const READER_CSS = `
 @media (max-width:900px){.rd-drawer{position:absolute;right:0;top:44px;bottom:0;z-index:70;box-shadow:-8px 0 28px rgba(0,0,0,.15)}.rd-page{padding:28px 18px 100px}}
 
 .rd-drawer-body.rd-drawer-chat{padding:0;overflow:hidden;display:flex;flex-direction:column}
-.rd-chat{display:flex;flex-direction:column;flex:1;min-height:0;position:relative;font-size:13px;color:var(--dsw-alias-label-primary)}
-.rd-chat-tools{display:flex;align-items:center;gap:6px;flex:0 0 auto;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-chat-tools .rd-btn{height:24px;font-size:11.5px;padding:0 8px}
-.rd-chat-busy{flex:0 0 auto;padding:5px 10px;font-size:11.5px;color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent);border-bottom:1px solid var(--dsw-alias-border-l1)}
-.rd-chat-scroll{flex:1;min-height:0;overflow:auto;padding:10px 12px 22px;overscroll-behavior:contain;scrollbar-width:thin}
-.rd-chat-row{margin:0 0 16px;overflow-wrap:anywhere;display:flex;flex-direction:column}
+.rd-chat{display:flex;flex-direction:column;flex:1;min-height:0;position:relative;font-size:13px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base)}
+.rd-chat-busy{flex:0 0 auto;align-self:flex-start;display:flex;align-items:center;gap:6px;margin:2px 0 12px;padding:5px 11px;border-radius:999px;background:var(--dsw-alias-bg-overlay);box-shadow:0 6px 16px rgba(0,0,0,.04);font-size:11.5px;color:var(--dsw-alias-brand-primary)}
+.rd-chat-busy-dot{width:6px;height:6px;flex:0 0 auto;border-radius:50%;background:currentColor;animation:rd-dot-breathe 1.2s ease-in-out infinite}
+.rd-chat-scroll{flex:1;min-height:0;overflow:auto;padding:16px 12px 28px;overscroll-behavior:contain;scrollbar-width:thin;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1)}
+.rd-chat-row{flex:0 0 auto;margin:0 0 16px;overflow-wrap:anywhere;display:flex;flex-direction:column;align-items:flex-start}
 .rd-chat-user{align-items:flex-end}
-.rd-chat-role{font-size:10.5px;font-weight:600;letter-spacing:.03em;color:var(--dsw-alias-label-secondary);margin:0 2px 4px}
-.rd-chat-bubble{max-width:88%;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:7px 10px}
-.rd-chat-source{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);margin-bottom:4px;word-break:break-word}
+.rd-chat-role{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.rd-chat-bubble{min-width:0;max-width:93%;padding:9px 12px;border:0!important;outline:0!important;box-shadow:none!important;border-radius:15px;line-height:1.66}
+.rd-chat-bubble-assistant{background:var(--dsw-alias-bg-overlay);border-top-left-radius:6px}
+.rd-chat-bubble-user{max-width:88%;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 11%,var(--dsw-alias-bg-overlay));border-bottom-right-radius:6px}
+.rd-chat-bubble-muted{opacity:.86}
 .rd-chat-body{min-width:0}
-.rd-chat-md{font-size:13px;line-height:1.65}
-.rd-chat-md p{margin:.45em 0}
-.rd-chat-md ul,.rd-chat-md ol{margin:.45em 0;padding-left:1.35em}
-.rd-chat-md pre{margin:.6em 0;padding:9px 11px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);overflow:auto;font-size:12px;line-height:1.55}
+.rd-chat-source{display:block;margin:0 0 7px;padding:4px 8px;font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);background:color-mix(in srgb,var(--dsw-alias-bg-base) 58%,transparent);border-radius:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-chat-source:before{content:'“';margin-right:2px;color:var(--dsw-alias-brand-primary);font-size:12px;line-height:1}
+.rd-chat-images{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 7px;max-width:100%}
+.rd-chat-images.multi .rd-chat-image{width:calc(50% - 3px)}
+.rd-chat-image{display:block;position:relative;max-width:100%;border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-2);line-height:0}
+.rd-chat-image img{display:block;max-width:100%;max-height:min(42vh,320px);width:auto;height:auto;object-fit:contain}
+.rd-chat-images.multi .rd-chat-image img{width:100%;height:auto;max-height:none;aspect-ratio:1;object-fit:cover}
+.rd-chat-image-loading{display:block;width:150px;height:96px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);animation:rd-pulse 1.2s ease-in-out infinite}
+.rd-chat-image-failed{display:inline-flex;align-items:center;max-width:100%;padding:4px 8px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);font-size:11px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rd-chat-files{display:flex;flex-direction:column;gap:5px;margin:0 0 7px;max-width:100%}
+.rd-chat-file{display:flex;align-items:center;gap:7px;min-width:0;padding:6px 9px;border-radius:9px;background:color-mix(in srgb,var(--dsw-alias-bg-base) 55%,transparent);font-size:11.5px;line-height:1.4}
+.rd-chat-file-ext{flex:0 0 auto;padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 11%,transparent);color:var(--dsw-alias-brand-primary);font-size:9px;font-weight:600;letter-spacing:.04em}
+.rd-chat-file-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}
+.rd-chat-file-size{flex:0 0 auto;font-size:10.5px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.rd-chat-md{font-size:13px;line-height:1.68}
+.rd-chat-md>:first-child{margin-top:0}
+.rd-chat-md>:last-child{margin-bottom:0}
+.rd-chat-md p{margin:.5em 0}
+.rd-chat-md ul,.rd-chat-md ol{margin:.5em 0;padding-left:1.35em}
+.rd-chat-md pre{margin:.65em 0;padding:9px 11px;border-radius:9px;background:var(--dsw-alias-bg-layer-2);overflow:auto;font-size:12px;line-height:1.55}
 .rd-chat-md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;background:var(--dsw-alias-bg-layer-2);padding:1px 4px;border-radius:4px}
-.rd-chat-md pre code{background:transparent;padding:0}
-.rd-chat-md blockquote{margin:.5em 0;padding:.1em 0 .1em .8em;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12.5px}
-.rd-chat-md h1,.rd-chat-md h2,.rd-chat-md h3,.rd-chat-md h4{font-size:1.05em;margin:.7em 0 .35em}
-.rd-chat-md a{color:var(--dsw-alias-brand-primary)}
-.rd-chat-process{margin:3px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
-.rd-chat-process>summary{cursor:pointer;width:fit-content;list-style:none;padding:1px 0}
+.rd-chat-md pre code{background:transparent;padding:0;border-radius:0}
+.rd-chat-md blockquote{margin:.55em 0;padding:.1em 0 .1em .8em;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12.5px}
+.rd-chat-md h1,.rd-chat-md h2,.rd-chat-md h3,.rd-chat-md h4{font-size:1.05em;margin:.7em 0 .35em;line-height:1.4}
+.rd-chat-md a{color:var(--dsw-alias-brand-primary);text-underline-offset:2px}
+.rd-chat-md table{width:100%;margin:.6em 0;border-collapse:collapse;font-size:12px}
+.rd-chat-md th,.rd-chat-md td{border:1px solid var(--dsw-alias-border-l1);padding:4px 6px;text-align:left;vertical-align:top}
+.rd-chat-md th{background:var(--dsw-alias-bg-layer-2);font-weight:600}
+.rd-chat-md hr{border:0;border-top:1px solid var(--dsw-alias-border-l1);margin:1em 0}
+.rd-chat-process{margin:7px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-process>summary{display:inline-flex;align-items:center;gap:5px;list-style:none;cursor:pointer;padding:2px 9px;border:0;border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);transition:background var(--rd-motion-fast) ease,color var(--rd-motion-fast) ease}
+.rd-chat-process>summary:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
 .rd-chat-process>summary::-webkit-details-marker{display:none}
-.rd-chat-process>summary:before{content:'▸';display:inline-block;margin-right:4px;transform:translateY(-1px)}
+.rd-chat-process>summary:before{content:'▸';display:inline-block}
 .rd-chat-process[open]>summary:before{content:'▾'}
-.rd-chat-process-tools{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 2px}
-.rd-chat-chip{border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:1px 6px;font-size:11px;background:var(--dsw-alias-bg-layer-1)}
-.rd-chat-process-reasoning{margin-top:4px;white-space:pre-wrap;max-height:38vh;overflow:auto}
-.rd-chat-reasoning-sub{margin:4px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-process-tools{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
+.rd-chat-chip{border:0;border-radius:999px;padding:2px 8px;font-size:10.5px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary)}
+.rd-chat-process-reasoning{margin-top:5px;white-space:pre-wrap;max-height:38vh;overflow:auto}
+.rd-chat-reasoning-sub{margin:5px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .rd-chat-reasoning-sub>summary{cursor:pointer;width:fit-content;list-style:none;padding:1px 0}
 .rd-chat-reasoning-sub>summary::-webkit-details-marker{display:none}
 .rd-chat-reasoning-sub>summary:before{content:'▸';display:inline-block;margin-right:4px;transform:translateY(-1px)}
 .rd-chat-reasoning-sub[open]>summary:before{content:'▾'}
-.rd-chat-streaming-dot{display:inline-block;width:6px;height:6px;margin-left:2px;border-radius:50%;background:var(--dsw-alias-brand-primary);opacity:.7}
-.rd-chat-status{display:flex;align-items:center;gap:6px;margin:0 0 12px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-live{display:flex;align-items:center;gap:7px;padding:1px 0;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-live-dot{width:6px;height:6px;flex:0 0 auto;border-radius:50%;background:var(--dsw-alias-brand-primary);animation:rd-dot-breathe 1.2s ease-in-out infinite}
+.rd-chat-live-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd-chat-live-extra{flex:0 0 auto;font-size:10.5px;color:var(--dsw-alias-label-tertiary)}
+.rd-chat-streaming-dot{display:inline-block;width:6px;height:6px;margin-left:4px;border-radius:50%;background:var(--dsw-alias-brand-primary);opacity:.7;vertical-align:middle}
+.rd-chat-status{flex:0 0 auto;display:flex;align-items:center;gap:6px;margin:0 0 12px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .rd-chat-dot-running{background:var(--dsw-alias-brand-primary)}
 .rd-chat-reasoning{margin:2px 0 6px}
 .rd-chat-reasoning>summary{cursor:pointer;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .rd-chat-muted{color:var(--dsw-alias-label-secondary);font-size:12px}
-.rd-chat-tool{display:flex;align-items:center;gap:6px;margin:5px 0;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.rd-chat-tool{flex:0 0 auto;display:flex;align-items:center;gap:6px;margin:0 0 10px;padding:6px 10px;border:0;border-radius:10px;background:var(--dsw-alias-bg-overlay);box-shadow:0 6px 16px rgba(0,0,0,.04);font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .rd-chat-tool-name{font-weight:600;color:var(--dsw-alias-label-primary);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rd-chat-tool-status{margin-left:auto;font-size:11px}
 .rd-chat-dot{width:6px;height:6px;flex:0 0 auto;border-radius:50%;background:var(--dsw-alias-label-secondary)}
 .rd-chat-tool-running .rd-chat-dot{background:var(--dsw-alias-brand-primary)}
 .rd-chat-tool-error .rd-chat-dot{background:var(--dsw-alias-state-error-primary)}
-.rd-chat-error{font-size:12px;line-height:1.55;color:var(--dsw-alias-state-error-primary)}
-.rd-chat-interrupted{font-size:11.5px;color:var(--dsw-alias-label-secondary);font-style:italic}
-.rd-chat-empty{padding:30px 14px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:1.7}
-.rd-chat-unavailable{padding:24px 14px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12.5px}
-.rd-chat-back-to-bottom{position:sticky;left:50%;bottom:4px;transform:translateX(-50%);z-index:3;box-shadow:0 6px 18px rgba(0,0,0,.16)}
+.rd-chat-row.rd-chat-error{display:flex;align-items:flex-start;gap:6px;margin:0 0 14px;padding:8px 11px;border:0;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 8%,transparent);border-radius:10px;font-size:12px;line-height:1.55;color:var(--dsw-alias-state-error-primary)}
+.rd-chat-row.rd-chat-error .rd-chat-dot{background:var(--dsw-alias-state-error-primary);margin-top:5px}
+.rd-chat-stopped{display:inline-block;margin-left:6px;font-size:11px;font-style:italic;color:var(--dsw-alias-label-secondary)}
+.rd-chat-empty{margin:auto;padding:32px 22px 40px;display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center}
+.rd-chat-empty-icon{width:42px;height:42px;display:inline-flex;align-items:center;justify-content:center;border-radius:13px;border:0;background:linear-gradient(160deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 15%,transparent),color-mix(in srgb,var(--dsw-alias-brand-primary) 5%,transparent));color:var(--dsw-alias-brand-primary);margin-bottom:3px}
+.rd-chat-empty-icon svg{width:20px;height:20px;display:block}
+.rd-chat-empty-title{font-size:14px;font-weight:600;letter-spacing:.01em}
+.rd-chat-empty-desc{max-width:250px;font-size:12px;line-height:1.7;color:var(--dsw-alias-label-secondary)}
+.rd-chat-empty-book{font-size:11.5px;color:var(--dsw-alias-label-secondary);border:0;border-radius:999px;padding:2px 10px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:color-mix(in srgb,var(--dsw-alias-bg-base) 55%,transparent)}
+.rd-chat-empty-hints{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px}
+.rd-chat-empty-hints span{font-size:10.5px;color:var(--dsw-alias-label-secondary);border:0;border-radius:999px;padding:2px 8px;background:color-mix(in srgb,var(--dsw-alias-bg-base) 45%,transparent)}
+.rd-chat-unavailable{margin:auto;padding:36px 20px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;font-size:12.5px;line-height:1.65;color:var(--dsw-alias-label-secondary)}
+.rd-chat-unavailable-text{max-width:240px}
+.rd-chat-back-to-bottom{position:sticky;left:50%;bottom:8px;transform:translateX(-50%);z-index:3;height:26px;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.18);background:var(--dsw-alias-bg-overlay);align-self:center}
 .rd-chat-unread{display:inline-block;width:6px;height:6px;margin-left:5px;border-radius:50%;background:var(--dsw-alias-brand-primary);vertical-align:middle}
 .rd-mini{flex-wrap:wrap;max-width:min(720px,calc(100vw - 16px))}
 .rd-mini-error{flex-basis:100%;padding:0 6px 2px;color:var(--dsw-alias-state-error-primary);font-size:11.5px;line-height:1.4}
 .rd-mini .rd-quick-ask{height:26px;max-width:132px;border:0;background:transparent;font-size:12px;color:var(--dsw-alias-label-secondary);padding:0 6px}
+
+
+.rd-root{--rd-motion-fast:90ms;--rd-motion-base:140ms;--rd-motion-slow:180ms;--rd-motion-map:240ms;--rd-ease-enter:cubic-bezier(.22,1,.36,1);--rd-scale-from:.96}
+.rd-mini[data-motion=in]{--rd-from:6px;animation:rd-float-in var(--rd-motion-base) var(--rd-ease-enter) both;transform-origin:var(--rd-origin-x,50%) var(--rd-origin-y,50%)}
+.rd-mini[data-motion=in][data-side=below]{--rd-from:-6px}
+.rd-card[data-motion=in]{--rd-from:8px;animation:rd-float-in var(--rd-motion-slow) var(--rd-ease-enter) both;transform-origin:var(--rd-origin-x,50%) var(--rd-origin-y,50%)}
+.rd-card[data-motion=in][data-side=below]{--rd-from:-8px}
+@keyframes rd-float-in{from{opacity:0;transform:translateY(var(--rd-from,6px)) scale(var(--rd-scale-from))}}
+.rd-card-stack{transition:transform var(--rd-motion-slow) var(--rd-ease-enter),opacity var(--rd-motion-slow) var(--rd-ease-enter)}
+.rd-hover-zone[data-dragging="1"] .rd-card-stack{transition:none}
+.rd-drawer[data-motion=open]{animation:rd-drawer-in var(--rd-motion-slow) var(--rd-ease-enter)}
+.rd-drawer-pane{min-width:0}
+.rd-drawer[data-motion] .rd-drawer-pane{animation:rd-slide-in var(--rd-motion-base) var(--rd-ease-enter) 40ms backwards}
+.rd-drawer-body.rd-drawer-chat .rd-drawer-pane{display:flex;flex-direction:column;flex:1;min-height:0}
+@keyframes rd-drawer-in{from{flex-basis:0;width:0;max-width:0}}
+@keyframes rd-slide-in{from{opacity:0;transform:translateX(8px)}}
+.rd-chat-row[data-motion=in]{--rd-from:4px;--rd-scale-from:1;animation:rd-float-in var(--rd-motion-fast) var(--rd-ease-enter) both}
+.rd-chat-streaming-dot{animation:rd-dot-breathe 1.2s ease-in-out infinite}
+@keyframes rd-dot-breathe{0%,100%{opacity:.45;transform:scale(.9)}50%{opacity:.9;transform:scale(1.1)}}
+.rdm-node-enter{--rd-from:0;--rd-scale-from:.92;animation:rd-float-in var(--rd-motion-slow) var(--rd-ease-enter) both;transform-box:fill-box;transform-origin:center}
+.rdm-node-fade{animation:rdm-node-fade var(--rd-motion-fast) var(--rd-ease-enter) both}
+.rdm-edge-enter{animation:rdm-edge-draw var(--rd-motion-map) linear forwards}
+@keyframes rdm-node-fade{from{opacity:0}}
+@keyframes rdm-edge-draw{to{stroke-dashoffset:0}}
+.rd-jump-ring{position:fixed;z-index:60;pointer-events:none;border:2px solid var(--dsw-alias-brand-primary);border-radius:6px;box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent);animation:rd-ring-out .7s cubic-bezier(.4,0,1,1) forwards}
+.rd-jump-ring-static{animation:none;opacity:.8}
+@keyframes rd-ring-out{0%{opacity:0}14%{opacity:.9}60%{opacity:.9}100%{opacity:0}}
+.rd-btn,.rd-entry,.rd-drawer-item,.rd-map-btn{transition:background-color var(--rd-motion-fast) ease,transform var(--rd-motion-fast) ease}
+.rd-btn:active:not(:disabled),.rd-entry:active,.rd-drawer-item:active,.rd-map-btn:active{transform:scale(.98)}
+@media (prefers-reduced-motion: reduce){.rd-root *{animation:none!important;transition:none!important}.rd-root .rd-main{scroll-behavior:auto}}
+.rd-root.rd-motion-off *{animation:none!important;transition:none!important}
+.rd-root.rd-map-fullscreen-open .rd-drawer-pane{transform:none!important}
 `
+
 
 const BLOCKED = new Set([
   'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'link', 'meta', 'base', 'style',
@@ -3045,15 +3694,78 @@ function baseTitle(value) {
     .trim()
 }
 
-/** Human title for a chunked section: strip the ordinal suffix, fall back to its summary. */
-function chunkNodeTitle(node, fallback = '') {
-  if (!node) return fallback
-  const title = String(node.title || '')
-    .replace(/[（(]\s*\d+\s*[）)]\s*$/, '')
+/** Strip extension and download-site noise from a document name (map root label). */
+function documentTitle(value) {
+  const cleaned = String(value || '')
+    .replace(/\.(pdf|epub|md|markdown|txt)$/i, '')
+    .replace(/\s*\((?:z-library[^)]*|z-lib[^)]*|1lib[^)]*|libgen[^)]*|annas-archive[^)]*)\)/gi, '')
+    .replace(/\s{2,}/g, ' ')
     .trim()
-  if (title) return title
-  const summary = String(node.summary || '').trim()
-  return summary || fallback
+  return cleaned || '导读'
+}
+
+/**
+ * Model replies occasionally leak a JSON envelope into a summary; unwrap it so
+ * the map/detail/export never show raw JSON.
+ */
+function cleanGuideSummary(value) {
+  let text = String(value || '').trim()
+  if (text.startsWith('{')) {
+    const match = text.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+    if (match) {
+      try {
+        text = JSON.parse(`"${match[1]}"`)
+      } catch {
+        text = match[1].replace(/\\n/g, ' ')
+      }
+    } else {
+      text = text.replace(/[{}"]/g, ' ').replace(/\b(?:summary|keyPoints)\s*:/g, ' ')
+    }
+  }
+  return text.replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Copy a guide with summary text cleaned, keeping its shape for every view. */
+function sanitizeGuide(guide) {
+  if (!guide || typeof guide !== 'object') return guide
+  const cleanList = (points) => (Array.isArray(points) ? points.map(cleanGuideSummary).filter(Boolean) : [])
+  const cleanSections = (items) =>
+    (Array.isArray(items) ? items : []).map((section) =>
+      section && typeof section === 'object'
+        ? { ...section, summary: cleanGuideSummary(section.summary), keyPoints: cleanList(section.keyPoints) }
+        : section,
+    )
+  return {
+    ...guide,
+    synopsis: cleanGuideSummary(guide.synopsis),
+    parts: (Array.isArray(guide.parts) ? guide.parts : []).map((part) =>
+      part && typeof part === 'object'
+        ? { ...part, summary: cleanGuideSummary(part.summary), keyPoints: cleanList(part.keyPoints) }
+        : part,
+    ),
+    sections: cleanSections(guide.sections),
+  }
+}
+
+function firstClause(value, max = 14) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  const clause = (text.split(/[，,。；;！？!?：:]/)[0] || text).trim()
+  const chars = Array.from(clause)
+  return chars.length > max ? chars.slice(0, max).join('') + '…' : clause
+}
+
+/**
+ * Label lines for a chunked section. The chapter title already sits on the
+ * parent node, so repeating it here makes every sibling look identical; show
+ * the chunk ordinal plus its leading point/summary cluster instead.
+ */
+function chunkNodeLines(node, perLine = 17) {
+  if (!node) return ['']
+  const ordinal = Number(node.chunkIndex) || 0
+  const prefix = ordinal ? `（${ordinal}）` : ''
+  const detail = firstClause(cleanGuideSummary((node.keyPoints || [])[0] || node.summary || ''))
+  const label = `${prefix}${detail || baseTitle(node.title)}`
+  return splitNodeTitle(label, perLine)
 }
 
 /** Split a long node title into two readable SVG lines. */
@@ -3139,6 +3851,23 @@ function buildGuideTree(title, guide) {
     root.children.push(node)
   }
   return root
+}
+
+/**
+ * CSS custom properties for the map's dot grid. The grid is painted on the
+ * viewport (not the SVG) so it reads as an infinite canvas: dot spacing scales
+ * with zoom and the pattern translate follows the pan 1:1.
+ */
+function mapGridVars({ pan = { x: 0, y: 0 }, scale = 1, spacing = 24, offset = 30 } = {}) {
+  const step = Math.max(8, Number(spacing) * (Number(scale) || 1))
+  const center = step / 2
+  const x = (Number(pan.x) || 0) + offset - center
+  const y = (Number(pan.y) || 0) + offset - center
+  return {
+    '--rd-grid-size': `${Number(step.toFixed(2))}px`,
+    '--rd-grid-x': `${Number(x.toFixed(2))}px`,
+    '--rd-grid-y': `${Number(y.toFixed(2))}px`,
+  }
 }
 
 /**
@@ -3441,6 +4170,7 @@ function fitHostHeight(node, viewportHeight) {
  * React or a DOM. See docs/superpowers/specs/2026-11-23-reader-chat-panel-design.md §3.
  */
 
+
 /** Node kinds that are platform bookkeeping, never shown in the panel. */
 const SKIP_KINDS = new Set([
   'context',
@@ -3543,10 +4273,33 @@ function normalizeBlock(block, maxText) {
       callId: String(block.callId || block.id || ''),
     }
   }
-  if (kind === 'image') return { kind: 'image' }
+  if (kind === 'image') {
+    const attachment = normalizeImageRef(block.attachment)
+    return attachment ? { kind: 'image', attachment } : { kind: 'image' }
+  }
   const text = truncate(textOf(block), maxText)
   if (!text) return null
   return { kind: kind === 'reasoning' ? 'reasoning' : 'text', text }
+}
+
+/** Signature used to merge a running node with its duplicated legacy partial. */
+function blockSignature(block) {
+  if (!block || typeof block !== 'object') return ''
+  if (block.kind === 'image') return `image:${(block.attachment && block.attachment.attachmentId) || ''}`
+  return `${block.kind}:${String(block.text || '')}`
+}
+
+/** Append blocks without duplicating the platform's node/partial mirror. */
+function mergeBlocks(left, right) {
+  const seen = new Set(left.map(blockSignature))
+  const out = left.slice()
+  for (const block of right) {
+    const signature = blockSignature(block)
+    if (!signature || seen.has(signature)) continue
+    seen.add(signature)
+    out.push(block)
+  }
+  return out
 }
 
 /** Fold reasoning text and tool names into the compact process summary. */
@@ -3565,6 +4318,33 @@ function summarizeProcess(blocks) {
 function normalizeBlocks(value, maxText) {
   const list = Array.isArray(value) ? value : Array.isArray(value && value.blocks) ? value.blocks : []
   return list.map((block) => normalizeBlock(block, maxText)).filter(Boolean)
+}
+
+/**
+ * Pull durable image/file references out of one user message. The panel receives
+ * the platform snapshot, whose user content is
+ * `[{ type: 'image', attachment }, { type: 'file', attachment }, { type: 'text' }]`.
+ * @param {unknown} data session message data
+ * @returns {{images: Array<object>, files: Array<object>}}
+ */
+function messageAttachments(data) {
+  const holder = data && typeof data === 'object' ? data : {}
+  const message = holder.message && typeof holder.message === 'object' ? holder.message : holder
+  const content = Array.isArray(message.content) ? message.content : Array.isArray(holder.content) ? holder.content : []
+  const images = []
+  const files = []
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue
+    const kind = String(part.type || part.kind || '')
+    if (kind === 'image') {
+      const ref = normalizeImageRef(part.attachment)
+      if (ref) images.push(ref)
+    } else if (kind === 'file') {
+      const ref = normalizeFileRef(part.attachment)
+      if (ref) files.push(ref)
+    }
+  }
+  return { images, files }
 }
 
 function nodeTurn(node) {
@@ -3620,7 +4400,8 @@ function rowOf(node, maxText, detail) {
   const turn = nodeTurn(node)
   const data = node.data || {}
   if (USER_KINDS.has(kind)) {
-    return { kind: 'user', key: node.key, turn, text: truncate(textOf(data), maxText) }
+    const { images, files } = messageAttachments(data)
+    return { kind: 'user', key: node.key, turn, text: truncate(textOf(data), maxText), images, files }
   }
   if (ASSISTANT_KINDS.has(kind)) {
     let blocks = normalizeBlocks(data, maxText)
@@ -3720,45 +4501,59 @@ function buildTranscript(chat, options = {}) {
     }
   }
   // The platform publishes one streaming answer twice: a running `assistant`
-  // Node and the derived `legacy.partial`. Render whichever exists exactly once.
-  const streamingSteps = new Set(
-    rows.filter((row) => row.kind === 'assistant' && row.streaming).map((row) => `${row.turn}:${row.step}`),
-  )
-  const streamingTurns = new Set(rows.filter((row) => row.kind === 'assistant' && row.streaming).map((row) => row.turn))
-  const renderedCalls = new Set(rows.filter((row) => row.kind === 'tool' && row.callId).map((row) => row.callId))
+  // Node and the derived `legacy.partial`. They are two views of the same step,
+  // so merge their blocks instead of rendering one and dropping the other: the
+  // running node often carries only reasoning/tool blocks while the streamed
+  // text lives on the partial (this is what made the bubble look empty).
   const legacy = (chat && chat.legacy) || {}
   const partial = legacy.partial
+  const streamingRow = rows.find((row) => row.kind === 'assistant' && row.streaming) || null
   if (partial && typeof partial === 'object') {
     const blocks = normalizeBlocks(partial, maxText)
     const turn = Number.isFinite(partial.turn) ? Number(partial.turn) : rows.length ? rows[rows.length - 1].turn : 0
     const step = Number.isFinite(partial.step) ? Number(partial.step) : 0
-    const alreadyRendered = streamingSteps.has(`${turn}:${step}`) || streamingTurns.has(turn)
-    if (!alreadyRendered && (blocks.length > 0 || rows.length === 0)) {
-      const full = detail === DETAIL_FULL
+    const full = detail === DETAIL_FULL
+    const visible = full ? blocks : blocks.filter((block) => block.kind === 'text' || block.kind === 'image')
+    const process = full ? null : summarizeProcess(blocks)
+    const target = streamingRow && (streamingRow.step === step || streamingRow.turn === turn) ? streamingRow : null
+    if (target) {
+      target.blocks = mergeBlocks(target.blocks, visible)
+      if (!full) target.process = mergeProcess(target.process, process)
+      target.streaming = partial.status !== 'settled'
+    } else if (blocks.length > 0 || rows.length === 0) {
       rows.push({
         kind: 'assistant',
         key: `partial:${turn}:${step}`,
         turn,
         step,
-        blocks: full ? blocks : blocks.filter((block) => block.kind === 'text' || block.kind === 'image'),
-        process: full ? null : summarizeProcess(blocks),
+        blocks: visible,
+        process,
         streaming: partial.status !== 'settled',
       })
     }
   }
+  // Live tool calls are the most useful "what is happening" signal while the
+  // answer streams with no text yet; attach them to the streaming bubble rather
+  // than spending a separate status row below it.
+  const renderedCalls = new Set(rows.filter((row) => row.kind === 'tool' && row.callId).map((row) => row.callId))
   const calls = (Array.isArray(legacy.runningCalls) ? legacy.runningCalls : []).filter(
     (call) => call && typeof call === 'object' && !renderedCalls.has(String(call.callId || call.id || '')),
   )
-  if (calls.length > 0 && detail !== DETAIL_FULL) {
-    // One status line for all live work keeps the reading transcript quiet.
+  if (calls.length > 0) {
     const names = calls.map((call) => String(call.name || '')).filter(Boolean)
-    rows.push({
-      kind: 'status',
-      key: 'status:running',
-      turn: Number.isFinite(calls[0].turn) ? Number(calls[0].turn) : rows.length ? rows[rows.length - 1].turn : 0,
-      names,
-      text: names.join(' · '),
-    })
+    const liveRow = rows.find((row) => row.kind === 'assistant' && row.streaming) || null
+    if (liveRow && detail !== DETAIL_FULL) {
+      liveRow.activities = names
+    } else if (detail !== DETAIL_FULL) {
+      // One status line for all live work keeps the reading transcript quiet.
+      rows.push({
+        kind: 'status',
+        key: 'status:running',
+        turn: Number.isFinite(calls[0].turn) ? Number(calls[0].turn) : rows.length ? rows[rows.length - 1].turn : 0,
+        names,
+        text: names.join(' · '),
+      })
+    }
   }
   for (const call of calls) {
     if (detail !== DETAIL_FULL) break
@@ -3834,6 +4629,8 @@ function chatMessageCount(chat) {
 
 
 
+
+
 /**
  * In-reader conversation panel.
  *
@@ -3873,7 +4670,7 @@ const STATUS_LABEL = {
   error: 'label.chatToolError',
 }
 
-function renderBlock(block, index, t) {
+function renderBlock(block, index, t, attachments) {
   if (!block) return null
   if (block.kind === 'text') {
     return el('div', {
@@ -3891,7 +4688,11 @@ function renderBlock(block, index, t) {
     )
   }
   if (block.kind === 'image') {
-    return el('div', { key: index, className: 'rd-chat-image' }, t('label.chatImage'))
+    return el(
+      'div',
+      { key: index, className: 'rd-chat-images' },
+      el(AttachmentImage, { attachment: block.attachment, resolver: attachments, alt: t('label.chatImage') }),
+    )
   }
   if (block.kind === 'tool-call') {
     return el(
@@ -3928,6 +4729,46 @@ const TOOL_PHRASES = {
 function toolPhrase(name, t) {
   const key = TOOL_PHRASES[String(name || '').trim()]
   return key ? t(key) : String(name || '').trim() || t('label.chatTool')
+}
+
+/** Present-continuous phrasing for the tool a running answer is using. */
+const LIVE_PHRASES = {
+  read: 'tool.liveRead',
+  read_image: 'tool.liveRead',
+  write: 'tool.liveWrite',
+  edit: 'tool.liveWrite',
+  apply_patch: 'tool.liveWrite',
+  bash: 'tool.liveCommand',
+  pwsh: 'tool.liveCommand',
+  terminal: 'tool.liveCommand',
+  grep: 'tool.liveSearch',
+  glob: 'tool.liveSearch',
+  search: 'tool.liveSearch',
+  web_search: 'tool.liveWebSearch',
+  web_fetch: 'tool.liveWebFetch',
+  todo_write: 'tool.livePlan',
+}
+
+function livePhrase(name, t) {
+  const key = LIVE_PHRASES[String(name || '').trim()]
+  return t(key || 'label.chatToolRunning')
+}
+
+/** What the running answer is doing right now, shown while it has no text yet. */
+function renderLiveStatus(row, t) {
+  const names = Array.isArray(row.activities) ? row.activities.filter(Boolean) : []
+  return el(
+    'div',
+    {
+      className: 'rd-chat-live',
+      role: 'status',
+      'data-chat-live': '',
+      title: names.length > 1 ? names.map((name) => livePhrase(name, t)).join('、') : undefined,
+    },
+    el('span', { className: 'rd-chat-live-dot', 'aria-hidden': 'true' }),
+    el('span', { className: 'rd-chat-live-text' }, names.length > 0 ? livePhrase(names[0], t) : t('label.chatThinking')),
+    names.length > 1 ? el('span', { className: 'rd-chat-live-extra' }, `+${names.length - 1}`) : null,
+  )
 }
 
 /** First meaningful line of one reasoning text, stripped of Markdown markers. */
@@ -4005,11 +4846,28 @@ function splitUserText(text) {
   return { source: first, body }
 }
 
-function roleLabel(role, t) {
+const GLYPHS = {
+  user: () =>
+    el(
+      'svg',
+      { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      el('circle', { cx: 12, cy: 8, r: 3.3 }),
+      el('path', { d: 'M5.5 19.5a6.5 6.5 0 0 1 13 0' }),
+    ),
+  assistant: () =>
+    el(
+      'svg',
+      { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      el('path', { d: 'M12 3.4c3 3.5 5.2 6.2 5.2 8.8a5.2 5.2 0 0 1-10.4 0c0-2.6 2.2-5.3 5.2-8.8z' }),
+      el('path', { d: 'M9.8 13.6a2.4 2.4 0 0 0 3.3 1.6' }),
+    ),
+}
+
+function roleTag(role, t) {
   return el('div', { className: `rd-chat-role rd-chat-role-${role}` }, t(role === 'user' ? 'label.chatRoleUser' : 'label.chatRoleAssistant'))
 }
 
-function renderRow(row, t) {
+function renderRow(row, t, motion, attachments) {
   if (row.kind === 'user') {
     const parts = splitUserText(row.text)
     return el(
@@ -4020,11 +4878,28 @@ function renderRow(row, t) {
         'data-chat-row': '',
         'data-kind': 'user',
         'data-role': 'user',
+        'data-motion': motion ? 'in' : undefined,
       },
-      roleLabel('user', t),
       el(
         'div',
-        { className: 'rd-chat-bubble' },
+        { className: 'rd-chat-bubble rd-chat-bubble-user' },
+        roleTag('user', t),
+        row.images && row.images.length > 0
+          ? el(
+              'div',
+              { className: `rd-chat-images${row.images.length > 1 ? ' multi' : ''}` },
+              row.images.map((attachment, index) =>
+                el(AttachmentImage, { key: `image-${index}`, attachment, resolver: attachments }),
+              ),
+            )
+          : null,
+        row.files && row.files.length > 0
+          ? el(
+              'div',
+              { className: 'rd-chat-files' },
+              row.files.map((file, index) => el(AttachmentFileCard, { key: `file-${index}`, file })),
+            )
+          : null,
         parts.source ? el('div', { className: 'rd-chat-source' }, parts.source) : null,
         parts.body
           ? el('div', {
@@ -4044,14 +4919,22 @@ function renderRow(row, t) {
         'data-chat-row': '',
         'data-kind': 'assistant',
         'data-role': 'assistant',
+        'data-motion': motion ? 'in' : undefined,
       },
-      roleLabel('assistant', t),
       el(
         'div',
-        { className: 'rd-chat-body' },
-        row.blocks.map((block, index) => renderBlock(block, index, t)),
-        renderProcess(row.process, t),
-        row.streaming ? el('span', { className: 'rd-chat-streaming-dot', 'aria-hidden': 'true' }) : null,
+        { className: 'rd-chat-bubble rd-chat-bubble-assistant' },
+        roleTag('assistant', t),
+        el(
+          'div',
+          { className: 'rd-chat-body' },
+          row.blocks.map((block, index) => renderBlock(block, index, t, attachments)),
+          row.streaming && row.blocks.length === 0 ? renderLiveStatus(row, t) : null,
+          renderProcess(row.process, t),
+          row.streaming && row.blocks.length > 0
+            ? el('span', { className: 'rd-chat-streaming-dot', 'aria-hidden': 'true' })
+            : null,
+        ),
       ),
     )
   }
@@ -4081,20 +4964,37 @@ function renderRow(row, t) {
   if (row.kind === 'error') {
     return el(
       'div',
-      { key: row.key, className: 'rd-chat-row rd-chat-error', 'data-chat-row': '', 'data-kind': 'error' },
+      {
+        key: row.key,
+        className: 'rd-chat-row rd-chat-error',
+        'data-chat-row': '',
+        'data-kind': 'error',
+        'data-motion': motion ? 'in' : undefined,
+      },
+      el('span', { className: 'rd-chat-dot', 'aria-hidden': 'true' }),
       row.text || t('label.chatError'),
     )
   }
   if (row.kind === 'interrupted') {
     return el(
       'div',
-      { key: row.key, className: 'rd-chat-row rd-chat-interrupted', 'data-chat-row': '', 'data-kind': 'interrupted' },
-      el('div', { className: 'rd-chat-role rd-chat-role-assistant' }, t('label.chatRoleAssistant')),
+      {
+        key: row.key,
+        className: 'rd-chat-row rd-chat-interrupted',
+        'data-chat-row': '',
+        'data-kind': 'interrupted',
+        'data-motion': motion ? 'in' : undefined,
+      },
       el(
         'div',
-        { className: 'rd-chat-body' },
-        (row.blocks || []).map((block, index) => renderBlock(block, index, t)),
-        el('span', { className: 'rd-chat-stopped' }, t('label.chatStopped')),
+        { className: 'rd-chat-bubble rd-chat-bubble-assistant rd-chat-bubble-muted' },
+        roleTag('assistant', t),
+        el(
+          'div',
+          { className: 'rd-chat-body' },
+          (row.blocks || []).map((block, index) => renderBlock(block, index, t, attachments)),
+          el('span', { className: 'rd-chat-stopped' }, t('label.chatStopped')),
+        ),
       ),
     )
   }
@@ -4124,18 +5024,21 @@ function ReaderChatPanel(props) {
   const chat = useChat((snapshot) => snapshot)
   const phase = useInput((snapshot) => (snapshot ? snapshot.phase : null))
   const running = useSession((snapshot) => Boolean(snapshot && snapshot.running))
-  const [showAll, setShowAll] = React.useState(false)
-  const [showProcess, setShowProcess] = React.useState(false)
   const [nearBottom, setNearBottom] = React.useState(true)
+  const attachments = safeProps.attachments || null
   const scrollRef = React.useRef(null)
   const unavailable =
     typeof safeProps.useChat !== 'function' ||
     typeof safeProps.useInput !== 'function' ||
     typeof safeProps.useSession !== 'function'
   const rows = React.useMemo(
-    () => (chat ? buildTranscript(chat, { all: showAll, detail: showProcess ? 'full' : 'compact' }) : []),
-    [chat, showAll, showProcess],
+    // The panel always renders the compact transcript: tool rows and raw
+    // reasoning belong to each answer's folded "process", not to the reading
+    // column. The full trajectory is one click away in the native chat page.
+    () => (chat ? buildTranscript(chat, { all: safeProps.showAll === true }) : []),
+    [chat, safeProps.showAll],
   )
+  const streamingRow = rows.some((row) => row.kind === 'assistant' && row.streaming)
   const busy = Boolean(phase && phase !== 'plain') || running
 
   React.useEffect(() => {
@@ -4144,11 +5047,30 @@ function ReaderChatPanel(props) {
     node.scrollTop = node.scrollHeight
   }, [rows, nearBottom])
 
+  const motionRows = React.useRef({ mounted: false, seen: new Set(), marked: new Set() })
+  const rowMotion = rows.map((row) => {
+    const state = motionRows.current
+    return state.marked.has(row.key) || (state.mounted && !state.seen.has(row.key))
+  })
+  React.useEffect(() => {
+    const state = motionRows.current
+    for (const row of rows) {
+      if (state.mounted && !state.seen.has(row.key)) state.marked.add(row.key)
+      state.seen.add(row.key)
+    }
+    state.mounted = true
+  }, [rows])
+
   if (unavailable) {
     return el(
       'div',
       { className: 'rd-chat' },
-      el('div', { className: 'rd-chat-unavailable' }, t('label.chatUnavailable')),
+      el(
+        'div',
+        { className: 'rd-chat-unavailable' },
+        el('div', { className: 'rd-chat-empty-icon', 'aria-hidden': 'true' }, el(GLYPHS.assistant)),
+        el('div', { className: 'rd-chat-unavailable-text' }, t('label.chatUnavailable')),
+      ),
     )
   }
 
@@ -4158,67 +5080,47 @@ function ReaderChatPanel(props) {
     setNearBottom(true)
     if (node) node.scrollTop = node.scrollHeight
   }
-  const canOpenView = typeof safeProps.openView === 'function'
-
   return el(
     'div',
     { className: 'rd-chat', 'data-chat-panel': '' },
-    rows.length > 0 || canOpenView
-      ? el(
-          'div',
-          { className: 'rd-chat-tools' },
-          rows.length > 0
-            ? el(
-                'button',
-                {
-                  className: 'rd-btn ghost rd-chat-toggle',
-                  onClick: () => setShowAll((current) => !current),
-                },
-                t(showAll ? 'label.chatCollapse' : 'label.chatShowAll'),
-              )
-            : null,
-          rows.length > 0
-            ? el(
-                'button',
-                {
-                  className: 'rd-btn ghost rd-chat-toggle',
-                  'data-chat-action': 'toggle-process',
-                  'aria-pressed': showProcess ? 'true' : 'false',
-                  title: t('label.chatProcess'),
-                  onClick: () => setShowProcess((current) => !current),
-                },
-                t('label.chatProcess'),
-              )
-            : null,
-          el('span', { className: 'rd-spacer' }),
-          canOpenView
-            ? el(
-                'button',
-                {
-                  className: 'rd-btn ghost rd-chat-open-view',
-                  'data-chat-action': 'open-view',
-                  title: t('label.chatJump'),
-                  onClick: () => safeProps.openView('chat', ''),
-                },
-                t('label.chatJump'),
-              )
-            : null,
-        )
-      : null,
-    busy ? el('div', { className: 'rd-chat-busy', role: 'status' }, t('label.chatBusy')) : null,
     el(
       'div',
       { className: 'rd-chat-scroll', ref: scrollRef, onScroll },
       rows.length > 0
-        ? rows.map((row) => renderRow(row, t))
+        ? rows.map((row, index) => renderRow(row, t, rowMotion[index], attachments))
         : el(
             'div',
             { className: 'rd-chat-empty' },
-            t('label.chatEmpty'),
+            el(
+              'div',
+              { className: 'rd-chat-empty-icon', 'aria-hidden': 'true' },
+              el(
+                'svg',
+                { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                el('path', { d: 'M20 14.2a2.6 2.6 0 0 1-2.6 2.6H9.2L5 20v-3.2h-.4A2.6 2.6 0 0 1 2 14.2V6.6A2.6 2.6 0 0 1 4.6 4h12.8A2.6 2.6 0 0 1 20 6.6z' }),
+                el('path', { d: 'M7.5 9.5h9M7.5 12.5h5.5' }),
+              ),
+            ),
+            el('div', { className: 'rd-chat-empty-title' }, t('label.chatEmptyTitle')),
+            el('div', { className: 'rd-chat-empty-desc' }, t('label.chatEmpty')),
             safeProps.doc && safeProps.doc.name
-              ? el('div', { className: 'rd-chat-empty-book' }, `《${safeProps.doc.name}》`)
+              ? el('div', { className: 'rd-chat-empty-book' }, `《${documentTitle(safeProps.doc.name)}》`)
               : null,
+            el(
+              'div',
+              { className: 'rd-chat-empty-hints' },
+              el('span', null, t('label.chatEmptyHintSelect')),
+              el('span', null, t('label.chatEmptyHintSession')),
+            ),
           ),
+      busy && !streamingRow
+        ? el(
+            'div',
+            { className: 'rd-chat-busy', role: 'status' },
+            el('span', { className: 'rd-chat-busy-dot', 'aria-hidden': 'true' }),
+            t('label.chatBusy'),
+          )
+        : null,
       !nearBottom && rows.length > 0
         ? el(
             'button',
@@ -4699,6 +5601,26 @@ function IconSettings() {
   )
 }
 
+function IconHistory() {
+  return h(
+    'svg',
+    { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'M3.5 12a8.5 8.5 0 1 0 2.8-6.3' }),
+    h('path', { d: 'M3.5 4.5V9H8' }),
+    h('path', { d: 'M12 8.5V12l2.6 1.6' }),
+  )
+}
+
+function IconExternal() {
+  return h(
+    'svg',
+    { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'M14 5h5v5' }),
+    h('path', { d: 'M19 5l-7 7' }),
+    h('path', { d: 'M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10' }),
+  )
+}
+
 function PdfPageView(props) {
   const { doc, page, zoom, annotations, concepts, contentRef } = props
   const canvasRef = React.useRef(null)
@@ -4798,7 +5720,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.13.1'
+const READER_VERSION = '0.14.0'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -4906,12 +5828,18 @@ function ReaderView(props) {
   const [mapScale, setMapScale] = React.useState(1)
   const [selectedNodeId, setSelectedNodeId] = React.useState(null)
   const [mapFullscreen, setMapFullscreen] = React.useState(false)
+  const [chatShowAll, setChatShowAll] = React.useState(false)
   const [mapPan, setMapPan] = React.useState({ x: 0, y: 0 })
   const mapScrollRef = React.useRef(null)
   const mapCanvasRef = React.useRef(null)
   const mapPanRef = React.useRef({ x: 0, y: 0 })
   const mapDragRef = React.useRef(null)
   const suppressMapClick = React.useRef(false)
+  const cardSlotRef = React.useRef(0)
+  const mapMotionRef = React.useRef({
+    key: null, seen: new Set(), entered: new Set(), enteredEdges: new Set(),
+    nodeDelays: new Map(), edgeDelays: new Map(), faded: false, enterAt: 0, fading: new Set(),
+  })
   const [askText, setAskText] = React.useState('')
   const [askBusy, setAskBusy] = React.useState(false)
   const [askWeb, setAskWeb] = React.useState(false)
@@ -4924,6 +5852,7 @@ function ReaderView(props) {
   const [selectionTranslation, setSelectionTranslation] = React.useState(null)
   const card = topCard(cards)
   const prefs = store.prefs || {}
+  const motionOn = motionEnabled(prefs)
 
   const contentRef = React.useRef(null)
   const rootRef = React.useRef(null)
@@ -4947,16 +5876,32 @@ function ReaderView(props) {
   const historyRef = React.useRef(null)
   const reporterRef = React.useRef(null)
 
+  const pulseOptions = () => ({ enabled: motionOn, root: rootRef.current })
+
+  // Durable message images are resolved through the client Session object
+  // layer the platform passes into the view (native conversation does the same).
+  const attachmentResolver = React.useMemo(
+    () => (props.sessions && sessionId ? createAttachmentResolver(props.sessions, sessionId) : null),
+    [props.sessions, sessionId],
+  )
+  React.useEffect(() => () => {
+    if (attachmentResolver) attachmentResolver.dispose()
+  }, [attachmentResolver])
+
   const docKey = doc ? doc.fingerprint || doc.path : null
   const concepts = React.useMemo(() => Object.values(store.concepts || {}), [store.concepts])
   const sentLog = (store.debug && Array.isArray(store.debug.lastSent) ? store.debug.lastSent : []).slice(-10).reverse()
-  const guide = docKey ? store.docs?.[docKey]?.guide : null
+  const rawGuide = docKey ? store.docs?.[docKey]?.guide : null
   // Store merges clone the guide object on every position/annotation write.
   // Rebuild only when its actual content changes, otherwise selecting a node
   // (which may save a page position) would reset the detail card a moment later.
-  const guideSignature = React.useMemo(() => (guide ? JSON.stringify(guide) : ''), [guide])
+  const guideSignature = React.useMemo(() => (rawGuide ? JSON.stringify(rawGuide) : ''), [rawGuide])
+  // Sanitized once per content change: summaries occasionally carry a raw
+  // JSON envelope from the model, and every view (map/detail/list/export)
+  // should show clean prose.
+  const guide = React.useMemo(() => (rawGuide ? sanitizeGuide(rawGuide) : null), [guideSignature])
   const guideTree = React.useMemo(
-    () => (guide ? buildGuideTree(doc ? doc.name : '', guide) : null),
+    () => (guide ? buildGuideTree(doc ? documentTitle(doc.name) : '', guide) : null),
     // Only a new guide (or opening another book) may rebuild the map; page,
     // selection and structure-probe updates must not reset its expansion.
     [guideSignature, doc ? doc.name : ''],
@@ -4977,6 +5922,34 @@ function ReaderView(props) {
     setCollapsedIds(new Set((guideTree.children || []).filter((node) => (node.children || []).length > 0).map((node) => node.id)))
     setSelectedNodeId(null)
   }, [guideTree])
+
+  React.useEffect(() => {
+    if (drawer !== 'guide' || guideView !== 'map' || !guideLayout) return
+    const state = mapMotionRef.current
+    if (state.key !== guideSignature) {
+      Object.assign(state, {
+        key: guideSignature, seen: new Set(), entered: new Set(), enteredEdges: new Set(),
+        nodeDelays: new Map(), edgeDelays: new Map(), faded: true, enterAt: Date.now(), fading: new Set(),
+      })
+      guideLayout.nodes.forEach((node, index) => { state.entered.add(node.id); state.nodeDelays.set(node.id, index) })
+      guideLayout.edges.forEach((edge, index) => {
+        const key = `${edge.from}-${edge.to}`
+        state.enteredEdges.add(key)
+        state.edgeDelays.set(key, index)
+      })
+    }
+    const fresh = []
+    for (const node of guideLayout.nodes) {
+      if (!state.seen.has(node.id)) fresh.push(node.id)
+      state.seen.add(node.id)
+    }
+    // Keep the fade class across the re-render that recentring triggers, then
+    // let it go so a later remount starts clean.
+    if (fresh.length > 0) {
+      for (const id of fresh) state.fading.add(id)
+      setTimeout(() => { for (const id of fresh) state.fading.delete(id) }, 400)
+    }
+  }, [drawer, guideView, guideLayout, guideSignature])
 
   React.useEffect(() => {
     if (drawer !== 'guide' || guideView !== 'map') setMapFullscreen(false)
@@ -5015,6 +5988,16 @@ function ReaderView(props) {
     const fit = Math.min(1, Math.max(0.55, available / (guideLayout.width + 60)))
     setMapScale((current) => (Math.abs(current - 1) < 0.001 ? Number(fit.toFixed(2)) : current))
   }, [guideView, guideLayout])
+
+  React.useEffect(() => {
+    // The stage moves between the drawer and the root when fullscreen toggles,
+    // so the fitted scale must be recomputed for the new viewport.
+    if (guideView !== 'map' || !guideLayout) return
+    const node = mapScrollRef.current
+    if (!node) return
+    const available = Math.max(240, node.clientWidth - 16)
+    setMapScale(Number(Math.min(1, Math.max(0.55, available / (guideLayout.width + 60))).toFixed(2)))
+  }, [mapFullscreen])
 
   // The map is a canvas rather than a scroll box: panning moves the drawing
   // itself, so a map that happens to fit in the viewport can still be dragged.
@@ -5170,8 +6153,10 @@ function ReaderView(props) {
       const nodes = [...document.querySelectorAll('.rd-card')]
       const next = {}
       cards.forEach((entry, index) => {
-        const rect = nodes[index] && nodes[index].getBoundingClientRect()
-        if (rect && rect.width > 0) next[entry.id] = { width: rect.width, height: rect.height }
+        // offsetWidth/Height exclude the entrance transform; getBoundingClientRect
+        // would report a ~4% smaller card while the 0.96 scale is still running.
+        const node = nodes[index]
+        if (node && node.offsetWidth > 0) next[entry.id] = { width: node.offsetWidth, height: node.offsetHeight }
       })
       setCardSizes(next)
     }
@@ -5414,6 +6399,25 @@ function ReaderView(props) {
     setChapter(next)
   }
 
+  // The destination only exists after React commits the jump; pulse it then.
+  const pulseSoon = (selector) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const node = document.querySelector(selector)
+      if (node) pulseElement(node, pulseOptions())
+    }))
+  }
+
+  const jumpToChapter = (next) => {
+    goChapter(next, 'top')
+    pulseSoon('.rd-prose h1,.rd-prose h2,.rd-prose h3,.rd-prose > *')
+  }
+
+  const jumpToPdfPage = (pageNumber) => {
+    if (!Number.isFinite(pageNumber)) return
+    setPage(pageNumber)
+    pulseSoon(`.rd-pdf-page[data-page="${pageNumber}"]`)
+  }
+
   const scrollReading = (direction) => {
     const main = readingScroller()
     if (!main || !doc) return
@@ -5513,6 +6517,7 @@ function ReaderView(props) {
         setConceptEdit(null)
         return
       }
+      if (mapFullscreen) return
       if (!doc) return
       const typingTarget = event.target && event.target.closest
         ? event.target.closest('input, textarea, select, [contenteditable="true"]')
@@ -5611,7 +6616,7 @@ function ReaderView(props) {
     try {
       const opened = await api.fetchBytes(sessionId, entry.path)
       const ext = entry.ext || extOf(entry.name)
-      const next = { path: entry.path, name: entry.name, ext, bytes: opened.bytes, fingerprint: opened.fingerprint || '', sessionId }
+      const next = { path: entry.path, name: entry.name, ext, size: opened.bytes.byteLength, bytes: opened.bytes, fingerprint: opened.fingerprint || '', sessionId }
       if (ext === '.epub') {
         next.epub = await epubOpen(opened.bytes)
         if (next.epub.fixedLayout) throw new Error(t('label.fxlUnsupported'))
@@ -5923,10 +6928,14 @@ function ReaderView(props) {
     }
     const rect = range ? range.getBoundingClientRect() : { left: 220, top: 220, right: 220, bottom: 220 }
     const pendingId = 'pending-' + uid()
+    // Keep one slot per card: the pending card and its settled concept share it,
+    // so loading the answer never replays the entrance animation (M-02).
+    cardSlotRef.current += 1
+    const slot = `card-slot-${cardSlotRef.current}`
     setCards((current) =>
       parentId
-        ? pushCard(current, { id: pendingId, term, pending: true, pinned: true, rect })
-        : [{ id: pendingId, term, pending: true, pinned: true, rect }],
+        ? pushCard(current, { id: pendingId, slot, term, pending: true, pinned: true, rect })
+        : [{ id: pendingId, slot, term, pending: true, pinned: true, rect }],
     )
     const { sentence, paragraph } = contextFor(range)
     const inContent = Boolean(
@@ -5953,15 +6962,15 @@ function ReaderView(props) {
       if (result.ancestor) {
         // The reader walked down the chain and asked about a term that raised it:
         // show that card with the reason instead of pretending it is new.
-        setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect, hint: t('label.ancestorRevisit') }))
+        setCards((current) => replaceTop(current, { id: concept.id, slot: (topCard(current) || {}).slot, pinned: true, rect, hint: t('label.ancestorRevisit') }))
         flash(t('label.ancestorRevisit'))
         return
       }
-      setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect }))
+      setCards((current) => replaceTop(current, { id: concept.id, slot: (topCard(current) || {}).slot, pinned: true, rect }))
       flash(`${t('label.conceptSaved')}：${concept.term}`)
     } catch (e) {
       setCards((current) =>
-        replaceTop(current, { id: pendingId, term, pending: false, error: String(e.message || e), pinned: true, rect }),
+        replaceTop(current, { id: pendingId, slot: (topCard(current) || {}).slot, term, pending: false, error: String(e.message || e), pinned: true, rect }),
       )
     }
   }
@@ -6227,7 +7236,12 @@ function ReaderView(props) {
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
     const range = selection.getRangeAt(0)
     const text = selection.toString().trim()
-    if (!text) return
+    if (!text) {
+      // A figure selected on its own has no text, but it is still a passage the
+      // reader may want explained: keep the menu when it carries rich assets.
+      const probeRoot = contentRef.current
+      if (!probeRoot || collectSelectionAssets(range, probeRoot).length === 0) return
+    }
     const node = range.commonAncestorContainer
     const element = node.nodeType === 3 ? node.parentElement : node
     if (element && element.closest && element.closest('.rd-card')) {
@@ -6236,7 +7250,13 @@ function ReaderView(props) {
         setCards((current) =>
           current.map((entry, index) => (index === current.length - 1 ? { ...entry, pinned: true } : entry)),
         )
-        setChildMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top })
+        setChildMenu({
+          text,
+          range: range.cloneRange(),
+          x: rect.left + rect.width / 2,
+          y: rect.top,
+          rect,
+        })
       }
       return
     }
@@ -6248,8 +7268,19 @@ function ReaderView(props) {
       return
     }
     const rect = range.getBoundingClientRect()
+    // Figures/formulas inside the selection travel with the question: describe
+    // them in the quote now, attach their bytes once the composer accepts them.
+    const assets = !inChat && root ? collectSelectionAssets(range, root) : []
     setMenuError('')
-    setMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top, inChat })
+    setMenu({
+      text,
+      range: range.cloneRange(),
+      x: rect.left + rect.width / 2,
+      y: rect.top,
+      rect,
+      inChat,
+      assets,
+    })
   }
 
   const closeCardsSoon = (delay = 600) => {
@@ -6293,12 +7324,14 @@ function ReaderView(props) {
 
   const focusAnnotation = (annotation) => {
     if (annotation.kind === 'pdf') {
-      setPage(annotation.page)
+      jumpToPdfPage(annotation.page)
       return
     }
     const root = contentRef.current
     const element = root && root.querySelector(`[data-anno="${annotation.id}"]`)
-    if (element) element.scrollIntoView({ block: 'center' })
+    if (!element) return
+    element.scrollIntoView({ block: 'center' })
+    pulseElement(element, pulseOptions())
   }
 
   const upgradeConcept = async (concept) => {
@@ -6433,7 +7466,7 @@ function ReaderView(props) {
 
   const jumpToSearchResult = (result) => {
     if (doc?.ext === '.pdf') {
-      if (Number.isFinite(result.page)) setPage(result.page)
+      jumpToPdfPage(result.page)
       return
     }
     const root = contentRef.current
@@ -6443,6 +7476,7 @@ function ReaderView(props) {
       const node = found.range.startContainer
       const element = node.nodeType === 3 ? node.parentElement : node
       if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+      pulseRange(found.range, pulseOptions())
     }
   }
 
@@ -6894,10 +7928,12 @@ function ReaderView(props) {
 
   const jumpToSection = (section) => {
     if (!section) return
+    // The fullscreen overlay hides the book; jumping to the source must reveal it.
+    if (mapFullscreen) setMapFullscreen(false)
     if (doc?.ext === '.epub') {
       const match = String(section.id || '').match(/^(?:e|c)(\d+)/i)
       const index = Number.isFinite(section.chapter) ? section.chapter : match ? Number(match[1]) : NaN
-      if (Number.isFinite(index) && doc.epub.chapters[index]) goChapter(index, 'top')
+      if (Number.isFinite(index) && doc.epub.chapters[index]) jumpToChapter(index)
       return
     }
     if (doc?.ext === '.pdf') {
@@ -6906,7 +7942,7 @@ function ReaderView(props) {
         const match = String(section.id || '').match(/^(?:p|d)(\d+)/i)
         if (match) page = Number(match[1])
       }
-      if (Number.isFinite(page) && page >= 1) setPage(page)
+      if (Number.isFinite(page) && page >= 1) jumpToPdfPage(page)
       return
     }
     const root = contentRef.current
@@ -6920,7 +7956,10 @@ function ReaderView(props) {
       const text = (element.textContent || '').trim()
       return text === base || text.startsWith(base.slice(0, 12))
     })
-    if (target) target.scrollIntoView({ block: 'start' })
+    if (target) {
+      target.scrollIntoView({ block: 'start' })
+      pulseElement(target, pulseOptions())
+    }
   }
 
   const downloadBlob = (blob, name) => {
@@ -6936,7 +7975,10 @@ function ReaderView(props) {
 
   const exportGuideMd = () => {
     if (!guide) return
-    downloadBlob(new Blob([guideMarkdown({ title: doc?.name || t('tab.guide'), guide })], { type: 'text/markdown' }), `${guideBaseName()}.guide.md`)
+    downloadBlob(
+      new Blob([guideMarkdown({ title: doc ? documentTitle(doc.name) : t('tab.guide'), guide })], { type: 'text/markdown' }),
+      `${guideBaseName()}.guide.md`,
+    )
   }
 
   const exportGuideSvg = () => {
@@ -6983,18 +8025,14 @@ function ReaderView(props) {
     const canvasWidth = Math.round(width * mapScale)
     const canvasHeight = Math.round(height * mapScale)
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
-    const nodeLines = (node) => {
-      if (node.chunkIndex) {
-        const head = chunkNodeTitle(node)
-        const summary = String(node.summary || '').replace(/\s+/g, ' ').trim()
-        const lines = splitNodeTitle(head || summary)
-        if (summary && head && summary !== head && lines.length < 2) {
-          lines.push(summary.slice(0, 18) + (summary.length > 18 ? '…' : ''))
-        }
-        return lines
-      }
-      return splitNodeTitle(node.title)
-    }
+    const motionState = mapMotionRef.current
+    const enterAll = motionState.key !== guideSignature
+    // The enter class only survives the entrance window: keeping it forever
+    // would replay the full stagger whenever a collapsed branch remounts.
+    const enterWindow = enterAll || Date.now() - motionState.enterAt < 400
+    const bigMap = guideLayout.edges.length > 60
+    const delayOf = (map, key, index, max) => staggerDelay(map.get(key) ?? index, 6, max)
+    const nodeLines = (node) => (node.chunkIndex ? chunkNodeLines(node) : splitNodeTitle(node.title))
 
     const activateNode = (node) => {
       if (suppressMapClick.current) return
@@ -7116,6 +8154,7 @@ function ReaderView(props) {
           tabIndex: 0,
           'data-pan-x': mapPan.x,
           'data-pan-y': mapPan.y,
+          style: mapGridVars({ pan: mapPan, scale: mapScale }),
           onKeyDown: (event) => {
             if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
             event.preventDefault()
@@ -7159,8 +8198,11 @@ function ReaderView(props) {
             null,
             '.rdm-label{font-size:11.5px;fill:var(--dsw-alias-label-primary,#1f2937);font-family:system-ui,sans-serif}.rdm-sub{font-size:11px;fill:var(--dsw-alias-label-secondary,#6b7280)}.rdm-node{fill:var(--dsw-alias-bg-layer-1,#f8fafc);stroke:var(--dsw-alias-border-l1,#d1d5db)}.rdm-root{fill:var(--dsw-alias-bg-layer-2,#eef2f7)}.rdm-node-selected{stroke:var(--dsw-alias-brand-primary,#3b82f6);stroke-width:2}.rdm-edge{stroke:var(--dsw-alias-border-l2,#9ca3af);stroke-width:1.4;fill:none}',
           ),
-          h('g', { transform: `translate(30,30) scale(${mapScale})` },
-            guideLayout.edges.map((edge) => {
+          h('g', {
+            transform: `translate(30,30) scale(${mapScale})`,
+            className: bigMap && enterWindow && (enterAll || motionState.faded) ? 'rdm-node-fade' : undefined,
+          },
+            guideLayout.edges.map((edge, edgeIndex) => {
               const from = byId.get(edge.from)
               const to = byId.get(edge.to)
               if (!from || !to) return null
@@ -7169,15 +8211,37 @@ function ReaderView(props) {
               const x2 = to.x
               const y2 = to.y + MAP_NODE_HEIGHT / 2
               const mid = (x1 + x2) / 2
+              const edgeKey = `${edge.from}-${edge.to}`
+              const edgeMotion = !bigMap && enterWindow && (enterAll || motionState.enteredEdges.has(edgeKey))
               return h('path', {
-                key: `${edge.from}-${edge.to}`,
-                className: 'rdm-edge',
+                key: edgeKey,
+                className: edgeMotion ? 'rdm-edge rdm-edge-enter' : 'rdm-edge',
                 d: `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`,
+                ...(edgeMotion
+                  ? {
+                      pathLength: 1,
+                      strokeDasharray: '1',
+                      strokeDashoffset: '1',
+                      style: { animationDelay: `${delayOf(motionState.edgeDelays, edgeKey, edgeIndex, 80)}ms` },
+                    }
+                  : null),
               })
             }),
-            guideLayout.nodes.map((node) => {
+            guideLayout.nodes.map((node, nodeIndex) => {
               const lines = nodeLines(node)
               const isSelected = node.id === selectedNodeId
+              const isNewNode = !motionState.seen.has(node.id)
+              const nodeEnterClass = bigMap
+                ? undefined
+                : enterWindow && (enterAll || motionState.entered.has(node.id))
+                  ? 'rdm-node-enter'
+                  : isNewNode || motionState.fading.has(node.id)
+                    ? 'rdm-node-fade'
+                    : undefined
+              const nodeEnterStyle =
+                nodeEnterClass === 'rdm-node-enter'
+                  ? { animationDelay: `${delayOf(motionState.nodeDelays, node.id, nodeIndex, 140)}ms` }
+                  : undefined
               return h(
                 'g',
                 {
@@ -7186,6 +8250,7 @@ function ReaderView(props) {
                   'data-node-id': node.id,
                   style: { cursor: 'pointer' },
                 },
+                h('g', { className: nodeEnterClass, style: nodeEnterStyle },
                 h('title', null, node.title || ''),
                 h('rect', {
                   width: MAP_NODE_WIDTH,
@@ -7238,6 +8303,7 @@ function ReaderView(props) {
                       ),
                     )
                   : null,
+                ),
               )
             }),
           ),
@@ -7264,7 +8330,7 @@ function ReaderView(props) {
       return
     }
     if (doc?.ext === '.pdf') {
-      if (Number.isFinite(occurrence.page)) setPage(occurrence.page)
+      jumpToPdfPage(occurrence.page)
       return
     }
     setChapter(occurrence.chapter || 0)
@@ -7291,6 +8357,7 @@ function ReaderView(props) {
       const node = found.range.startContainer
       const element = node.nodeType === 3 ? node.parentElement : node
       if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+      pulseRange(found.range, pulseOptions())
     }
     setScrollTarget(null)
   }, [scrollTarget, doc, chapter])
@@ -7586,11 +8653,13 @@ function ReaderView(props) {
 
   // One shell for every drawer tab: resizer + title bar + scrolling body.
   // Mirrors the original per-branch markup so existing tabs keep their output.
-  const renderDrawerShell = (title, body, options = {}) =>
-    h(
+  const renderDrawerShell = (title, body, options = {}) => {
+    const drawerMotion = motionOn ? (drawerWidthMotion(doc) ? 'open' : 'content') : undefined
+    return h(
       'div',
       {
         className: `rd-drawer${options.wide ? ' rd-drawer-wide' : ''}`,
+        'data-motion': drawerMotion,
         style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
       },
       h('div', {
@@ -7618,7 +8687,9 @@ function ReaderView(props) {
         'div',
         { className: 'rd-drawer-head' },
         h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, title),
+        options.subtitle ? h('span', { className: 'rd-drawer-sub' }, options.subtitle) : null,
         h('span', { className: 'rd-spacer' }),
+        options.actions ? h('div', { className: 'rd-drawer-head-actions' }, options.actions) : null,
         h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
       ),
       h(
@@ -7630,9 +8701,10 @@ function ReaderView(props) {
             if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
-        body,
+        h('div', { key: drawerViewKey || 'pane', className: 'rd-drawer-pane' }, body),
       ),
     )
+  }
 
   const renderDrawer = () => {
     if (!drawer || !doc) return null
@@ -7649,7 +8721,7 @@ function ReaderView(props) {
               tabIndex: 0,
               role: 'button',
               style: index === chapter ? { borderColor: 'var(--dsw-alias-brand-primary)' } : undefined,
-              onClick: () => goChapter(index, 'top'),
+              onClick: () => jumpToChapter(index),
             },
             item.label || `${t('label.chapter')} ${index + 1}`,
           ),
@@ -7674,7 +8746,7 @@ function ReaderView(props) {
                   paddingLeft: 10 + (Math.max(1, entry.level) - 1) * 12,
                   ...(entry.page === page ? { borderColor: 'var(--dsw-alias-brand-primary)' } : {}),
                 },
-                onClick: () => entry.page && setPage(entry.page),
+                onClick: () => entry.page && jumpToPdfPage(entry.page),
               },
               h('span', null, entry.title),
               entry.page ? h('span', { className: 'rd-muted', style: { marginLeft: '8px', fontSize: '11px' } }, entry.page) : null,
@@ -7694,7 +8766,7 @@ function ReaderView(props) {
                   page >= chapter.page && page <= (chapter.end || chapter.page)
                     ? { borderColor: 'var(--dsw-alias-brand-primary)' }
                     : undefined,
-                onClick: () => setPage(chapter.page),
+                onClick: () => jumpToPdfPage(chapter.page),
               },
               h('span', null, chapter.title),
               chapter.page
@@ -7717,7 +8789,7 @@ function ReaderView(props) {
                 tabIndex: 0,
                 role: 'button',
                 style: page >= group.start && page <= group.end ? { borderColor: 'var(--dsw-alias-brand-primary)' } : undefined,
-                onClick: () => setPage(group.start),
+                onClick: () => jumpToPdfPage(group.start),
               },
               `${group.start}-${group.end}`,
             ),
@@ -7739,7 +8811,10 @@ function ReaderView(props) {
                   onClick: () => {
                     const root = contentRef.current
                     const elements = root ? root.querySelectorAll('h1,h2,h3') : []
-                    if (elements[index]) elements[index].scrollIntoView({ block: 'start' })
+                    if (elements[index]) {
+                      elements[index].scrollIntoView({ block: 'start' })
+                      pulseElement(elements[index], pulseOptions())
+                    }
                   },
                 },
                 head.label,
@@ -8146,7 +9221,7 @@ function ReaderView(props) {
             h('span', { className: 'rd-spacer' }),
             h('button', { className: 'rd-btn', onClick: generateGuide }, t('action.regenerateGuide')),
           ),
-          guideView === 'map' ? renderMindmap() : list,
+          guideView === 'map' ? (mapFullscreen ? null : renderMindmap()) : list,
         )
       }
     }
@@ -8341,6 +9416,8 @@ function ReaderView(props) {
       body = h(ReaderChatPanel, {
         t,
         doc,
+        showAll: chatShowAll,
+        attachments: attachmentResolver,
         useChat: props.useChat,
         useInput: props.useInput,
         useSession: props.useSession,
@@ -8356,9 +9433,43 @@ function ReaderView(props) {
       chat: t('tab.chat'),
       settings: t('label.settings'),
     }
+    const chatActions =
+      drawer === 'chat'
+        ? [
+            h(
+              'button',
+              {
+                key: 'chat-history',
+                className: `rd-btn ghost rd-icon-btn rd-drawer-head-btn${chatShowAll ? ' is-on' : ''}`,
+                'data-chat-action': 'toggle-all',
+                'aria-pressed': chatShowAll ? 'true' : 'false',
+                'aria-label': t(chatShowAll ? 'label.chatCollapse' : 'label.chatShowAll'),
+                title: t(chatShowAll ? 'label.chatCollapse' : 'label.chatShowAll'),
+                onClick: () => setChatShowAll((current) => !current),
+              },
+              h(IconHistory),
+            ),
+            typeof props.openView === 'function'
+              ? h(
+                  'button',
+                  {
+                    key: 'chat-open-view',
+                    className: 'rd-btn ghost rd-icon-btn rd-drawer-head-btn',
+                    'data-chat-action': 'open-view',
+                    'aria-label': t('label.chatJump'),
+                    title: t('label.chatJump'),
+                    onClick: () => props.openView('chat', ''),
+                  },
+                  h(IconExternal),
+                )
+              : null,
+          ].filter(Boolean)
+        : null
     return renderDrawerShell(titles[drawer], body, {
       wide: drawer === 'guide' && guideView === 'map',
       bodyClassName: drawer === 'chat' ? 'rd-drawer-chat' : '',
+      subtitle: drawer === 'chat' ? t('label.chatSubtitle') : '',
+      actions: chatActions,
     })
   }
 
@@ -8698,7 +9809,7 @@ function ReaderView(props) {
       inheritedOffset = offset
     }
 
-    const startDrag = (event, entry, baseLeft, baseTop) => {
+    const startDrag = (event, entry, baseLeft, baseTop, depth) => {
       if (event.button !== 0) return
       if (event.target && event.target.closest && event.target.closest('button, input, textarea, select, a')) return
       const rect = event.currentTarget.getBoundingClientRect()
@@ -8709,8 +9820,8 @@ function ReaderView(props) {
         startY: event.clientY,
         baseLeft,
         baseTop,
-        offsetX: rect.left - baseLeft,
-        offsetY: rect.top - baseTop,
+        offsetX: rect.left + 12 * depth - baseLeft,
+        offsetY: rect.top + 12 * depth - baseTop,
         width: rect.width,
         height: rect.height,
       }
@@ -8764,18 +9875,31 @@ function ReaderView(props) {
       cards.map((entry, index) => {
         const isTop = index === topIndex
         const offset = offsets[index]
-        const baseLeft = style.left + index * 12
-        const baseTop = style.top + index * 12
+        const baseLeft = style.left
+        const baseTop = style.top
         const size = cardSizes[entry.id] || { width: cardWidth, height: style.maxHeight }
         const position = clampCardPosition(
           { left: baseLeft + offset.x, top: baseTop + offset.y, width: size.width, height: size.height },
           bounds,
         )
+        const depth = topIndex - index
+        const stackStyle = {
+          transform: `translate(${-12 * depth}px, ${-12 * depth}px)`,
+          opacity: depth > 0 ? 0.96 : 1,
+        }
+        const attachCardMotion = (node) => {
+          if (!node || node.dataset.motion === 'in') return
+          const anchor = entry.rect || { left: 0, top: 0, width: 0, height: 0 }
+          const panel = node.getBoundingClientRect()
+          const side = panel.top + panel.height / 2 >= anchor.top + anchor.height / 2 ? 'below' : 'above'
+          markMotionIn(node, { origin: anchorOrigin(anchor, panel), side, enabled: motionOn })
+        }
         return h(
           'div',
           {
-            key: `${entry.id}-${index}`,
+            key: entry.slot || entry.id,
             className: 'rd-hover-zone',
+            'data-dragging': cardDragRef.current ? '1' : undefined,
             style: {
               left: position.left - 16,
               top: position.top - 16,
@@ -8791,27 +9915,77 @@ function ReaderView(props) {
           },
           h(
             'div',
-            {
-              key: entry.id,
-              className: 'rd-card',
-              role: 'dialog',
-              'aria-label': String(entry.term || (store.concepts[entry.id] && store.concepts[entry.id].term) || ''),
-              style: { width: cardWidth, maxHeight: style.maxHeight },
-              onPointerDown: (event) => {
-                if (event.target && event.target.closest && event.target.closest('h3')) {
-                  startDrag(event, entry, baseLeft, baseTop)
-                }
+            { key: 'stack', className: 'rd-card-stack', style: stackStyle },
+            h(
+              'div',
+              {
+                key: 'card',
+                ref: attachCardMotion,
+                className: 'rd-card',
+                role: 'dialog',
+                'aria-label': String(entry.term || (store.concepts[entry.id] && store.concepts[entry.id].term) || ''),
+                style: { width: cardWidth, maxHeight: style.maxHeight },
+                onPointerDown: (event) => {
+                  if (event.target && event.target.closest && event.target.closest('h3')) {
+                    startDrag(event, entry, baseLeft, baseTop, depth)
+                  }
+                },
+                onPointerMove: moveDrag,
+                onPointerUp: endDrag,
+                onPointerCancel: endDrag,
               },
-              onPointerMove: moveDrag,
-              onPointerUp: endDrag,
-              onPointerCancel: endDrag,
-            },
-            renderCardBody(entry),
+              renderCardBody(entry),
+            ),
           ),
           isTop && childMenu ? renderChildMenu() : null,
         )
       }),
     )
+  }
+
+  // Attach the figures/formulas of a selection through the client conversation
+  // controller (the only owner of browser draft attachments). The quote text
+  // already describes them, so a failed upload still leaves the model informed.
+  const attachSelectionAssets = async (assets) => {
+    if (!Array.isArray(assets) || assets.length === 0) return
+    const conversation = props.conversation
+    const actions = props.inputActions
+    if (!conversation || typeof conversation.createDrafts !== 'function' || !actions || typeof actions.addAttachments !== 'function') {
+      flash(t('label.selectionAssetsUnavailable'))
+      return
+    }
+    let files = []
+    try {
+      files = await prepareSelectionFiles(assets)
+    } catch {
+      files = []
+    }
+    if (files.length === 0) return
+    let drafts = []
+    try {
+      drafts = conversation.createDrafts(sessionId, files, true) || []
+    } catch {
+      flash(t('label.selectionAssetsFailed'))
+      return
+    }
+    const ids = drafts.map((draft) => (draft && draft.id ? draft.id : '')).filter(Boolean)
+    if (ids.length === 0) return
+    let added = false
+    try {
+      added = actions.addAttachments(ids) !== false
+    } catch {
+      added = false
+    }
+    if (!added) {
+      for (const id of ids) {
+        try {
+          conversation.releaseDraftAttachment(id)
+        } catch {
+          /* the draft may already be gone */
+        }
+      }
+      flash(t('label.selectionAssetsBusy'))
+    }
   }
 
   // Hand the selected passage to the native composer as an atomic quote block;
@@ -8824,14 +9998,15 @@ function ReaderView(props) {
       return false
     }
     const text = menu && menu.text ? String(menu.text).trim() : ''
-    if (!text) return false
+    const assets = Array.isArray(menu && menu.assets) ? menu.assets : []
+    if (!text && assets.length === 0) return false
     const position = currentPosition(doc, {
       chapter,
       chapterTitle: docChapterTitle(),
       page,
       percent: currentReadingPercent(),
     })
-    const quote = buildQuoteText(formatLocation(doc, position), text)
+    const quote = buildQuoteText(formatLocation(doc, position), text) + buildAssetQuoteSuffix(assets, t)
     let span = null
     if (question && typeof actions.captureInsertion === 'function') {
       try {
@@ -8869,6 +10044,7 @@ function ReaderView(props) {
     setMenu(null)
     dismissSelection(window)
     setDrawer('chat')
+    if (assets.length > 0) void attachSelectionAssets(assets)
     return true
   }
 
@@ -8876,18 +10052,27 @@ function ReaderView(props) {
     if (!menu) return null
     const bounds = rootBounds()
     const left = Math.max(bounds.left + 8, Math.min(bounds.right - 320, menu.x - 150))
-    const rawTop = menu.y > bounds.top + 70 ? menu.y - 46 : menu.y + 26
+    const above = menu.y > bounds.top + 70
+    const side = above ? 'above' : 'below'
+    const rawTop = above ? menu.y - 46 : menu.y + 26
     const top = Math.max(bounds.top + 52, Math.min(bounds.bottom - 52, rawTop))
+    const attachMenuMotion = (node) => {
+      if (!node || node.dataset.motion === 'in') return
+      const anchor = menu.rect || { left: menu.x, top: menu.y, width: 0, height: 0 }
+      markMotionIn(node, { origin: edgeOrigin(anchor, node.getBoundingClientRect(), side), side, enabled: motionOn })
+    }
     const composerReady = Boolean(props.inputActions && typeof props.inputActions.insertQuote === 'function')
     const selectedText = menu.text ? String(menu.text).trim() : ''
+    const hasAssets = Array.isArray(menu.assets) && menu.assets.length > 0
+    const canAsk = composerReady && Boolean(selectedText || hasAssets)
     // Chat text is a conversation, not the book: highlight and note annotate
     // book positions and would write annotations the book never renders.
     const inChat = menu.inChat === true
     return h(
       'div',
-      { className: 'rd-mini', style: { left, top } },
+      { className: 'rd-mini', ref: attachMenuMotion, style: { left, top } },
       menuError ? h('div', { key: 'chat-error', className: 'rd-mini-error' }, menuError) : null,
-      composerReady && selectedText
+      canAsk
         ? h('button', { key: 'ask-chat', className: 'rd-btn', onClick: () => askChatSelection() }, t('action.askChat'))
         : null,
       composerReady && selectedText
@@ -8968,10 +10153,16 @@ function ReaderView(props) {
 
   const renderChildMenu = () => {
     if (!childMenu) return null
+    const attachChildMotion = (node) => {
+      if (!node || node.dataset.motion === 'in') return
+      const anchor = childMenu.rect || { left: childMenu.x, top: childMenu.y, width: 0, height: 0 }
+      markMotionIn(node, { origin: edgeOrigin(anchor, node.getBoundingClientRect(), 'above'), side: 'above', enabled: motionOn })
+    }
     return h(
       'div',
       {
         className: 'rd-mini rd-child-menu',
+        ref: attachChildMotion,
         style: (() => {
           const bounds = rootBounds()
           return {
@@ -9020,7 +10211,11 @@ function ReaderView(props) {
   return h(
     'div',
     {
-      className: `rd-root rd-theme-${prefs.theme || 'system'}`,
+      className: `rd-root rd-theme-${prefs.theme || 'system'}${mapFullscreen ? ' rd-map-fullscreen-open' : ''}${
+        prefs.motion === 'off' || (rootRef.current && rootRef.current.classList && rootRef.current.classList.contains('rd-motion-off'))
+          ? ' rd-motion-off'
+          : ''
+      }`,
       ref: rootRef,
       style: { '--rd-fs': fontSize + 'px', '--rd-lh': String(prefs.lineHeight || 1.85) },
       onClick: onRootClick,
@@ -9066,6 +10261,7 @@ function ReaderView(props) {
         )
       : null,
     h('div', { className: 'rd-body' }, renderContent(), renderDrawer()),
+    mapFullscreen ? renderMindmap() : null,
     renderEditor(),
     renderCards(),
     renderMenu(),
@@ -9111,13 +10307,26 @@ function ReaderView(props) {
 }
 
 
-const inject = ['slots']
+const inject = ['slots', 'sessions', 'conversation']
 
 function apply(ctx) {
+  // A hot reload must not leave the previous generation's rules in the page:
+  // the old sheet wins for equal selectors and would keep an outdated chat look.
+  if (typeof document.querySelectorAll === 'function') {
+    for (const stale of document.querySelectorAll('style[data-plugin="dsh-reader"]')) stale.remove()
+  }
   const style = document.createElement('style')
   style.setAttribute('data-plugin', 'dsh-reader')
   style.textContent = READER_CSS
   document.head.appendChild(style)
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => style.remove(), 'reader styles')
+  }
+  // The reader panel resolves durable message images itself (the standard
+  // conversation props only carry attachment refs), so pass the client Session
+  // object layer down as a prop instead of making it a module dependency.
+  const View = (props) =>
+    React.createElement(ReaderRoot, { ...props, sessions: ctx.sessions, conversation: ctx.conversation })
   ctx.slots.inject('conversation.view', () =>
     ctx.slots.register(
       {
@@ -9126,7 +10335,7 @@ function apply(ctx) {
         order: 20,
         label: () => t('view.label'),
       },
-      ReaderRoot,
+      View,
     ),
   )
 }

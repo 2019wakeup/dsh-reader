@@ -1128,11 +1128,11 @@ async function main() {
       fullscreenClicked && fullscreen && fullscreen.width >= fullscreen.viewportWidth - 1 && fullscreen.height >= fullscreen.viewportHeight - 1 && fullscreen.left <= 1 && fullscreen.top <= 1,
       JSON.stringify(fullscreen),
     )
-    const exitFullscreenClicked = await clickAny('.rd-drawer button', ['退出全屏', 'Exit fullscreen'])
+    const exitFullscreenClicked = await clickAny('.rd-map-toolbar button', ['退出全屏', 'Exit fullscreen'])
     await new Promise((resolve) => setTimeout(resolve, 300))
     const fullscreenClosedByButton = await page.evaluate(() => !document.querySelector('.rd-map-stage-fullscreen'))
     record('fullscreen button exits mindmap fullscreen', exitFullscreenClicked && fullscreenClosedByButton, '')
-    await clickAny('.rd-drawer button', ['全屏', 'Fullscreen'])
+    await clickAny('.rd-map-toolbar button', ['全屏', 'Fullscreen'])
     await new Promise((resolve) => setTimeout(resolve, 350))
     await page.keyboard.press('Escape')
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -1705,6 +1705,25 @@ async function main() {
       chatShape.roles.includes('你') && chatShape.roles.includes('助手'),
       chatShape.roles.slice(0, 4).join('/'),
     )
+    const chatBubbleStyle = await page.evaluate(() => {
+      const bubble = document.querySelector('.rd-chat-bubble-user')
+      if (!bubble) return null
+      const style = getComputedStyle(bubble)
+      return {
+        border: style.borderTopWidth + ' ' + style.borderLeftWidth,
+        borderStyle: style.borderTopStyle,
+        shadow: style.boxShadow,
+        outline: style.outlineStyle,
+      }
+    })
+    record(
+      'user bubble paints as a fill with no outline',
+      Boolean(chatBubbleStyle) &&
+        chatBubbleStyle.border === '0px 0px' &&
+        (chatBubbleStyle.shadow === 'none' || chatBubbleStyle.shadow === '') &&
+        chatBubbleStyle.outline === 'none',
+      JSON.stringify(chatBubbleStyle),
+    )
     record(
       'chat folds reasoning and tool calls by default',
       chatShape.process && chatShape.toolRows === 0,
@@ -1773,6 +1792,54 @@ async function main() {
     const chatWidthReset = await page.$eval('.rd-drawer', (node) => Math.round(node.getBoundingClientRect().width))
     record('double-click resets the chat sidebar width', Math.abs(chatWidthReset - 420) <= 2, `${chatWidthReset}px`)
 
+    const streamingText = await page.evaluate(async () => {
+      window.__chatPushUser('请用三句话总结一致性模型')
+      window.__chatStream({ text: '这是流式生成中的前半段答案，先给结论：一致性分三层。', tools: ['read_image'] })
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const bubbles = [...document.querySelectorAll('.rd-chat-bubble-assistant')]
+      const bubble = bubbles[bubbles.length - 1]
+      return {
+        text: bubble ? bubble.textContent : '',
+        live: Boolean(document.querySelector('.rd-chat-live')),
+        busy: Boolean(document.querySelector('.rd-chat-busy')),
+      }
+    })
+    record(
+      'streaming answer shows streamed text in the bubble',
+      /流式生成中的前半段答案/.test(streamingText.text) && streamingText.live === false && streamingText.busy === false,
+      JSON.stringify({ live: streamingText.live, busy: streamingText.busy }),
+    )
+    const streamingAction = await page.evaluate(async () => {
+      window.__chatStream({ tools: ['read_image'] })
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const live = document.querySelector('.rd-chat-live')
+      const bubbles = [...document.querySelectorAll('.rd-chat-bubble-assistant')]
+      const bubble = bubbles[bubbles.length - 1]
+      return {
+        live: live ? live.textContent : '',
+        bubble: bubble ? bubble.textContent : '',
+        process: Boolean(bubble && bubble.querySelector('.rd-chat-process')),
+      }
+    })
+    record(
+      'streaming without text shows the current action',
+      /正在读取文件|Reading a file/.test(streamingAction.live) && streamingAction.process === true,
+      JSON.stringify({ live: streamingAction.live.slice(0, 40) }),
+    )
+    const streamSettled = await page.evaluate(async () => {
+      window.__chatStreamSettle('流式回答完成，结论如上。')
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const live = Boolean(document.querySelector('.rd-chat-live'))
+      const bubbles = [...document.querySelectorAll('.rd-chat-bubble-assistant')]
+      const bubble = bubbles[bubbles.length - 1]
+      return { live, text: bubble ? bubble.textContent : '' }
+    })
+    record(
+      'settled stream replaces the live line with the answer',
+      streamSettled.live === false && /流式回答完成/.test(streamSettled.text),
+      JSON.stringify({ live: streamSettled.live }),
+    )
+
     await clickAny('.rd-toolbar button', ['对话', 'Chat'])
     await page.waitForFunction(() => !document.querySelector('.rd-chat'), { timeout: 8000 })
     await page.evaluate(() => window.__chatPush(1))
@@ -1787,7 +1854,33 @@ async function main() {
     const chatEmpty = await page.evaluate(() => Boolean(document.querySelector('.rd-chat-empty')))
     record('chat empty state guides the reader', chatEmpty, '')
     await shot('17-chat-empty')
-    await page.evaluate(() => window.__chatPush(2))
+    await page.evaluate(() => {
+      window.__chatPushUser([
+        {
+          type: 'image',
+          attachment: { attachmentId: 'sha256:' + '3'.repeat(64), mediaType: 'image/png', bytes: 3426, width: 480, height: 300, name: '截图.png' },
+        },
+        { type: 'file', attachment: { attachmentId: 'sha256:' + '4'.repeat(64), name: '周期研究.pdf', bytes: 204800 } },
+        { type: 'text', text: '看这张截图和这份附件' },
+      ])
+      window.__chatPush(2)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 900))
+    const chatAttachments = await page.evaluate(() => {
+      const img = document.querySelector('.rd-chat-image img')
+      const file = document.querySelector('.rd-chat-file')
+      return {
+        image: Boolean(img) && (img.naturalWidth || 0) > 0,
+        width: img ? img.naturalWidth : 0,
+        file: Boolean(file) && /周期研究\.pdf/.test(file.textContent || ''),
+        failed: document.querySelectorAll('.rd-chat-image-failed').length,
+      }
+    })
+    record(
+      'chat renders message images and file attachments',
+      chatAttachments.image && chatAttachments.file && chatAttachments.failed === 0,
+      JSON.stringify(chatAttachments),
+    )
 
     // Quote a book passage into the native composer (spec §4). The harness
     // records insertQuote / insertText calls instead of a real composer.
@@ -1853,6 +1946,51 @@ async function main() {
       'quick ask inserts question after quote',
       quickAsked && inserted.length > 0 && inserted[0].text === '解释这段' && Boolean(inserted[0].span),
       inserted.length ? inserted[0].text : 'nothing inserted',
+    )
+    const selectionAssets = await page.evaluate(async () => {
+      const prose = document.querySelector('.rd-prose')
+      if (!prose) return { ok: false, reason: 'no prose' }
+      prose.insertAdjacentHTML(
+        'beforeend',
+        `<figure class="visual-asset-probe"><img src="${window.__fixtureImageDataUrl}" alt="探针图"><figcaption>探针图</figcaption></figure>`,
+      )
+      const figure = prose.querySelector('.visual-asset-probe')
+      const paragraph = prose.querySelector('p')
+      const range = document.createRange()
+      range.setStart(paragraph.firstChild, 0)
+      range.setEndAfter(figure)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      figure.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      const ask = Array.from(document.querySelectorAll('.rd-mini button')).find((button) =>
+        /问 AI|Ask AI/.test(String(button.textContent || '')),
+      )
+      if (!ask) return { ok: false, reason: 'no ask button' }
+      ask.click()
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      const quote = (window.__quotes || []).slice(-1)[0] || ''
+      return {
+        ok: true,
+        files: window.__readerAttachments || [],
+        ids: window.__readerAttachmentIds || [],
+        quote,
+      }
+    })
+    record(
+      'selection carries figures into the composer',
+      selectionAssets.ok === true &&
+        selectionAssets.files.length === 1 &&
+        selectionAssets.files[0].type === 'image/png' &&
+        selectionAssets.ids.length === 1 &&
+        /选区内图形/.test(selectionAssets.quote),
+      JSON.stringify({
+        files: selectionAssets.files,
+        ids: selectionAssets.ids,
+        quote: String(selectionAssets.quote || '').slice(0, 60),
+        reason: selectionAssets.reason,
+      }),
     )
   } catch (error) {
     try {

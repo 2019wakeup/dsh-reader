@@ -588,6 +588,10 @@ function applyPrefs(store, patch) {
     if (!['system', 'light', 'dark', 'sepia'].includes(patch.theme)) throw httpError(400, 'invalid theme')
     next.theme = patch.theme
   }
+  if ('motion' in patch) {
+    if (!['system', 'full', 'off'].includes(patch.motion)) throw httpError(400, 'invalid motion')
+    next.motion = patch.motion
+  }
   store.prefs = next
   return store
 }

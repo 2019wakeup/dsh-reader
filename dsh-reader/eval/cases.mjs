@@ -32,7 +32,7 @@ const { markdownSections } = await import(path.join(root, 'src/client/sections.j
 const { docFingerprint } = await import(path.join(root, 'lib/fingerprint.js'))
 const { readStore } = await import(path.join(root, 'lib/store.js'))
 const { parseSectionReply, parseOverviewReply } = await import(path.join(root, 'lib/guide.js'))
-const { buildTree, layoutTree, chunkNodeTitle } = await import(path.join(root, 'src/client/mindmap.js'))
+const { buildTree, layoutTree, chunkNodeLines, mapGridVars } = await import(path.join(root, 'src/client/mindmap.js'))
 const { clampCardPosition } = await import(path.join(root, 'src/client/card-drag.js'))
 const { takeTranslationBatch, isNearViewport } = await import(path.join(root, 'src/client/translation-schedule.js'))
 const { buildTranscript, formatLocation, buildQuoteText } = await import(path.join(root, 'src/client/chat-transcript.js'))
@@ -189,9 +189,32 @@ export const cases = [
   {
     name: 'mindmap.chunklabel',
     async run() {
-      const label = chunkNodeTitle({ chunkIndex: 2, page: 11, title: '一致性模型（2）' })
-      if (label !== '一致性模型') throw new Error('chunk title still shows the ordinal badge')
-      return { label }
+      // Chunk children sit under the chapter node, so repeating the chapter
+      // title makes every sibling look identical; they must carry their own
+      // ordinal plus a content clue instead.
+      const labels = [
+        chunkNodeLines({ chunkIndex: 1, title: '一致性模型（1）', summary: '线性一致性要求实时顺序。' }),
+        chunkNodeLines({ chunkIndex: 2, title: '一致性模型（2）', summary: '最终一致性只保证收敛。' }),
+      ].map((lines) => lines.join(''))
+      if (labels[0] === labels[1]) throw new Error(`sibling chunk labels repeat: ${labels.join(' | ')}`)
+      if (!labels.every((label) => /^（\d）/.test(label))) throw new Error(`chunk label lost its ordinal: ${labels.join(' | ')}`)
+      if (labels.some((label) => label.includes('一致性模型'))) throw new Error(`chunk label repeats the chapter title: ${labels.join(' | ')}`)
+      return { labels }
+    },
+  },
+  {
+    name: 'mindmap.grid',
+    async run() {
+      // The dot grid is the canvas affordance: spacing must scale with zoom and
+      // the pattern must translate exactly with the pan.
+      const base = mapGridVars({ pan: { x: 0, y: 0 }, scale: 1 })
+      const zoomed = mapGridVars({ pan: { x: 0, y: 0 }, scale: 0.55 })
+      const panned = mapGridVars({ pan: { x: 40, y: 24 }, scale: 1 })
+      if (Math.abs(parseFloat(zoomed['--rd-grid-size']) - 13.2) > 0.01) throw new Error('grid spacing does not scale with zoom')
+      if (Math.abs(parseFloat(panned['--rd-grid-x']) - parseFloat(base['--rd-grid-x']) - 40) > 0.01) throw new Error('grid x does not follow pan')
+      if (Math.abs(parseFloat(panned['--rd-grid-y']) - parseFloat(base['--rd-grid-y']) - 24) > 0.01) throw new Error('grid y does not follow pan')
+      if (parseFloat(mapGridVars({ scale: 0.1 })['--rd-grid-size']) < 8) throw new Error('grid collapsed at extreme zoom-out')
+      return { step: base['--rd-grid-size'], zoomed: zoomed['--rd-grid-size'] }
     },
   },
   {

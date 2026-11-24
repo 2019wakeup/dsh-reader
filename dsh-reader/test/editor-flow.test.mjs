@@ -405,8 +405,12 @@ test('deleting a highlighted annotation keeps the reader mounted', async (t) => 
   await tick(220)
   let card = container.querySelector('.rd-card')
   assert.ok(card, 'hovering a term opens its card')
-  let zone = card.parentElement
-  assert.equal(zone.className, 'rd-hover-zone', 'card sits inside an expanded hover zone')
+  // v0.14 M-03: the card now sits in a .rd-card-stack wrapper that carries the
+  // 12px stacking yield; the hover zone stays the positioning/drag owner.
+  const stack = card.parentElement
+  assert.equal(stack.className, 'rd-card-stack', 'card sits inside its stacking wrapper')
+  const zone = stack.parentElement
+  assert.equal(zone.className, 'rd-hover-zone', 'stack sits inside an expanded hover zone')
 
   const askInput = card.querySelector('input.rd-input')
   const setInputValue = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set

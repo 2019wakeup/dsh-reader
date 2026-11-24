@@ -4,9 +4,9 @@ DSH 的阅读插件：在会话主区域新增「阅读」视图，读工作区�
 
 选中正文还能直接把原文引用进 DSH 底部输入框，和当前会话的原生智能体边读边聊：引用带书名、章节和位置，回答实时流到阅读器右侧的「对话」页签，逐层追问不用离开书页。
 
-![选中原文点「问 AI」，引用进入输入框，回答在右侧「对话」页签里逐字流出](https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/dsh-reader/docs/demos/02-read-and-ask.gif)
+![选中原文点「问 AI」，引用和选区图形进入输入框，回答在右侧「对话」气泡里流式出现](https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/dsh-reader/docs/demos/02-read-and-ask.gif)
 
-动图由 [`demo/`](demo/) 里的 Remotion 工程渲染；划词解释、长书导读两条动线见[仓库首页](https://github.com/2019wakeup/dsh-reader)。
+动图由 [`demo/`](demo/) 里的 Remotion 工程渲染，镜头与分镜见 [`demo/CAMERA.md`](demo/CAMERA.md)；划词解释、长书导读两条动线见[仓库首页](https://github.com/2019wakeup/dsh-reader)。
 
 工作区自带三份试读素材：`示例-分布式系统阅读.md`、`示例-分布式系统.epub`、`示例-分布式系统.pdf`。
 
@@ -26,13 +26,13 @@ DSH 的阅读插件：在会话主区域新增「阅读」视图，读工作区�
 ### 方式二：npm
 
 ```bash
-plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.1
+plugin_manager install_bundle @2019wakeup/dsh-reader@0.14.0
 ```
 
 ### 方式三：Git 固定版本（无需 npm）
 
 ```bash
-plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.13.1&path:/dsh-reader"
+plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.14.0&path:/dsh-reader"
 ```
 
 ### 方式四：本地目录
@@ -64,8 +64,10 @@ plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#
 - 阅读：浅色/深色/米黄主题、PDF 双页、方向键或 J/K 翻页；设置重启保留。
 - 数据：JSON 导出/导入、标注 Markdown 导出、最近 5 份备份一键恢复；最近 10 次发送内容可在设置查看。
 - 概念：支持合并（别名/出现位置随目标保留）；原文改动后按路径发现旧标注并一键迁移。
-- 读书对话：选中正文即可引用提问，回答流入抽屉「对话」页签（见下节）。
-- 抽屉：目录 / 标注 / 概念 / 导读 / 对话 / 设置。
+- 回答生成时正文会像主对话一样流式出现在气泡里；还没有正文时显示当前动作（正在读取文件/执行命令…）而不是空白，底部不再重复「生成中」横条。
+- 读书对话：选中正文即可引用提问，回答流入抽屉「对话」页签（见下节）；消息里的图片会在气泡内直接显示，文档附件显示为文件名/类型/大小卡片。选区内含图片、内联 SVG 或 MathML 公式时，「问 AI」会把图形作为附件加进输入框、把公式源码写进引用。
+- 抽屉：目录 / 标注 / 概念 / 导读 / 对话 / 设置；「对话」里提问与回答分列气泡，引用带书名与位置。
+- 动效：划词工具条、概念卡、抽屉、对话新行、导图与跳转都有短促过渡；跳回原文时目标位置浮出一次性定位环。跟随系统「减少动效」；需要整体关闭时，给阅读器根节点加 `.rd-motion-off` 作为应急开关。
 
 ## 读书对话
 
@@ -76,7 +78,7 @@ plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#
 3. 接着问：引用新的段落、在面板里选词再引用，或直接打字，都发生在同一个会话里。
 
 - **角色区分**：用户消息右对齐、带「你」标签；助手回答左对齐、带「助手」标签；引用的书名和位置单独一行。
-- **按轮聚合**：同一轮里模型可能分多步调用工具，面板把它们合并成一条回答，只显示这一轮的正文和一行「过程 · N」；纯工具步骤不会单独占行。点开「过程」先看到动作名（已读取文件、执行了命令…），思考内容还要再点一级才展开，和原生对话页的处理一致；抽屉顶部的「过程」开关可展开完整轨迹。正在执行的操作合并成一行状态。
+- **按轮聚合**：同一轮里模型可能分多步调用工具，面板把它们合并成一条回答，只显示这一轮的正文和一行「过程 · N」；纯工具步骤不会单独占行。点开「过程」先看到动作名（已读取文件、执行了命令…），思考内容还要再点一级才展开，和原生对话页的处理一致；需要完整轨迹时可「在对话页打开」。正在执行的操作合并成一行状态。
 - **快捷追问**：浮层下拉提供「解释这段 / 举个例子 / 和上文什么关系 / 作者为什么这么说」。选中后引用和问句一起进入输入框，确认后再发送。
 - **未读与跳转**：面板关闭时新回答点亮工具栏未读点；面板右上角「在对话页打开」可切到完整对话页。
 - **宽度**：可拖拽，默认 420px，范围 320–720，随会话恢复。
@@ -97,12 +99,13 @@ plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#
 ## 开发
 
 ```bash
-node --test test/*.test.mjs     # 单元与冒烟测试（353 条）
-node eval/run.mjs               # 产品级 eval（17 项）
-node eval/visual.mjs            # 视觉 eval（无头 Chrome，157 项检查 + 22 张像素基线）
+node --test test/*.test.mjs     # 单元与冒烟测试（401 条）
+node eval/run.mjs               # 产品级 eval（18 项）
+node eval/visual.mjs            # 视觉 eval（无头 Chrome，163 项检查 + 22 张像素基线）
+node eval/motion.mjs            # 动效 eval（无头 Chrome，16 项）
 node eval/layout-host.mjs       # 宿主布局探针（6 项）
 node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
-node scripts/release-check.mjs  # 发布门禁（11 项）
+node scripts/release-check.mjs  # 发布门禁（12 项）
 (cd demo && npm run render)     # 重新生成 README 演示 GIF（Remotion，见 demo/README.md）
 ```
 

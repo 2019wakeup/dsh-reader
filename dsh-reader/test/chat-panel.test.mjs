@@ -259,20 +259,19 @@ test('isNearBottom 判定跟随阈值', () => {
   assert.equal(isNearBottom({ scrollHeight: 1000, scrollTop: 500, clientHeight: 260 }), false)
 })
 
-test('显示全部按钮展开被截断的历史轮次', async (ctx) => {
+test('历史轮次由外层控制展开，面板本身不再自带工具条', async (ctx) => {
   const nodes = []
   for (let turn = 1; turn <= 10; turn += 1) {
     nodes.push(chatNode(`u${turn}`, 'user', { turn, content: [{ type: 'text', text: `问题${turn}` }] }))
   }
-  const { host } = await mountPanel(ctx, panelProps({ useChat: useChatOf(makeChat(nodes)) }))
-  assert.equal(host.querySelectorAll('[data-chat-row]').length, 8)
-  const toggle = host.querySelector('.rd-chat-toggle')
-  assert.ok(toggle, 'show-all control rendered')
-  assert.equal(toggle.textContent, t('label.chatShowAll'))
+  const chat = makeChat(nodes)
+  const { host, root } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat) }))
+  assert.equal(host.querySelectorAll('[data-chat-row]').length, 8, 'recent turns only by default')
+  assert.equal(host.querySelector('.rd-chat-toggle'), null, 'the panel has no toolbar row of its own')
   await act(async () => {
-    toggle.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+    root.render(React.createElement(ReaderChatPanel, panelProps({ useChat: useChatOf(chat), showAll: true })))
   })
-  assert.equal(host.querySelectorAll('[data-chat-row]').length, 10)
+  assert.equal(host.querySelectorAll('[data-chat-row]').length, 10, 'showAll prop reveals every turn')
 })
 
 // ---------------------------------------------------------------------------
@@ -323,7 +322,7 @@ function resetIntegrationStore() {
   }
 }
 
-function loadBundleComponent() {
+function loadBundleComponent(services = {}) {
   const code = fs.readFileSync(path.join(here, '..', 'client.js'), 'utf8')
   let entry = null
   win.__ModuleLoader__ = {
@@ -347,6 +346,7 @@ function loadBundleComponent() {
         return () => {}
       },
     },
+    ...services,
   })
   return component
 }
@@ -371,6 +371,7 @@ function installIntegrationFetch() {
         status: 200,
         json: async () => ({}),
         arrayBuffer: async () => bytes,
+        blob: async () => new Blob([bytes], { type: 'image/png' }),
         headers: { get: (name) => (name === 'x-doc-fingerprint' ? 'fp1' : null) },
       }
     }
@@ -397,6 +398,7 @@ function readerChatProps(options = {}) {
   const quotes = []
   const inserted = []
   const calls = []
+  const attachedIds = []
   const inputActions = {
     insertQuote:
       options.insertQuote ||
@@ -414,12 +416,22 @@ function readerChatProps(options = {}) {
       inserted.push({ text, span })
       return true
     },
+    addAttachments: (ids) => {
+      calls.push('attach')
+      attachedIds.push(...ids)
+      return true
+    },
+    removeAttachment: (id) => {
+      const index = attachedIds.indexOf(id)
+      if (index >= 0) attachedIds.splice(index, 1)
+    },
   }
   return {
     chat,
     quotes,
     inserted,
     calls,
+    attachedIds,
     props: {
       useChat: (selector) => selector(chat),
       useInput: (selector) => selector({ phase: 'plain', draft: '', draftRev: 0 }),
@@ -457,12 +469,12 @@ async function selectInProse(container, needle) {
   return { range, element: node.parentElement }
 }
 
-async function mountReader(ctx, extraProps = {}) {
+async function mountReader(ctx, extraProps = {}, services = {}) {
   resetIntegrationStore()
   Object.defineProperty(win.navigator, 'language', { value: 'zh-CN', configurable: true })
   Object.defineProperty(win.navigator, 'languages', { value: ['zh-CN'], configurable: true })
   installIntegrationFetch()
-  const component = loadBundleComponent()
+  const component = loadBundleComponent(services)
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -645,24 +657,37 @@ test('inputActions 缺失时浮层不显示问 AI', async (ctx) => {
   assert.match(container.querySelector('.rd-mini').textContent, /解释/)
 })
 
-test('面板头部的对话页按钮调用 openView(chat)', async (ctx) => {
+test('对话抽屉标题行的按钮把对话页打开', async (ctx) => {
   const calls = []
-  const { host } = await mountPanel(
-    ctx,
-    panelProps({ openView: (view, focus) => calls.push({ view, focus }) }),
-  )
-  const button = host.querySelector('[data-chat-action="open-view"]')
-  assert.ok(button, 'open-in-conversation button rendered')
-  assert.equal(button.textContent, t('label.chatJump'))
+  const fixture = readerChatProps()
+  const { container } = await mountReader(ctx, {
+    ...fixture.props,
+    openView: (view, focus) => calls.push({ view, focus }),
+  })
+  const chatButton = toolbarButton(container, ['对话', 'Chat'])
+  await act(async () => {
+    chatButton.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+  })
+  assert.ok(await waitFor(() => container.querySelector('.rd-chat')), 'chat panel rendered')
+  const button = container.querySelector('.rd-drawer-head-actions [data-chat-action="open-view"]')
+  assert.ok(button, 'open-in-conversation button lives in the drawer header')
+  assert.match(button.getAttribute('aria-label') || '', /在对话页打开|Open in conversation/)
   await act(async () => {
     button.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
   })
   assert.deepEqual(calls, [{ view: 'chat', focus: '' }])
 })
 
-test('openView 缺失时对话页按钮不渲染', async (ctx) => {
-  const { host } = await mountPanel(ctx, panelProps({ openView: undefined }))
-  assert.equal(host.querySelector('[data-chat-action="open-view"]'), null)
+test('openView 缺失时标题行只保留历史按钮', async (ctx) => {
+  const fixture = readerChatProps()
+  const { container } = await mountReader(ctx, { ...fixture.props, openView: undefined })
+  const chatButton = toolbarButton(container, ['对话', 'Chat'])
+  await act(async () => {
+    chatButton.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+  })
+  assert.ok(await waitFor(() => container.querySelector('.rd-chat')), 'chat panel rendered')
+  assert.equal(container.querySelector('.rd-drawer-head-actions [data-chat-action="open-view"]'), null)
+  assert.ok(container.querySelector('.rd-drawer-head-actions [data-chat-action="toggle-all"]'), 'history toggle remains')
 })
 
 test('底部输入框开始提交时自动打开对话页签', async (ctx) => {
@@ -704,7 +729,7 @@ test('引用消息把位置行渲染成来源行', async (ctx) => {
   assert.ok(host.querySelector('.rd-chat-bubble .rd-chat-md'), 'question body rendered')
 })
 
-test('推理与工具调用默认折叠，切换过程后展开', async (ctx) => {
+test('推理与工具调用只折叠进每条回答，不再提供全局过程开关', async (ctx) => {
   const chat = makeChat([
     chatNode('a1', 'assistant-step', {
       turn: 1,
@@ -716,15 +741,11 @@ test('推理与工具调用默认折叠，切换过程后展开', async (ctx) =>
       ],
     }),
   ])
-  const { host, root } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat) }))
-  assert.ok(host.querySelector('.rd-chat-process'), 'process summary collapsed into one line')
-  assert.equal(host.querySelectorAll('.rd-chat-tool').length, 0, 'no tool rows by default')
-  const toggle = host.querySelector('[data-chat-action="toggle-process"]')
-  assert.ok(toggle, 'process toggle present')
-  await act(async () => {
-    toggle.click()
-  })
-  assert.ok(host.querySelectorAll('.rd-chat-tool').length >= 1, 'tool rows appear in full detail')
+  const { host } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat) }))
+  const assistant = host.querySelector('[data-kind="assistant"]')
+  assert.ok(assistant.querySelector('.rd-chat-process'), 'process pill lives inside the answer bubble')
+  assert.equal(host.querySelectorAll('.rd-chat-tool').length, 0, 'no raw tool rows in the reading column')
+  assert.equal(host.querySelector('[data-chat-action="toggle-process"]'), null, 'global process toggle is gone')
 })
 
 test('已停止的回答仍显示已生成正文', async (ctx) => {
@@ -747,11 +768,11 @@ test('以书名开头的普通提问不会被当成引用来源', async (ctx) =>
   assert.match(host.textContent, /《三体》讲了什么？/)
 })
 
-test('空面板显示当前书名', async (ctx) => {
+test('空面板显示当前书名（去掉扩展名）', async (ctx) => {
   const { host } = await mountPanel(ctx, panelProps())
   const book = host.querySelector('.rd-chat-empty-book')
   assert.ok(book, 'book name shown in the empty state')
-  assert.match(book.textContent, /书\.md/)
+  assert.match(book.textContent, /《书》/)
 })
 
 test('聊天面板内选区只提供对话动作，不提供书内标注', async (ctx) => {
@@ -813,4 +834,296 @@ test('展开过程只展开工具，思维链留到下一级手动展开', async
   // Like the native chat, the folded reasoning line previews its first sentence.
   assert.match(reasoning.querySelector('summary').textContent, /第一段想法/)
   assert.match(reasoning.textContent, /第一段想法/)
+})
+
+
+test('对话用左右气泡区分角色，引用条与角色文案各就各位', async (ctx) => {
+  const chat = makeChat([
+    chatNode('u1', 'user', {
+      turn: 1,
+      content: [{ type: 'text', text: '《示例书》 · 第 2 章 · 30%\n这段讲了什么？' }],
+    }),
+    chatNode('a1', 'assistant-step', {
+      turn: 1,
+      step: 2,
+      status: 'settled',
+      blocks: [{ kind: 'text', text: '这段在讲一致性层级。' }],
+    }),
+  ])
+  const { host } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat) }))
+  assert.equal(host.querySelectorAll('.rd-chat-avatar').length, 0, 'no avatar chips: they would crowd the narrow sidebar')
+  const userBubble = host.querySelector('.rd-chat-bubble-user')
+  const assistantBubble = host.querySelector('.rd-chat-bubble-assistant')
+  assert.ok(userBubble && assistantBubble, 'both sides render bubbles')
+  assert.ok(userBubble.querySelector('.rd-chat-source'), 'quote renders as a source chip inside the user bubble')
+  assert.match(userBubble.querySelector('.rd-chat-source').textContent, /第 2 章/)
+  assert.match(userBubble.textContent, /这段讲了什么/)
+  assert.match(assistantBubble.textContent, /一致性层级/)
+  // role names stay available to screen readers without floating above the bubbles
+  const roles = [...host.querySelectorAll('.rd-chat-role')]
+  assert.equal(roles.length, 2, 'one role label per side')
+  assert.ok(roles.every((node) => node.className.includes('rd-chat-role')), 'role labels keep their hook class')
+  assert.equal(host.querySelectorAll('.rd-chat-bubble > .rd-chat-role').length, 2, 'role labels live inside the bubbles')
+})
+
+test('空状态提供标题、引导与画布式提示', async (ctx) => {
+  const { host } = await mountPanel(ctx, panelProps())
+  const empty = host.querySelector('.rd-chat-empty')
+  assert.ok(empty.querySelector('.rd-chat-empty-icon svg'), 'empty state shows a chat glyph')
+  assert.equal(empty.querySelector('.rd-chat-empty-title').textContent, t('label.chatEmptyTitle'))
+  assert.match(empty.textContent, new RegExp(t('label.chatEmpty')))
+  assert.equal(empty.querySelectorAll('.rd-chat-empty-hints span').length, 2, 'two affordance hints')
+})
+
+
+test('对话气泡渲染图片与文件附件，图片走 Session 解析器', async (ctx) => {
+  const image = {
+    attachmentId: 'sha256:' + 'd'.repeat(64),
+    mediaType: 'image/png',
+    bytes: 120,
+    width: 12,
+    height: 8,
+    name: '截图.png',
+  }
+  const file = { attachmentId: 'sha256:' + 'e'.repeat(64), name: '长篇报告.pdf', bytes: 204800 }
+  const chat = makeChat([
+    chatNode('u1', 'user', {
+      turn: 1,
+      content: [{ type: 'image', attachment: image }, { type: 'file', attachment: file }, { type: 'text', text: '看这两份东西' }],
+    }),
+    chatNode('a1', 'assistant-step', {
+      turn: 1,
+      step: 1,
+      status: 'settled',
+      blocks: [{ kind: 'text', text: '收到' }, { kind: 'image', attachment: { ...image, attachmentId: 'sha256:' + 'f'.repeat(64) } }],
+    }),
+  ])
+  const resolver = {
+    peek: () => 'data:image/png;base64,AAAA',
+    load: async () => 'data:image/png;base64,AAAA',
+    dispose: () => {},
+  }
+  const { host } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat), attachments: resolver }))
+  const images = host.querySelectorAll('.rd-chat-bubble-user .rd-chat-images img')
+  assert.equal(images.length, 1, 'user image rendered')
+  assert.match(images[0].getAttribute('src'), /^data:image\/png/)
+  const card = host.querySelector('.rd-chat-file')
+  assert.ok(card, 'file card rendered')
+  assert.match(card.textContent, /长篇报告\.pdf/)
+  assert.match(card.textContent, /200 KB/)
+  assert.match(host.querySelector('.rd-chat-bubble-user').textContent, /看这两份东西/)
+  assert.equal(host.querySelectorAll('.rd-chat-bubble-assistant .rd-chat-images img').length, 1, 'assistant image block rendered')
+})
+
+test('图片不可解析时降级为文件名占位而非破图', async (ctx) => {
+  const image = { attachmentId: 'sha256:' + '1'.repeat(64), mediaType: 'image/png', bytes: 10, width: 4, height: 4, name: '旧截图.png' }
+  const chat = makeChat([chatNode('u1', 'user', { turn: 1, content: [{ type: 'image', attachment: image }] })])
+  const { host } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat) }))
+  const failed = host.querySelector('.rd-chat-image-failed')
+  assert.ok(failed, 'fallback chip rendered without a resolver')
+  assert.match(failed.textContent, /旧截图\.png/)
+})
+
+test('formatBytes 按量级输出', async () => {
+  const { formatBytes } = await import('../src/client/attachments.js')
+  assert.equal(formatBytes(512), '512 B')
+  assert.equal(formatBytes(2048), '2.0 KB')
+  assert.equal(formatBytes(204800), '200 KB')
+  assert.equal(formatBytes(5 * 1024 * 1024), '5.0 MB')
+  assert.equal(formatBytes(0), '')
+})
+
+
+test('消息图片经 client Session 服务解析后显示为图片', async (ctx) => {
+  const image = {
+    attachmentId: 'sha256:' + '2'.repeat(64),
+    mediaType: 'image/png',
+    bytes: 68,
+    width: 4,
+    height: 4,
+    name: '真实截图.png',
+  }
+  const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+  const readCalls = []
+  const sessions = {
+    binding: () => ({
+      session: {
+        readAttachment: async (attachment) => {
+          readCalls.push(attachment.attachmentId)
+          return { ok: true, value: { attachment, data: bytes } }
+        },
+      },
+    }),
+  }
+  const chat = makeChat([
+    chatNode('u1', 'user', {
+      turn: 1,
+      content: [{ type: 'image', attachment: image }, { type: 'text', text: '看这张截图' }],
+    }),
+    chatNode('a1', 'assistant-step', { turn: 1, step: 1, status: 'settled', blocks: [{ kind: 'text', text: '看到了' }] }),
+  ])
+  const base = readerChatProps()
+  const { container } = await mountReader(
+    ctx,
+    { ...base.props, useChat: (selector) => selector(chat) },
+    { sessions },
+  )
+  const chatButton = toolbarButton(container, ['对话', 'Chat'])
+  await act(async () => {
+    chatButton.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+  })
+  assert.ok(await waitFor(() => container.querySelector('.rd-chat')), 'chat panel rendered')
+  const resolved = await waitFor(() => {
+    const img = container.querySelector('.rd-chat-image img')
+    return img && /^(blob:|data:image\/png)/.test(img.getAttribute('src') || '') ? img : null
+  }, 3000)
+  assert.ok(resolved, 'image bytes resolved through the Session service')
+  assert.deepEqual(readCalls, [image.attachmentId], 'the panel asked the session for exactly this attachment')
+  assert.match(container.querySelector('.rd-chat-bubble-user').textContent, /看这张截图/)
+  assert.equal(container.querySelector('.rd-chat-image-failed'), null)
+})
+
+
+test('选中含图片的正文问 AI 时，图片作为附件加入输入框', async (ctx) => {
+  const fixture = readerChatProps()
+  const created = []
+  const released = []
+  const conversation = {
+    createDrafts(sessionId, files, uploadImages) {
+      created.push({
+        sessionId,
+        uploadImages,
+        files: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+      })
+      return files.map((file, index) => ({ id: `draft-${index + 1}`, file }))
+    },
+    releaseDraftAttachment(id) {
+      released.push(id)
+    },
+  }
+  const { container } = await mountReader(ctx, fixture.props, { conversation })
+  const prose = container.querySelector('.rd-prose')
+  const paragraph = prose.querySelector('p')
+  prose.insertAdjacentHTML(
+    'beforeend',
+    '<figure><img src="/dsh-reader-live/api/file?sessionId=s1&path=figure.png" alt="示意图"><figcaption>图 1 示意</figcaption></figure>',
+  )
+  const figure = prose.querySelector('figure')
+  const textNode = paragraph.firstChild
+  const range = win.document.createRange()
+  range.setStart(textNode, 0)
+  range.setEndAfter(figure)
+  const selection = win.getSelection()
+  selection.removeAllRanges()
+  selection.addRange(range)
+  await act(async () => {
+    figure.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }))
+    await tick(40)
+  })
+  const askButton = [...container.querySelectorAll('.rd-mini button')].find((button) =>
+    String(button.textContent || '').includes('问 AI'),
+  )
+  assert.ok(askButton, 'selection menu offers Ask AI')
+  await act(async () => {
+    askButton.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+    await tick(20)
+  })
+  await waitFor(() => created.length > 0, 3000)
+  assert.equal(created[0].sessionId, 's1')
+  assert.equal(created[0].uploadImages, true)
+  assert.equal(created[0].files.length, 1)
+  assert.equal(created[0].files[0].type, 'image/png')
+  assert.match(created[0].files[0].name, /^示意图.*\.png$/)
+  assert.deepEqual(fixture.attachedIds, ['draft-1'], 'draft id handed to the composer')
+  assert.deepEqual(released, [])
+  const quoted = fixture.quotes.join('\n')
+  assert.match(quoted, /选区内图形（见附件）/)
+  assert.match(quoted, /示意图/)
+})
+
+
+test('只选中一张图片时也能问 AI，并把图片作为附件', async (ctx) => {
+  const fixture = readerChatProps()
+  const created = []
+  const conversation = {
+    createDrafts(sessionId, files) {
+      created.push(files.map((file) => ({ name: file.name, type: file.type })))
+      return files.map((file, index) => ({ id: `draft-${index + 1}`, file }))
+    },
+    releaseDraftAttachment() {},
+  }
+  const { container } = await mountReader(ctx, fixture.props, { conversation })
+  const prose = container.querySelector('.rd-prose')
+  prose.insertAdjacentHTML(
+    'beforeend',
+    '<figure><img src="/dsh-reader-live/api/file?sessionId=s1&path=pure.png" alt="纯图片"></figure>',
+  )
+  const figure = prose.querySelector('figure')
+  const range = win.document.createRange()
+  range.selectNodeContents(figure)
+  const selection = win.getSelection()
+  selection.removeAllRanges()
+  selection.addRange(range)
+  assert.equal(selection.toString().trim(), '', 'no text in the selection')
+  await act(async () => {
+    figure.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }))
+    await tick(40)
+  })
+  const askButton = [...container.querySelectorAll('.rd-mini button')].find((button) =>
+    String(button.textContent || '').includes('问 AI'),
+  )
+  assert.ok(askButton, 'image-only selection still offers Ask AI')
+  await act(async () => {
+    askButton.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+    await tick(20)
+  })
+  await waitFor(() => created.length > 0, 3000)
+  assert.equal(created[0].length, 1)
+  assert.equal(created[0][0].type, 'image/png')
+  assert.match(created[0][0].name, /^纯图片.*\.png$/)
+})
+
+
+test('生成中的回答把流式文本与当前工具显示在气泡里', async (ctx) => {
+  const chat = makeChat(
+    [
+      chatNode('u1', 'user', { turn: 1, content: [{ type: 'text', text: '问' }] }),
+      chatNode('a1', 'assistant-step', {
+        turn: 1,
+        step: 1,
+        status: 'running',
+        blocks: [{ kind: 'reasoning', text: '先想想' }],
+      }),
+    ],
+    { turn: 1, step: 1, status: 'running', blocks: [{ kind: 'text', text: '正在生成的前半段' }] },
+    [{ callId: 'c1', name: 'bash' }],
+  )
+  const { host } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat), useSession: useSessionOf(true) }))
+  const bubble = host.querySelector('.rd-chat-bubble-assistant')
+  assert.match(bubble.textContent, /正在生成的前半段/, 'streamed text is visible while generating')
+  assert.ok(host.querySelector('.rd-chat-streaming-dot'), 'streaming cursor follows the text')
+  assert.equal(host.querySelector('.rd-chat-live'), null, 'live status is only the no-text fallback')
+  assert.equal(host.querySelector('.rd-chat-busy'), null, 'bottom busy pill is redundant while the answer streams')
+})
+
+test('还没有正文时生成中的气泡显示当前动作而不是空白', async (ctx) => {
+  const chat = makeChat(
+    [
+      chatNode('u1', 'user', { turn: 1, content: [{ type: 'text', text: '问' }] }),
+      chatNode('a1', 'assistant-step', {
+        turn: 1,
+        step: 1,
+        status: 'running',
+        blocks: [{ kind: 'reasoning', text: '先想想' }],
+      }),
+    ],
+    { turn: 1, step: 1, status: 'running', blocks: [{ kind: 'reasoning', text: '继续想' }] },
+    [],
+  )
+  const { host } = await mountPanel(ctx, panelProps({ useChat: useChatOf(chat), useSession: useSessionOf(true) }))
+  const live = host.querySelector('.rd-chat-live')
+  assert.ok(live, 'live status rendered instead of an empty bubble')
+  assert.match(live.textContent, /label\.chatThinking/)
+  assert.match(host.querySelector('.rd-chat-bubble-assistant').textContent, /label\.chatProcess/)
+  assert.equal(host.querySelector('.rd-chat-busy'), null)
 })

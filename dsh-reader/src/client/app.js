@@ -143,6 +143,26 @@ function IconSettings() {
   )
 }
 
+function IconHistory() {
+  return h(
+    'svg',
+    { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'M3.5 12a8.5 8.5 0 1 0 2.8-6.3' }),
+    h('path', { d: 'M3.5 4.5V9H8' }),
+    h('path', { d: 'M12 8.5V12l2.6 1.6' }),
+  )
+}
+
+function IconExternal() {
+  return h(
+    'svg',
+    { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+    h('path', { d: 'M14 5h5v5' }),
+    h('path', { d: 'M19 5l-7 7' }),
+    h('path', { d: 'M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10' }),
+  )
+}
+
 function PdfPageView(props) {
   const { doc, page, zoom, annotations, concepts, contentRef } = props
   const canvasRef = React.useRef(null)
@@ -350,12 +370,18 @@ export function ReaderView(props) {
   const [mapScale, setMapScale] = React.useState(1)
   const [selectedNodeId, setSelectedNodeId] = React.useState(null)
   const [mapFullscreen, setMapFullscreen] = React.useState(false)
+  const [chatShowAll, setChatShowAll] = React.useState(false)
   const [mapPan, setMapPan] = React.useState({ x: 0, y: 0 })
   const mapScrollRef = React.useRef(null)
   const mapCanvasRef = React.useRef(null)
   const mapPanRef = React.useRef({ x: 0, y: 0 })
   const mapDragRef = React.useRef(null)
   const suppressMapClick = React.useRef(false)
+  const cardSlotRef = React.useRef(0)
+  const mapMotionRef = React.useRef({
+    key: null, seen: new Set(), entered: new Set(), enteredEdges: new Set(),
+    nodeDelays: new Map(), edgeDelays: new Map(), faded: false, enterAt: 0, fading: new Set(),
+  })
   const [askText, setAskText] = React.useState('')
   const [askBusy, setAskBusy] = React.useState(false)
   const [askWeb, setAskWeb] = React.useState(false)
@@ -368,6 +394,7 @@ export function ReaderView(props) {
   const [selectionTranslation, setSelectionTranslation] = React.useState(null)
   const card = topCard(cards)
   const prefs = store.prefs || {}
+  const motionOn = motionEnabled(prefs)
 
   const contentRef = React.useRef(null)
   const rootRef = React.useRef(null)
@@ -391,16 +418,32 @@ export function ReaderView(props) {
   const historyRef = React.useRef(null)
   const reporterRef = React.useRef(null)
 
+  const pulseOptions = () => ({ enabled: motionOn, root: rootRef.current })
+
+  // Durable message images are resolved through the client Session object
+  // layer the platform passes into the view (native conversation does the same).
+  const attachmentResolver = React.useMemo(
+    () => (props.sessions && sessionId ? createAttachmentResolver(props.sessions, sessionId) : null),
+    [props.sessions, sessionId],
+  )
+  React.useEffect(() => () => {
+    if (attachmentResolver) attachmentResolver.dispose()
+  }, [attachmentResolver])
+
   const docKey = doc ? doc.fingerprint || doc.path : null
   const concepts = React.useMemo(() => Object.values(store.concepts || {}), [store.concepts])
   const sentLog = (store.debug && Array.isArray(store.debug.lastSent) ? store.debug.lastSent : []).slice(-10).reverse()
-  const guide = docKey ? store.docs?.[docKey]?.guide : null
+  const rawGuide = docKey ? store.docs?.[docKey]?.guide : null
   // Store merges clone the guide object on every position/annotation write.
   // Rebuild only when its actual content changes, otherwise selecting a node
   // (which may save a page position) would reset the detail card a moment later.
-  const guideSignature = React.useMemo(() => (guide ? JSON.stringify(guide) : ''), [guide])
+  const guideSignature = React.useMemo(() => (rawGuide ? JSON.stringify(rawGuide) : ''), [rawGuide])
+  // Sanitized once per content change: summaries occasionally carry a raw
+  // JSON envelope from the model, and every view (map/detail/list/export)
+  // should show clean prose.
+  const guide = React.useMemo(() => (rawGuide ? sanitizeGuide(rawGuide) : null), [guideSignature])
   const guideTree = React.useMemo(
-    () => (guide ? buildGuideTree(doc ? doc.name : '', guide) : null),
+    () => (guide ? buildGuideTree(doc ? documentTitle(doc.name) : '', guide) : null),
     // Only a new guide (or opening another book) may rebuild the map; page,
     // selection and structure-probe updates must not reset its expansion.
     [guideSignature, doc ? doc.name : ''],
@@ -421,6 +464,34 @@ export function ReaderView(props) {
     setCollapsedIds(new Set((guideTree.children || []).filter((node) => (node.children || []).length > 0).map((node) => node.id)))
     setSelectedNodeId(null)
   }, [guideTree])
+
+  React.useEffect(() => {
+    if (drawer !== 'guide' || guideView !== 'map' || !guideLayout) return
+    const state = mapMotionRef.current
+    if (state.key !== guideSignature) {
+      Object.assign(state, {
+        key: guideSignature, seen: new Set(), entered: new Set(), enteredEdges: new Set(),
+        nodeDelays: new Map(), edgeDelays: new Map(), faded: true, enterAt: Date.now(), fading: new Set(),
+      })
+      guideLayout.nodes.forEach((node, index) => { state.entered.add(node.id); state.nodeDelays.set(node.id, index) })
+      guideLayout.edges.forEach((edge, index) => {
+        const key = `${edge.from}-${edge.to}`
+        state.enteredEdges.add(key)
+        state.edgeDelays.set(key, index)
+      })
+    }
+    const fresh = []
+    for (const node of guideLayout.nodes) {
+      if (!state.seen.has(node.id)) fresh.push(node.id)
+      state.seen.add(node.id)
+    }
+    // Keep the fade class across the re-render that recentring triggers, then
+    // let it go so a later remount starts clean.
+    if (fresh.length > 0) {
+      for (const id of fresh) state.fading.add(id)
+      setTimeout(() => { for (const id of fresh) state.fading.delete(id) }, 400)
+    }
+  }, [drawer, guideView, guideLayout, guideSignature])
 
   React.useEffect(() => {
     if (drawer !== 'guide' || guideView !== 'map') setMapFullscreen(false)
@@ -459,6 +530,16 @@ export function ReaderView(props) {
     const fit = Math.min(1, Math.max(0.55, available / (guideLayout.width + 60)))
     setMapScale((current) => (Math.abs(current - 1) < 0.001 ? Number(fit.toFixed(2)) : current))
   }, [guideView, guideLayout])
+
+  React.useEffect(() => {
+    // The stage moves between the drawer and the root when fullscreen toggles,
+    // so the fitted scale must be recomputed for the new viewport.
+    if (guideView !== 'map' || !guideLayout) return
+    const node = mapScrollRef.current
+    if (!node) return
+    const available = Math.max(240, node.clientWidth - 16)
+    setMapScale(Number(Math.min(1, Math.max(0.55, available / (guideLayout.width + 60))).toFixed(2)))
+  }, [mapFullscreen])
 
   // The map is a canvas rather than a scroll box: panning moves the drawing
   // itself, so a map that happens to fit in the viewport can still be dragged.
@@ -614,8 +695,10 @@ export function ReaderView(props) {
       const nodes = [...document.querySelectorAll('.rd-card')]
       const next = {}
       cards.forEach((entry, index) => {
-        const rect = nodes[index] && nodes[index].getBoundingClientRect()
-        if (rect && rect.width > 0) next[entry.id] = { width: rect.width, height: rect.height }
+        // offsetWidth/Height exclude the entrance transform; getBoundingClientRect
+        // would report a ~4% smaller card while the 0.96 scale is still running.
+        const node = nodes[index]
+        if (node && node.offsetWidth > 0) next[entry.id] = { width: node.offsetWidth, height: node.offsetHeight }
       })
       setCardSizes(next)
     }
@@ -858,6 +941,25 @@ export function ReaderView(props) {
     setChapter(next)
   }
 
+  // The destination only exists after React commits the jump; pulse it then.
+  const pulseSoon = (selector) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const node = document.querySelector(selector)
+      if (node) pulseElement(node, pulseOptions())
+    }))
+  }
+
+  const jumpToChapter = (next) => {
+    goChapter(next, 'top')
+    pulseSoon('.rd-prose h1,.rd-prose h2,.rd-prose h3,.rd-prose > *')
+  }
+
+  const jumpToPdfPage = (pageNumber) => {
+    if (!Number.isFinite(pageNumber)) return
+    setPage(pageNumber)
+    pulseSoon(`.rd-pdf-page[data-page="${pageNumber}"]`)
+  }
+
   const scrollReading = (direction) => {
     const main = readingScroller()
     if (!main || !doc) return
@@ -957,6 +1059,7 @@ export function ReaderView(props) {
         setConceptEdit(null)
         return
       }
+      if (mapFullscreen) return
       if (!doc) return
       const typingTarget = event.target && event.target.closest
         ? event.target.closest('input, textarea, select, [contenteditable="true"]')
@@ -1055,7 +1158,7 @@ export function ReaderView(props) {
     try {
       const opened = await api.fetchBytes(sessionId, entry.path)
       const ext = entry.ext || extOf(entry.name)
-      const next = { path: entry.path, name: entry.name, ext, bytes: opened.bytes, fingerprint: opened.fingerprint || '', sessionId }
+      const next = { path: entry.path, name: entry.name, ext, size: opened.bytes.byteLength, bytes: opened.bytes, fingerprint: opened.fingerprint || '', sessionId }
       if (ext === '.epub') {
         next.epub = await epubOpen(opened.bytes)
         if (next.epub.fixedLayout) throw new Error(t('label.fxlUnsupported'))
@@ -1367,10 +1470,14 @@ export function ReaderView(props) {
     }
     const rect = range ? range.getBoundingClientRect() : { left: 220, top: 220, right: 220, bottom: 220 }
     const pendingId = 'pending-' + uid()
+    // Keep one slot per card: the pending card and its settled concept share it,
+    // so loading the answer never replays the entrance animation (M-02).
+    cardSlotRef.current += 1
+    const slot = `card-slot-${cardSlotRef.current}`
     setCards((current) =>
       parentId
-        ? pushCard(current, { id: pendingId, term, pending: true, pinned: true, rect })
-        : [{ id: pendingId, term, pending: true, pinned: true, rect }],
+        ? pushCard(current, { id: pendingId, slot, term, pending: true, pinned: true, rect })
+        : [{ id: pendingId, slot, term, pending: true, pinned: true, rect }],
     )
     const { sentence, paragraph } = contextFor(range)
     const inContent = Boolean(
@@ -1397,15 +1504,15 @@ export function ReaderView(props) {
       if (result.ancestor) {
         // The reader walked down the chain and asked about a term that raised it:
         // show that card with the reason instead of pretending it is new.
-        setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect, hint: t('label.ancestorRevisit') }))
+        setCards((current) => replaceTop(current, { id: concept.id, slot: (topCard(current) || {}).slot, pinned: true, rect, hint: t('label.ancestorRevisit') }))
         flash(t('label.ancestorRevisit'))
         return
       }
-      setCards((current) => replaceTop(current, { id: concept.id, pinned: true, rect }))
+      setCards((current) => replaceTop(current, { id: concept.id, slot: (topCard(current) || {}).slot, pinned: true, rect }))
       flash(`${t('label.conceptSaved')}：${concept.term}`)
     } catch (e) {
       setCards((current) =>
-        replaceTop(current, { id: pendingId, term, pending: false, error: String(e.message || e), pinned: true, rect }),
+        replaceTop(current, { id: pendingId, slot: (topCard(current) || {}).slot, term, pending: false, error: String(e.message || e), pinned: true, rect }),
       )
     }
   }
@@ -1671,7 +1778,12 @@ export function ReaderView(props) {
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
     const range = selection.getRangeAt(0)
     const text = selection.toString().trim()
-    if (!text) return
+    if (!text) {
+      // A figure selected on its own has no text, but it is still a passage the
+      // reader may want explained: keep the menu when it carries rich assets.
+      const probeRoot = contentRef.current
+      if (!probeRoot || collectSelectionAssets(range, probeRoot).length === 0) return
+    }
     const node = range.commonAncestorContainer
     const element = node.nodeType === 3 ? node.parentElement : node
     if (element && element.closest && element.closest('.rd-card')) {
@@ -1680,7 +1792,13 @@ export function ReaderView(props) {
         setCards((current) =>
           current.map((entry, index) => (index === current.length - 1 ? { ...entry, pinned: true } : entry)),
         )
-        setChildMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top })
+        setChildMenu({
+          text,
+          range: range.cloneRange(),
+          x: rect.left + rect.width / 2,
+          y: rect.top,
+          rect,
+        })
       }
       return
     }
@@ -1692,8 +1810,19 @@ export function ReaderView(props) {
       return
     }
     const rect = range.getBoundingClientRect()
+    // Figures/formulas inside the selection travel with the question: describe
+    // them in the quote now, attach their bytes once the composer accepts them.
+    const assets = !inChat && root ? collectSelectionAssets(range, root) : []
     setMenuError('')
-    setMenu({ text, range: range.cloneRange(), x: rect.left + rect.width / 2, y: rect.top, inChat })
+    setMenu({
+      text,
+      range: range.cloneRange(),
+      x: rect.left + rect.width / 2,
+      y: rect.top,
+      rect,
+      inChat,
+      assets,
+    })
   }
 
   const closeCardsSoon = (delay = 600) => {
@@ -1737,12 +1866,14 @@ export function ReaderView(props) {
 
   const focusAnnotation = (annotation) => {
     if (annotation.kind === 'pdf') {
-      setPage(annotation.page)
+      jumpToPdfPage(annotation.page)
       return
     }
     const root = contentRef.current
     const element = root && root.querySelector(`[data-anno="${annotation.id}"]`)
-    if (element) element.scrollIntoView({ block: 'center' })
+    if (!element) return
+    element.scrollIntoView({ block: 'center' })
+    pulseElement(element, pulseOptions())
   }
 
   const upgradeConcept = async (concept) => {
@@ -1877,7 +2008,7 @@ export function ReaderView(props) {
 
   const jumpToSearchResult = (result) => {
     if (doc?.ext === '.pdf') {
-      if (Number.isFinite(result.page)) setPage(result.page)
+      jumpToPdfPage(result.page)
       return
     }
     const root = contentRef.current
@@ -1887,6 +2018,7 @@ export function ReaderView(props) {
       const node = found.range.startContainer
       const element = node.nodeType === 3 ? node.parentElement : node
       if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+      pulseRange(found.range, pulseOptions())
     }
   }
 
@@ -2338,10 +2470,12 @@ export function ReaderView(props) {
 
   const jumpToSection = (section) => {
     if (!section) return
+    // The fullscreen overlay hides the book; jumping to the source must reveal it.
+    if (mapFullscreen) setMapFullscreen(false)
     if (doc?.ext === '.epub') {
       const match = String(section.id || '').match(/^(?:e|c)(\d+)/i)
       const index = Number.isFinite(section.chapter) ? section.chapter : match ? Number(match[1]) : NaN
-      if (Number.isFinite(index) && doc.epub.chapters[index]) goChapter(index, 'top')
+      if (Number.isFinite(index) && doc.epub.chapters[index]) jumpToChapter(index)
       return
     }
     if (doc?.ext === '.pdf') {
@@ -2350,7 +2484,7 @@ export function ReaderView(props) {
         const match = String(section.id || '').match(/^(?:p|d)(\d+)/i)
         if (match) page = Number(match[1])
       }
-      if (Number.isFinite(page) && page >= 1) setPage(page)
+      if (Number.isFinite(page) && page >= 1) jumpToPdfPage(page)
       return
     }
     const root = contentRef.current
@@ -2364,7 +2498,10 @@ export function ReaderView(props) {
       const text = (element.textContent || '').trim()
       return text === base || text.startsWith(base.slice(0, 12))
     })
-    if (target) target.scrollIntoView({ block: 'start' })
+    if (target) {
+      target.scrollIntoView({ block: 'start' })
+      pulseElement(target, pulseOptions())
+    }
   }
 
   const downloadBlob = (blob, name) => {
@@ -2380,7 +2517,10 @@ export function ReaderView(props) {
 
   const exportGuideMd = () => {
     if (!guide) return
-    downloadBlob(new Blob([guideMarkdown({ title: doc?.name || t('tab.guide'), guide })], { type: 'text/markdown' }), `${guideBaseName()}.guide.md`)
+    downloadBlob(
+      new Blob([guideMarkdown({ title: doc ? documentTitle(doc.name) : t('tab.guide'), guide })], { type: 'text/markdown' }),
+      `${guideBaseName()}.guide.md`,
+    )
   }
 
   const exportGuideSvg = () => {
@@ -2427,18 +2567,14 @@ export function ReaderView(props) {
     const canvasWidth = Math.round(width * mapScale)
     const canvasHeight = Math.round(height * mapScale)
     const selected = guideLayout.nodes.find((node) => node.id === selectedNodeId) || null
-    const nodeLines = (node) => {
-      if (node.chunkIndex) {
-        const head = chunkNodeTitle(node)
-        const summary = String(node.summary || '').replace(/\s+/g, ' ').trim()
-        const lines = splitNodeTitle(head || summary)
-        if (summary && head && summary !== head && lines.length < 2) {
-          lines.push(summary.slice(0, 18) + (summary.length > 18 ? '…' : ''))
-        }
-        return lines
-      }
-      return splitNodeTitle(node.title)
-    }
+    const motionState = mapMotionRef.current
+    const enterAll = motionState.key !== guideSignature
+    // The enter class only survives the entrance window: keeping it forever
+    // would replay the full stagger whenever a collapsed branch remounts.
+    const enterWindow = enterAll || Date.now() - motionState.enterAt < 400
+    const bigMap = guideLayout.edges.length > 60
+    const delayOf = (map, key, index, max) => staggerDelay(map.get(key) ?? index, 6, max)
+    const nodeLines = (node) => (node.chunkIndex ? chunkNodeLines(node) : splitNodeTitle(node.title))
 
     const activateNode = (node) => {
       if (suppressMapClick.current) return
@@ -2560,6 +2696,7 @@ export function ReaderView(props) {
           tabIndex: 0,
           'data-pan-x': mapPan.x,
           'data-pan-y': mapPan.y,
+          style: mapGridVars({ pan: mapPan, scale: mapScale }),
           onKeyDown: (event) => {
             if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
             event.preventDefault()
@@ -2603,8 +2740,11 @@ export function ReaderView(props) {
             null,
             '.rdm-label{font-size:11.5px;fill:var(--dsw-alias-label-primary,#1f2937);font-family:system-ui,sans-serif}.rdm-sub{font-size:11px;fill:var(--dsw-alias-label-secondary,#6b7280)}.rdm-node{fill:var(--dsw-alias-bg-layer-1,#f8fafc);stroke:var(--dsw-alias-border-l1,#d1d5db)}.rdm-root{fill:var(--dsw-alias-bg-layer-2,#eef2f7)}.rdm-node-selected{stroke:var(--dsw-alias-brand-primary,#3b82f6);stroke-width:2}.rdm-edge{stroke:var(--dsw-alias-border-l2,#9ca3af);stroke-width:1.4;fill:none}',
           ),
-          h('g', { transform: `translate(30,30) scale(${mapScale})` },
-            guideLayout.edges.map((edge) => {
+          h('g', {
+            transform: `translate(30,30) scale(${mapScale})`,
+            className: bigMap && enterWindow && (enterAll || motionState.faded) ? 'rdm-node-fade' : undefined,
+          },
+            guideLayout.edges.map((edge, edgeIndex) => {
               const from = byId.get(edge.from)
               const to = byId.get(edge.to)
               if (!from || !to) return null
@@ -2613,15 +2753,37 @@ export function ReaderView(props) {
               const x2 = to.x
               const y2 = to.y + MAP_NODE_HEIGHT / 2
               const mid = (x1 + x2) / 2
+              const edgeKey = `${edge.from}-${edge.to}`
+              const edgeMotion = !bigMap && enterWindow && (enterAll || motionState.enteredEdges.has(edgeKey))
               return h('path', {
-                key: `${edge.from}-${edge.to}`,
-                className: 'rdm-edge',
+                key: edgeKey,
+                className: edgeMotion ? 'rdm-edge rdm-edge-enter' : 'rdm-edge',
                 d: `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`,
+                ...(edgeMotion
+                  ? {
+                      pathLength: 1,
+                      strokeDasharray: '1',
+                      strokeDashoffset: '1',
+                      style: { animationDelay: `${delayOf(motionState.edgeDelays, edgeKey, edgeIndex, 80)}ms` },
+                    }
+                  : null),
               })
             }),
-            guideLayout.nodes.map((node) => {
+            guideLayout.nodes.map((node, nodeIndex) => {
               const lines = nodeLines(node)
               const isSelected = node.id === selectedNodeId
+              const isNewNode = !motionState.seen.has(node.id)
+              const nodeEnterClass = bigMap
+                ? undefined
+                : enterWindow && (enterAll || motionState.entered.has(node.id))
+                  ? 'rdm-node-enter'
+                  : isNewNode || motionState.fading.has(node.id)
+                    ? 'rdm-node-fade'
+                    : undefined
+              const nodeEnterStyle =
+                nodeEnterClass === 'rdm-node-enter'
+                  ? { animationDelay: `${delayOf(motionState.nodeDelays, node.id, nodeIndex, 140)}ms` }
+                  : undefined
               return h(
                 'g',
                 {
@@ -2630,6 +2792,7 @@ export function ReaderView(props) {
                   'data-node-id': node.id,
                   style: { cursor: 'pointer' },
                 },
+                h('g', { className: nodeEnterClass, style: nodeEnterStyle },
                 h('title', null, node.title || ''),
                 h('rect', {
                   width: MAP_NODE_WIDTH,
@@ -2682,6 +2845,7 @@ export function ReaderView(props) {
                       ),
                     )
                   : null,
+                ),
               )
             }),
           ),
@@ -2708,7 +2872,7 @@ export function ReaderView(props) {
       return
     }
     if (doc?.ext === '.pdf') {
-      if (Number.isFinite(occurrence.page)) setPage(occurrence.page)
+      jumpToPdfPage(occurrence.page)
       return
     }
     setChapter(occurrence.chapter || 0)
@@ -2735,6 +2899,7 @@ export function ReaderView(props) {
       const node = found.range.startContainer
       const element = node.nodeType === 3 ? node.parentElement : node
       if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+      pulseRange(found.range, pulseOptions())
     }
     setScrollTarget(null)
   }, [scrollTarget, doc, chapter])
@@ -3030,11 +3195,13 @@ export function ReaderView(props) {
 
   // One shell for every drawer tab: resizer + title bar + scrolling body.
   // Mirrors the original per-branch markup so existing tabs keep their output.
-  const renderDrawerShell = (title, body, options = {}) =>
-    h(
+  const renderDrawerShell = (title, body, options = {}) => {
+    const drawerMotion = motionOn ? (drawerWidthMotion(doc) ? 'open' : 'content') : undefined
+    return h(
       'div',
       {
         className: `rd-drawer${options.wide ? ' rd-drawer-wide' : ''}`,
+        'data-motion': drawerMotion,
         style: { flexBasis: `${drawerWidth}px`, width: `${drawerWidth}px`, maxWidth: `${drawerWidth}px` },
       },
       h('div', {
@@ -3062,7 +3229,9 @@ export function ReaderView(props) {
         'div',
         { className: 'rd-drawer-head' },
         h('span', { style: { fontSize: '12.5px', fontWeight: 600 } }, title),
+        options.subtitle ? h('span', { className: 'rd-drawer-sub' }, options.subtitle) : null,
         h('span', { className: 'rd-spacer' }),
+        options.actions ? h('div', { className: 'rd-drawer-head-actions' }, options.actions) : null,
         h('button', { className: 'rd-btn ghost', onClick: () => setDrawer(null) }, '×'),
       ),
       h(
@@ -3074,9 +3243,10 @@ export function ReaderView(props) {
             if (drawer) drawerScroll.current[drawerViewKey] = event.currentTarget.scrollTop
           },
         },
-        body,
+        h('div', { key: drawerViewKey || 'pane', className: 'rd-drawer-pane' }, body),
       ),
     )
+  }
 
   const renderDrawer = () => {
     if (!drawer || !doc) return null
@@ -3093,7 +3263,7 @@ export function ReaderView(props) {
               tabIndex: 0,
               role: 'button',
               style: index === chapter ? { borderColor: 'var(--dsw-alias-brand-primary)' } : undefined,
-              onClick: () => goChapter(index, 'top'),
+              onClick: () => jumpToChapter(index),
             },
             item.label || `${t('label.chapter')} ${index + 1}`,
           ),
@@ -3118,7 +3288,7 @@ export function ReaderView(props) {
                   paddingLeft: 10 + (Math.max(1, entry.level) - 1) * 12,
                   ...(entry.page === page ? { borderColor: 'var(--dsw-alias-brand-primary)' } : {}),
                 },
-                onClick: () => entry.page && setPage(entry.page),
+                onClick: () => entry.page && jumpToPdfPage(entry.page),
               },
               h('span', null, entry.title),
               entry.page ? h('span', { className: 'rd-muted', style: { marginLeft: '8px', fontSize: '11px' } }, entry.page) : null,
@@ -3138,7 +3308,7 @@ export function ReaderView(props) {
                   page >= chapter.page && page <= (chapter.end || chapter.page)
                     ? { borderColor: 'var(--dsw-alias-brand-primary)' }
                     : undefined,
-                onClick: () => setPage(chapter.page),
+                onClick: () => jumpToPdfPage(chapter.page),
               },
               h('span', null, chapter.title),
               chapter.page
@@ -3161,7 +3331,7 @@ export function ReaderView(props) {
                 tabIndex: 0,
                 role: 'button',
                 style: page >= group.start && page <= group.end ? { borderColor: 'var(--dsw-alias-brand-primary)' } : undefined,
-                onClick: () => setPage(group.start),
+                onClick: () => jumpToPdfPage(group.start),
               },
               `${group.start}-${group.end}`,
             ),
@@ -3183,7 +3353,10 @@ export function ReaderView(props) {
                   onClick: () => {
                     const root = contentRef.current
                     const elements = root ? root.querySelectorAll('h1,h2,h3') : []
-                    if (elements[index]) elements[index].scrollIntoView({ block: 'start' })
+                    if (elements[index]) {
+                      elements[index].scrollIntoView({ block: 'start' })
+                      pulseElement(elements[index], pulseOptions())
+                    }
                   },
                 },
                 head.label,
@@ -3590,7 +3763,7 @@ export function ReaderView(props) {
             h('span', { className: 'rd-spacer' }),
             h('button', { className: 'rd-btn', onClick: generateGuide }, t('action.regenerateGuide')),
           ),
-          guideView === 'map' ? renderMindmap() : list,
+          guideView === 'map' ? (mapFullscreen ? null : renderMindmap()) : list,
         )
       }
     }
@@ -3785,6 +3958,8 @@ export function ReaderView(props) {
       body = h(ReaderChatPanel, {
         t,
         doc,
+        showAll: chatShowAll,
+        attachments: attachmentResolver,
         useChat: props.useChat,
         useInput: props.useInput,
         useSession: props.useSession,
@@ -3800,9 +3975,43 @@ export function ReaderView(props) {
       chat: t('tab.chat'),
       settings: t('label.settings'),
     }
+    const chatActions =
+      drawer === 'chat'
+        ? [
+            h(
+              'button',
+              {
+                key: 'chat-history',
+                className: `rd-btn ghost rd-icon-btn rd-drawer-head-btn${chatShowAll ? ' is-on' : ''}`,
+                'data-chat-action': 'toggle-all',
+                'aria-pressed': chatShowAll ? 'true' : 'false',
+                'aria-label': t(chatShowAll ? 'label.chatCollapse' : 'label.chatShowAll'),
+                title: t(chatShowAll ? 'label.chatCollapse' : 'label.chatShowAll'),
+                onClick: () => setChatShowAll((current) => !current),
+              },
+              h(IconHistory),
+            ),
+            typeof props.openView === 'function'
+              ? h(
+                  'button',
+                  {
+                    key: 'chat-open-view',
+                    className: 'rd-btn ghost rd-icon-btn rd-drawer-head-btn',
+                    'data-chat-action': 'open-view',
+                    'aria-label': t('label.chatJump'),
+                    title: t('label.chatJump'),
+                    onClick: () => props.openView('chat', ''),
+                  },
+                  h(IconExternal),
+                )
+              : null,
+          ].filter(Boolean)
+        : null
     return renderDrawerShell(titles[drawer], body, {
       wide: drawer === 'guide' && guideView === 'map',
       bodyClassName: drawer === 'chat' ? 'rd-drawer-chat' : '',
+      subtitle: drawer === 'chat' ? t('label.chatSubtitle') : '',
+      actions: chatActions,
     })
   }
 
@@ -4142,7 +4351,7 @@ export function ReaderView(props) {
       inheritedOffset = offset
     }
 
-    const startDrag = (event, entry, baseLeft, baseTop) => {
+    const startDrag = (event, entry, baseLeft, baseTop, depth) => {
       if (event.button !== 0) return
       if (event.target && event.target.closest && event.target.closest('button, input, textarea, select, a')) return
       const rect = event.currentTarget.getBoundingClientRect()
@@ -4153,8 +4362,8 @@ export function ReaderView(props) {
         startY: event.clientY,
         baseLeft,
         baseTop,
-        offsetX: rect.left - baseLeft,
-        offsetY: rect.top - baseTop,
+        offsetX: rect.left + 12 * depth - baseLeft,
+        offsetY: rect.top + 12 * depth - baseTop,
         width: rect.width,
         height: rect.height,
       }
@@ -4208,18 +4417,31 @@ export function ReaderView(props) {
       cards.map((entry, index) => {
         const isTop = index === topIndex
         const offset = offsets[index]
-        const baseLeft = style.left + index * 12
-        const baseTop = style.top + index * 12
+        const baseLeft = style.left
+        const baseTop = style.top
         const size = cardSizes[entry.id] || { width: cardWidth, height: style.maxHeight }
         const position = clampCardPosition(
           { left: baseLeft + offset.x, top: baseTop + offset.y, width: size.width, height: size.height },
           bounds,
         )
+        const depth = topIndex - index
+        const stackStyle = {
+          transform: `translate(${-12 * depth}px, ${-12 * depth}px)`,
+          opacity: depth > 0 ? 0.96 : 1,
+        }
+        const attachCardMotion = (node) => {
+          if (!node || node.dataset.motion === 'in') return
+          const anchor = entry.rect || { left: 0, top: 0, width: 0, height: 0 }
+          const panel = node.getBoundingClientRect()
+          const side = panel.top + panel.height / 2 >= anchor.top + anchor.height / 2 ? 'below' : 'above'
+          markMotionIn(node, { origin: anchorOrigin(anchor, panel), side, enabled: motionOn })
+        }
         return h(
           'div',
           {
-            key: `${entry.id}-${index}`,
+            key: entry.slot || entry.id,
             className: 'rd-hover-zone',
+            'data-dragging': cardDragRef.current ? '1' : undefined,
             style: {
               left: position.left - 16,
               top: position.top - 16,
@@ -4235,27 +4457,77 @@ export function ReaderView(props) {
           },
           h(
             'div',
-            {
-              key: entry.id,
-              className: 'rd-card',
-              role: 'dialog',
-              'aria-label': String(entry.term || (store.concepts[entry.id] && store.concepts[entry.id].term) || ''),
-              style: { width: cardWidth, maxHeight: style.maxHeight },
-              onPointerDown: (event) => {
-                if (event.target && event.target.closest && event.target.closest('h3')) {
-                  startDrag(event, entry, baseLeft, baseTop)
-                }
+            { key: 'stack', className: 'rd-card-stack', style: stackStyle },
+            h(
+              'div',
+              {
+                key: 'card',
+                ref: attachCardMotion,
+                className: 'rd-card',
+                role: 'dialog',
+                'aria-label': String(entry.term || (store.concepts[entry.id] && store.concepts[entry.id].term) || ''),
+                style: { width: cardWidth, maxHeight: style.maxHeight },
+                onPointerDown: (event) => {
+                  if (event.target && event.target.closest && event.target.closest('h3')) {
+                    startDrag(event, entry, baseLeft, baseTop, depth)
+                  }
+                },
+                onPointerMove: moveDrag,
+                onPointerUp: endDrag,
+                onPointerCancel: endDrag,
               },
-              onPointerMove: moveDrag,
-              onPointerUp: endDrag,
-              onPointerCancel: endDrag,
-            },
-            renderCardBody(entry),
+              renderCardBody(entry),
+            ),
           ),
           isTop && childMenu ? renderChildMenu() : null,
         )
       }),
     )
+  }
+
+  // Attach the figures/formulas of a selection through the client conversation
+  // controller (the only owner of browser draft attachments). The quote text
+  // already describes them, so a failed upload still leaves the model informed.
+  const attachSelectionAssets = async (assets) => {
+    if (!Array.isArray(assets) || assets.length === 0) return
+    const conversation = props.conversation
+    const actions = props.inputActions
+    if (!conversation || typeof conversation.createDrafts !== 'function' || !actions || typeof actions.addAttachments !== 'function') {
+      flash(t('label.selectionAssetsUnavailable'))
+      return
+    }
+    let files = []
+    try {
+      files = await prepareSelectionFiles(assets)
+    } catch {
+      files = []
+    }
+    if (files.length === 0) return
+    let drafts = []
+    try {
+      drafts = conversation.createDrafts(sessionId, files, true) || []
+    } catch {
+      flash(t('label.selectionAssetsFailed'))
+      return
+    }
+    const ids = drafts.map((draft) => (draft && draft.id ? draft.id : '')).filter(Boolean)
+    if (ids.length === 0) return
+    let added = false
+    try {
+      added = actions.addAttachments(ids) !== false
+    } catch {
+      added = false
+    }
+    if (!added) {
+      for (const id of ids) {
+        try {
+          conversation.releaseDraftAttachment(id)
+        } catch {
+          /* the draft may already be gone */
+        }
+      }
+      flash(t('label.selectionAssetsBusy'))
+    }
   }
 
   // Hand the selected passage to the native composer as an atomic quote block;
@@ -4268,14 +4540,15 @@ export function ReaderView(props) {
       return false
     }
     const text = menu && menu.text ? String(menu.text).trim() : ''
-    if (!text) return false
+    const assets = Array.isArray(menu && menu.assets) ? menu.assets : []
+    if (!text && assets.length === 0) return false
     const position = currentPosition(doc, {
       chapter,
       chapterTitle: docChapterTitle(),
       page,
       percent: currentReadingPercent(),
     })
-    const quote = buildQuoteText(formatLocation(doc, position), text)
+    const quote = buildQuoteText(formatLocation(doc, position), text) + buildAssetQuoteSuffix(assets, t)
     let span = null
     if (question && typeof actions.captureInsertion === 'function') {
       try {
@@ -4313,6 +4586,7 @@ export function ReaderView(props) {
     setMenu(null)
     dismissSelection(window)
     setDrawer('chat')
+    if (assets.length > 0) void attachSelectionAssets(assets)
     return true
   }
 
@@ -4320,18 +4594,27 @@ export function ReaderView(props) {
     if (!menu) return null
     const bounds = rootBounds()
     const left = Math.max(bounds.left + 8, Math.min(bounds.right - 320, menu.x - 150))
-    const rawTop = menu.y > bounds.top + 70 ? menu.y - 46 : menu.y + 26
+    const above = menu.y > bounds.top + 70
+    const side = above ? 'above' : 'below'
+    const rawTop = above ? menu.y - 46 : menu.y + 26
     const top = Math.max(bounds.top + 52, Math.min(bounds.bottom - 52, rawTop))
+    const attachMenuMotion = (node) => {
+      if (!node || node.dataset.motion === 'in') return
+      const anchor = menu.rect || { left: menu.x, top: menu.y, width: 0, height: 0 }
+      markMotionIn(node, { origin: edgeOrigin(anchor, node.getBoundingClientRect(), side), side, enabled: motionOn })
+    }
     const composerReady = Boolean(props.inputActions && typeof props.inputActions.insertQuote === 'function')
     const selectedText = menu.text ? String(menu.text).trim() : ''
+    const hasAssets = Array.isArray(menu.assets) && menu.assets.length > 0
+    const canAsk = composerReady && Boolean(selectedText || hasAssets)
     // Chat text is a conversation, not the book: highlight and note annotate
     // book positions and would write annotations the book never renders.
     const inChat = menu.inChat === true
     return h(
       'div',
-      { className: 'rd-mini', style: { left, top } },
+      { className: 'rd-mini', ref: attachMenuMotion, style: { left, top } },
       menuError ? h('div', { key: 'chat-error', className: 'rd-mini-error' }, menuError) : null,
-      composerReady && selectedText
+      canAsk
         ? h('button', { key: 'ask-chat', className: 'rd-btn', onClick: () => askChatSelection() }, t('action.askChat'))
         : null,
       composerReady && selectedText
@@ -4412,10 +4695,16 @@ export function ReaderView(props) {
 
   const renderChildMenu = () => {
     if (!childMenu) return null
+    const attachChildMotion = (node) => {
+      if (!node || node.dataset.motion === 'in') return
+      const anchor = childMenu.rect || { left: childMenu.x, top: childMenu.y, width: 0, height: 0 }
+      markMotionIn(node, { origin: edgeOrigin(anchor, node.getBoundingClientRect(), 'above'), side: 'above', enabled: motionOn })
+    }
     return h(
       'div',
       {
         className: 'rd-mini rd-child-menu',
+        ref: attachChildMotion,
         style: (() => {
           const bounds = rootBounds()
           return {
@@ -4464,7 +4753,11 @@ export function ReaderView(props) {
   return h(
     'div',
     {
-      className: `rd-root rd-theme-${prefs.theme || 'system'}`,
+      className: `rd-root rd-theme-${prefs.theme || 'system'}${mapFullscreen ? ' rd-map-fullscreen-open' : ''}${
+        prefs.motion === 'off' || (rootRef.current && rootRef.current.classList && rootRef.current.classList.contains('rd-motion-off'))
+          ? ' rd-motion-off'
+          : ''
+      }`,
       ref: rootRef,
       style: { '--rd-fs': fontSize + 'px', '--rd-lh': String(prefs.lineHeight || 1.85) },
       onClick: onRootClick,
@@ -4510,6 +4803,7 @@ export function ReaderView(props) {
         )
       : null,
     h('div', { className: 'rd-body' }, renderContent(), renderDrawer()),
+    mapFullscreen ? renderMindmap() : null,
     renderEditor(),
     renderCards(),
     renderMenu(),

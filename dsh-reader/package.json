@@ -1,6 +1,6 @@
 {
   "name": "@2019wakeup/dsh-reader",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "type": "module",
   "description": "Reading workspace with concept cards and in-reader conversation for DeepSeek Harness",
   "exports": {
@@ -28,7 +28,8 @@
       "platform": "web",
       "immediately": true,
       "inject": [
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-api-session-controller"
       ]
     }
   },
@@ -52,7 +53,8 @@
     "eval:layout": "node eval/layout-host.mjs",
     "market:build": "node scripts/build-market-index.mjs",
     "market:verify": "node scripts/verify-market-index.mjs",
-    "publish:check": "node scripts/publish-check.mjs"
+    "publish:check": "node scripts/publish-check.mjs",
+    "eval:motion": "node eval/motion.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": ">=0.2.0-rc.1 <0.3.0-0"

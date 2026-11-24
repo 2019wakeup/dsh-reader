@@ -4,6 +4,9 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const files = [
   'src/client/util.js',
+  'src/client/motion.js',
+  'src/client/attachments.js',
+  'src/client/selection-assets.js',
   'src/client/i18n.js',
   'src/client/api.js',
   'src/client/styles.js',

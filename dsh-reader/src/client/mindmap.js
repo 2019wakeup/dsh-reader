@@ -9,15 +9,78 @@ function baseTitle(value) {
     .trim()
 }
 
-/** Human title for a chunked section: strip the ordinal suffix, fall back to its summary. */
-export function chunkNodeTitle(node, fallback = '') {
-  if (!node) return fallback
-  const title = String(node.title || '')
-    .replace(/[（(]\s*\d+\s*[）)]\s*$/, '')
+/** Strip extension and download-site noise from a document name (map root label). */
+export function documentTitle(value) {
+  const cleaned = String(value || '')
+    .replace(/\.(pdf|epub|md|markdown|txt)$/i, '')
+    .replace(/\s*\((?:z-library[^)]*|z-lib[^)]*|1lib[^)]*|libgen[^)]*|annas-archive[^)]*)\)/gi, '')
+    .replace(/\s{2,}/g, ' ')
     .trim()
-  if (title) return title
-  const summary = String(node.summary || '').trim()
-  return summary || fallback
+  return cleaned || '导读'
+}
+
+/**
+ * Model replies occasionally leak a JSON envelope into a summary; unwrap it so
+ * the map/detail/export never show raw JSON.
+ */
+export function cleanGuideSummary(value) {
+  let text = String(value || '').trim()
+  if (text.startsWith('{')) {
+    const match = text.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+    if (match) {
+      try {
+        text = JSON.parse(`"${match[1]}"`)
+      } catch {
+        text = match[1].replace(/\\n/g, ' ')
+      }
+    } else {
+      text = text.replace(/[{}"]/g, ' ').replace(/\b(?:summary|keyPoints)\s*:/g, ' ')
+    }
+  }
+  return text.replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Copy a guide with summary text cleaned, keeping its shape for every view. */
+export function sanitizeGuide(guide) {
+  if (!guide || typeof guide !== 'object') return guide
+  const cleanList = (points) => (Array.isArray(points) ? points.map(cleanGuideSummary).filter(Boolean) : [])
+  const cleanSections = (items) =>
+    (Array.isArray(items) ? items : []).map((section) =>
+      section && typeof section === 'object'
+        ? { ...section, summary: cleanGuideSummary(section.summary), keyPoints: cleanList(section.keyPoints) }
+        : section,
+    )
+  return {
+    ...guide,
+    synopsis: cleanGuideSummary(guide.synopsis),
+    parts: (Array.isArray(guide.parts) ? guide.parts : []).map((part) =>
+      part && typeof part === 'object'
+        ? { ...part, summary: cleanGuideSummary(part.summary), keyPoints: cleanList(part.keyPoints) }
+        : part,
+    ),
+    sections: cleanSections(guide.sections),
+  }
+}
+
+function firstClause(value, max = 14) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  const clause = (text.split(/[，,。；;！？!?：:]/)[0] || text).trim()
+  const chars = Array.from(clause)
+  return chars.length > max ? chars.slice(0, max).join('') + '…' : clause
+}
+
+/**
+ * Label lines for a chunked section. The chapter title already sits on the
+ * parent node, so repeating it here makes every sibling look identical; show
+ * the chunk ordinal plus its leading point/summary cluster instead.
+ */
+export function chunkNodeLines(node, perLine = 17) {
+  if (!node) return ['']
+  const ordinal = Number(node.chunkIndex) || 0
+  const prefix = ordinal ? `（${ordinal}）` : ''
+  const detail = firstClause(cleanGuideSummary((node.keyPoints || [])[0] || node.summary || ''))
+  const label = `${prefix}${detail || baseTitle(node.title)}`
+  return splitNodeTitle(label, perLine)
 }
 
 /** Split a long node title into two readable SVG lines. */
@@ -103,6 +166,23 @@ export function buildGuideTree(title, guide) {
     root.children.push(node)
   }
   return root
+}
+
+/**
+ * CSS custom properties for the map's dot grid. The grid is painted on the
+ * viewport (not the SVG) so it reads as an infinite canvas: dot spacing scales
+ * with zoom and the pattern translate follows the pan 1:1.
+ */
+export function mapGridVars({ pan = { x: 0, y: 0 }, scale = 1, spacing = 24, offset = 30 } = {}) {
+  const step = Math.max(8, Number(spacing) * (Number(scale) || 1))
+  const center = step / 2
+  const x = (Number(pan.x) || 0) + offset - center
+  const y = (Number(pan.y) || 0) + offset - center
+  return {
+    '--rd-grid-size': `${Number(step.toFixed(2))}px`,
+    '--rd-grid-x': `${Number(x.toFixed(2))}px`,
+    '--rd-grid-y': `${Number(y.toFixed(2))}px`,
+  }
 }
 
 /**

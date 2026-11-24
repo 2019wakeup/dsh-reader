@@ -48,12 +48,17 @@ await check('unit + DOM tests', async () => {
 
 await check('eval pipeline', async () => {
   command('eval', 'node eval/run.mjs')
-  return '17/17'
+  return '18/18'
 })
 
 await check('visual pipeline', async () => {
   command('visual', 'node eval/visual.mjs')
-  return '157 checks + baselines'
+  return '163 checks + baselines'
+})
+
+await check('motion pipeline', async () => {
+  command('motion', 'node eval/motion.mjs')
+  return '16/16'
 })
 
 await check('host layout probe', async () => {

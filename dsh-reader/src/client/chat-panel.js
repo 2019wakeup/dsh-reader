@@ -1,7 +1,9 @@
 import React from 'react'
 import { buildTranscript, chatMessageCount } from './chat-transcript.js'
+import { documentTitle } from './mindmap.js'
 import { markdownRender } from './markdown.js'
 import { sanitizeHtml } from './sanitize.js'
+import { AttachmentFileCard, AttachmentImage } from './attachments.js'
 
 /**
  * In-reader conversation panel.
@@ -42,7 +44,7 @@ const STATUS_LABEL = {
   error: 'label.chatToolError',
 }
 
-function renderBlock(block, index, t) {
+function renderBlock(block, index, t, attachments) {
   if (!block) return null
   if (block.kind === 'text') {
     return el('div', {
@@ -60,7 +62,11 @@ function renderBlock(block, index, t) {
     )
   }
   if (block.kind === 'image') {
-    return el('div', { key: index, className: 'rd-chat-image' }, t('label.chatImage'))
+    return el(
+      'div',
+      { key: index, className: 'rd-chat-images' },
+      el(AttachmentImage, { attachment: block.attachment, resolver: attachments, alt: t('label.chatImage') }),
+    )
   }
   if (block.kind === 'tool-call') {
     return el(
@@ -97,6 +103,46 @@ const TOOL_PHRASES = {
 function toolPhrase(name, t) {
   const key = TOOL_PHRASES[String(name || '').trim()]
   return key ? t(key) : String(name || '').trim() || t('label.chatTool')
+}
+
+/** Present-continuous phrasing for the tool a running answer is using. */
+const LIVE_PHRASES = {
+  read: 'tool.liveRead',
+  read_image: 'tool.liveRead',
+  write: 'tool.liveWrite',
+  edit: 'tool.liveWrite',
+  apply_patch: 'tool.liveWrite',
+  bash: 'tool.liveCommand',
+  pwsh: 'tool.liveCommand',
+  terminal: 'tool.liveCommand',
+  grep: 'tool.liveSearch',
+  glob: 'tool.liveSearch',
+  search: 'tool.liveSearch',
+  web_search: 'tool.liveWebSearch',
+  web_fetch: 'tool.liveWebFetch',
+  todo_write: 'tool.livePlan',
+}
+
+function livePhrase(name, t) {
+  const key = LIVE_PHRASES[String(name || '').trim()]
+  return t(key || 'label.chatToolRunning')
+}
+
+/** What the running answer is doing right now, shown while it has no text yet. */
+function renderLiveStatus(row, t) {
+  const names = Array.isArray(row.activities) ? row.activities.filter(Boolean) : []
+  return el(
+    'div',
+    {
+      className: 'rd-chat-live',
+      role: 'status',
+      'data-chat-live': '',
+      title: names.length > 1 ? names.map((name) => livePhrase(name, t)).join('、') : undefined,
+    },
+    el('span', { className: 'rd-chat-live-dot', 'aria-hidden': 'true' }),
+    el('span', { className: 'rd-chat-live-text' }, names.length > 0 ? livePhrase(names[0], t) : t('label.chatThinking')),
+    names.length > 1 ? el('span', { className: 'rd-chat-live-extra' }, `+${names.length - 1}`) : null,
+  )
 }
 
 /** First meaningful line of one reasoning text, stripped of Markdown markers. */
@@ -174,11 +220,28 @@ function splitUserText(text) {
   return { source: first, body }
 }
 
-function roleLabel(role, t) {
+const GLYPHS = {
+  user: () =>
+    el(
+      'svg',
+      { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      el('circle', { cx: 12, cy: 8, r: 3.3 }),
+      el('path', { d: 'M5.5 19.5a6.5 6.5 0 0 1 13 0' }),
+    ),
+  assistant: () =>
+    el(
+      'svg',
+      { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      el('path', { d: 'M12 3.4c3 3.5 5.2 6.2 5.2 8.8a5.2 5.2 0 0 1-10.4 0c0-2.6 2.2-5.3 5.2-8.8z' }),
+      el('path', { d: 'M9.8 13.6a2.4 2.4 0 0 0 3.3 1.6' }),
+    ),
+}
+
+function roleTag(role, t) {
   return el('div', { className: `rd-chat-role rd-chat-role-${role}` }, t(role === 'user' ? 'label.chatRoleUser' : 'label.chatRoleAssistant'))
 }
 
-function renderRow(row, t) {
+function renderRow(row, t, motion, attachments) {
   if (row.kind === 'user') {
     const parts = splitUserText(row.text)
     return el(
@@ -189,11 +252,28 @@ function renderRow(row, t) {
         'data-chat-row': '',
         'data-kind': 'user',
         'data-role': 'user',
+        'data-motion': motion ? 'in' : undefined,
       },
-      roleLabel('user', t),
       el(
         'div',
-        { className: 'rd-chat-bubble' },
+        { className: 'rd-chat-bubble rd-chat-bubble-user' },
+        roleTag('user', t),
+        row.images && row.images.length > 0
+          ? el(
+              'div',
+              { className: `rd-chat-images${row.images.length > 1 ? ' multi' : ''}` },
+              row.images.map((attachment, index) =>
+                el(AttachmentImage, { key: `image-${index}`, attachment, resolver: attachments }),
+              ),
+            )
+          : null,
+        row.files && row.files.length > 0
+          ? el(
+              'div',
+              { className: 'rd-chat-files' },
+              row.files.map((file, index) => el(AttachmentFileCard, { key: `file-${index}`, file })),
+            )
+          : null,
         parts.source ? el('div', { className: 'rd-chat-source' }, parts.source) : null,
         parts.body
           ? el('div', {
@@ -213,14 +293,22 @@ function renderRow(row, t) {
         'data-chat-row': '',
         'data-kind': 'assistant',
         'data-role': 'assistant',
+        'data-motion': motion ? 'in' : undefined,
       },
-      roleLabel('assistant', t),
       el(
         'div',
-        { className: 'rd-chat-body' },
-        row.blocks.map((block, index) => renderBlock(block, index, t)),
-        renderProcess(row.process, t),
-        row.streaming ? el('span', { className: 'rd-chat-streaming-dot', 'aria-hidden': 'true' }) : null,
+        { className: 'rd-chat-bubble rd-chat-bubble-assistant' },
+        roleTag('assistant', t),
+        el(
+          'div',
+          { className: 'rd-chat-body' },
+          row.blocks.map((block, index) => renderBlock(block, index, t, attachments)),
+          row.streaming && row.blocks.length === 0 ? renderLiveStatus(row, t) : null,
+          renderProcess(row.process, t),
+          row.streaming && row.blocks.length > 0
+            ? el('span', { className: 'rd-chat-streaming-dot', 'aria-hidden': 'true' })
+            : null,
+        ),
       ),
     )
   }
@@ -250,20 +338,37 @@ function renderRow(row, t) {
   if (row.kind === 'error') {
     return el(
       'div',
-      { key: row.key, className: 'rd-chat-row rd-chat-error', 'data-chat-row': '', 'data-kind': 'error' },
+      {
+        key: row.key,
+        className: 'rd-chat-row rd-chat-error',
+        'data-chat-row': '',
+        'data-kind': 'error',
+        'data-motion': motion ? 'in' : undefined,
+      },
+      el('span', { className: 'rd-chat-dot', 'aria-hidden': 'true' }),
       row.text || t('label.chatError'),
     )
   }
   if (row.kind === 'interrupted') {
     return el(
       'div',
-      { key: row.key, className: 'rd-chat-row rd-chat-interrupted', 'data-chat-row': '', 'data-kind': 'interrupted' },
-      el('div', { className: 'rd-chat-role rd-chat-role-assistant' }, t('label.chatRoleAssistant')),
+      {
+        key: row.key,
+        className: 'rd-chat-row rd-chat-interrupted',
+        'data-chat-row': '',
+        'data-kind': 'interrupted',
+        'data-motion': motion ? 'in' : undefined,
+      },
       el(
         'div',
-        { className: 'rd-chat-body' },
-        (row.blocks || []).map((block, index) => renderBlock(block, index, t)),
-        el('span', { className: 'rd-chat-stopped' }, t('label.chatStopped')),
+        { className: 'rd-chat-bubble rd-chat-bubble-assistant rd-chat-bubble-muted' },
+        roleTag('assistant', t),
+        el(
+          'div',
+          { className: 'rd-chat-body' },
+          (row.blocks || []).map((block, index) => renderBlock(block, index, t, attachments)),
+          el('span', { className: 'rd-chat-stopped' }, t('label.chatStopped')),
+        ),
       ),
     )
   }
@@ -293,18 +398,21 @@ export function ReaderChatPanel(props) {
   const chat = useChat((snapshot) => snapshot)
   const phase = useInput((snapshot) => (snapshot ? snapshot.phase : null))
   const running = useSession((snapshot) => Boolean(snapshot && snapshot.running))
-  const [showAll, setShowAll] = React.useState(false)
-  const [showProcess, setShowProcess] = React.useState(false)
   const [nearBottom, setNearBottom] = React.useState(true)
+  const attachments = safeProps.attachments || null
   const scrollRef = React.useRef(null)
   const unavailable =
     typeof safeProps.useChat !== 'function' ||
     typeof safeProps.useInput !== 'function' ||
     typeof safeProps.useSession !== 'function'
   const rows = React.useMemo(
-    () => (chat ? buildTranscript(chat, { all: showAll, detail: showProcess ? 'full' : 'compact' }) : []),
-    [chat, showAll, showProcess],
+    // The panel always renders the compact transcript: tool rows and raw
+    // reasoning belong to each answer's folded "process", not to the reading
+    // column. The full trajectory is one click away in the native chat page.
+    () => (chat ? buildTranscript(chat, { all: safeProps.showAll === true }) : []),
+    [chat, safeProps.showAll],
   )
+  const streamingRow = rows.some((row) => row.kind === 'assistant' && row.streaming)
   const busy = Boolean(phase && phase !== 'plain') || running
 
   React.useEffect(() => {
@@ -313,11 +421,30 @@ export function ReaderChatPanel(props) {
     node.scrollTop = node.scrollHeight
   }, [rows, nearBottom])
 
+  const motionRows = React.useRef({ mounted: false, seen: new Set(), marked: new Set() })
+  const rowMotion = rows.map((row) => {
+    const state = motionRows.current
+    return state.marked.has(row.key) || (state.mounted && !state.seen.has(row.key))
+  })
+  React.useEffect(() => {
+    const state = motionRows.current
+    for (const row of rows) {
+      if (state.mounted && !state.seen.has(row.key)) state.marked.add(row.key)
+      state.seen.add(row.key)
+    }
+    state.mounted = true
+  }, [rows])
+
   if (unavailable) {
     return el(
       'div',
       { className: 'rd-chat' },
-      el('div', { className: 'rd-chat-unavailable' }, t('label.chatUnavailable')),
+      el(
+        'div',
+        { className: 'rd-chat-unavailable' },
+        el('div', { className: 'rd-chat-empty-icon', 'aria-hidden': 'true' }, el(GLYPHS.assistant)),
+        el('div', { className: 'rd-chat-unavailable-text' }, t('label.chatUnavailable')),
+      ),
     )
   }
 
@@ -327,67 +454,47 @@ export function ReaderChatPanel(props) {
     setNearBottom(true)
     if (node) node.scrollTop = node.scrollHeight
   }
-  const canOpenView = typeof safeProps.openView === 'function'
-
   return el(
     'div',
     { className: 'rd-chat', 'data-chat-panel': '' },
-    rows.length > 0 || canOpenView
-      ? el(
-          'div',
-          { className: 'rd-chat-tools' },
-          rows.length > 0
-            ? el(
-                'button',
-                {
-                  className: 'rd-btn ghost rd-chat-toggle',
-                  onClick: () => setShowAll((current) => !current),
-                },
-                t(showAll ? 'label.chatCollapse' : 'label.chatShowAll'),
-              )
-            : null,
-          rows.length > 0
-            ? el(
-                'button',
-                {
-                  className: 'rd-btn ghost rd-chat-toggle',
-                  'data-chat-action': 'toggle-process',
-                  'aria-pressed': showProcess ? 'true' : 'false',
-                  title: t('label.chatProcess'),
-                  onClick: () => setShowProcess((current) => !current),
-                },
-                t('label.chatProcess'),
-              )
-            : null,
-          el('span', { className: 'rd-spacer' }),
-          canOpenView
-            ? el(
-                'button',
-                {
-                  className: 'rd-btn ghost rd-chat-open-view',
-                  'data-chat-action': 'open-view',
-                  title: t('label.chatJump'),
-                  onClick: () => safeProps.openView('chat', ''),
-                },
-                t('label.chatJump'),
-              )
-            : null,
-        )
-      : null,
-    busy ? el('div', { className: 'rd-chat-busy', role: 'status' }, t('label.chatBusy')) : null,
     el(
       'div',
       { className: 'rd-chat-scroll', ref: scrollRef, onScroll },
       rows.length > 0
-        ? rows.map((row) => renderRow(row, t))
+        ? rows.map((row, index) => renderRow(row, t, rowMotion[index], attachments))
         : el(
             'div',
             { className: 'rd-chat-empty' },
-            t('label.chatEmpty'),
+            el(
+              'div',
+              { className: 'rd-chat-empty-icon', 'aria-hidden': 'true' },
+              el(
+                'svg',
+                { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                el('path', { d: 'M20 14.2a2.6 2.6 0 0 1-2.6 2.6H9.2L5 20v-3.2h-.4A2.6 2.6 0 0 1 2 14.2V6.6A2.6 2.6 0 0 1 4.6 4h12.8A2.6 2.6 0 0 1 20 6.6z' }),
+                el('path', { d: 'M7.5 9.5h9M7.5 12.5h5.5' }),
+              ),
+            ),
+            el('div', { className: 'rd-chat-empty-title' }, t('label.chatEmptyTitle')),
+            el('div', { className: 'rd-chat-empty-desc' }, t('label.chatEmpty')),
             safeProps.doc && safeProps.doc.name
-              ? el('div', { className: 'rd-chat-empty-book' }, `《${safeProps.doc.name}》`)
+              ? el('div', { className: 'rd-chat-empty-book' }, `《${documentTitle(safeProps.doc.name)}》`)
               : null,
+            el(
+              'div',
+              { className: 'rd-chat-empty-hints' },
+              el('span', null, t('label.chatEmptyHintSelect')),
+              el('span', null, t('label.chatEmptyHintSession')),
+            ),
           ),
+      busy && !streamingRow
+        ? el(
+            'div',
+            { className: 'rd-chat-busy', role: 'status' },
+            el('span', { className: 'rd-chat-busy-dot', 'aria-hidden': 'true' }),
+            t('label.chatBusy'),
+          )
+        : null,
       !nearBottom && rows.length > 0
         ? el(
             'button',

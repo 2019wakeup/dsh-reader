@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildTranscript, formatLocation, buildQuoteText, QUICK_ASKS, chatMessageCount } from '../src/client/chat-transcript.js'
+import { buildTranscript, formatLocation, buildQuoteText, QUICK_ASKS, chatMessageCount, messageAttachments } from '../src/client/chat-transcript.js'
 
 function node(key, kind, data, extra = {}) {
   return { key, kind, id: key, target: 'chat', data, anchorSeq: 0, location: { kind: 'turn', turn: { turn: data.turn ?? 1 } }, visibility: 'visible', ...extra }
@@ -35,10 +35,36 @@ test('流式 partial 与运行中工具进入尾部行', () => {
     [{ callId: 'c1', name: 'bash', argsRaw: '{}' }],
   )
   const rows = buildTranscript(snap)
-  assert.equal(rows.at(-2).streaming, true)
-  // Compact reading view folds live work into one status line instead of rows.
-  assert.equal(rows.at(-1).kind, 'status')
-  assert.deepEqual(rows.at(-1).names, ['bash'])
+  assert.equal(rows.length, 2, 'user row plus one merged streaming answer')
+  const live = rows.at(-1)
+  assert.equal(live.kind, 'assistant')
+  assert.equal(live.streaming, true)
+  // The running node carries no text yet; the streamed text comes from the
+  // platform's duplicate legacy partial and must land in the same bubble.
+  assert.deepEqual(live.blocks.map((block) => block.text), ['正在'])
+  assert.deepEqual(live.activities, ['bash'], 'live tool names ride on the streaming row')
+})
+
+test('running 节点只有推理时，流式文本仍并入同一气泡且只出现一次', () => {
+  const snap = snapshot(
+    [
+      node('u1', 'user', { turn: 4, content: [{ type: 'text', text: '问' }] }),
+      node('a1', 'assistant-step', {
+        turn: 4,
+        step: 1,
+        status: 'running',
+        blocks: [{ kind: 'reasoning', text: '先判断类型' }],
+      }),
+    ],
+    { turn: 4, step: 1, status: 'running', blocks: [{ kind: 'text', text: '流式正文' }] },
+    [{ callId: 'c1', name: 'read_image' }],
+  )
+  const rows = buildTranscript(snap)
+  assert.equal(rows.filter((row) => row.kind === 'status').length, 0, 'no separate status row')
+  const answer = rows.at(-1)
+  assert.deepEqual(answer.blocks.map((block) => block.text), ['流式正文'])
+  assert.equal(answer.process.count, 1, 'reasoning stays folded in the process pill')
+  assert.deepEqual(answer.activities, ['read_image'])
 })
 
 test('compact 折叠工具与推理，full 展开成行', () => {
@@ -259,4 +285,49 @@ test('步骤正文缺失时回退到 finalized message', () => {
   const rows = buildTranscript(snap)
   assert.equal(rows.length, 1)
   assert.equal(rows[0].blocks[0].text, '最终答案')
+})
+
+
+test('用户消息中的图片与文件附件被保留为引用，不混进正文', () => {
+  const image = {
+    attachmentId: 'sha256:' + 'a'.repeat(64),
+    mediaType: 'image/webp',
+    bytes: 92084,
+    width: 868,
+    height: 1464,
+    name: 'image.png',
+  }
+  const file = { attachmentId: 'sha256:' + 'b'.repeat(64), name: '报告.pdf', bytes: 204800 }
+  const snap = snapshot([
+    node('u1', 'user', {
+      turn: 1,
+      content: [{ type: 'image', attachment: image }, { type: 'file', attachment: file }, { type: 'text', text: '看这张图和附件' }],
+    }),
+  ])
+  const [row] = buildTranscript(snap)
+  assert.equal(row.kind, 'user')
+  assert.equal(row.text, '看这张图和附件')
+  assert.equal(row.images.length, 1)
+  assert.equal(row.images[0].attachmentId, image.attachmentId)
+  assert.equal(row.images[0].mediaType, 'image/webp')
+  assert.deepEqual(row.files, [{ attachmentId: file.attachmentId, name: '报告.pdf', bytes: 204800 }])
+})
+
+test('assistant 的图片块保留附件引用', () => {
+  const image = { attachmentId: 'sha256:' + 'c'.repeat(64), mediaType: 'image/png', bytes: 10, width: 4, height: 4 }
+  const snap = snapshot([
+    node('a1', 'assistant-step', { turn: 1, step: 1, status: 'settled', blocks: [{ kind: 'image', attachment: image }] }),
+  ])
+  const rows = buildTranscript(snap)
+  assert.equal(rows[0].blocks[0].kind, 'image')
+  assert.equal(rows[0].blocks[0].attachment.attachmentId, image.attachmentId)
+})
+
+test('messageAttachments 忽略损坏或非附件内容', () => {
+  assert.deepEqual(messageAttachments({ content: [{ type: 'image', attachment: { attachmentId: 'nope' } }] }), {
+    images: [],
+    files: [],
+  })
+  assert.deepEqual(messageAttachments({ content: [{ type: 'text', text: 'x' }] }), { images: [], files: [] })
+  assert.deepEqual(messageAttachments(null), { images: [], files: [] })
 })

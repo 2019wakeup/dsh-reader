@@ -14,5 +14,6 @@ export function defaultPrefs() {
     translateFrom: 'en',
     translateTo: 'zh',
     guideDepth: 'standard',
+    motion: 'system',
   }
 }

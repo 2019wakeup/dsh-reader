@@ -46,6 +46,7 @@ function normalizePrefs(raw) {
       : base.translateFrom,
     translateTo: ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt'].includes(raw.translateTo) ? raw.translateTo : base.translateTo,
     guideDepth: ['quick', 'standard'].includes(raw.guideDepth) ? raw.guideDepth : base.guideDepth,
+    motion: ['system', 'full', 'off'].includes(raw.motion) ? raw.motion : base.motion,
   }
 }
 

@@ -7,6 +7,8 @@
  * React or a DOM. See docs/superpowers/specs/2026-11-23-reader-chat-panel-design.md §3.
  */
 
+import { normalizeFileRef, normalizeImageRef } from './attachments.js'
+
 /** Node kinds that are platform bookkeeping, never shown in the panel. */
 const SKIP_KINDS = new Set([
   'context',
@@ -109,10 +111,33 @@ function normalizeBlock(block, maxText) {
       callId: String(block.callId || block.id || ''),
     }
   }
-  if (kind === 'image') return { kind: 'image' }
+  if (kind === 'image') {
+    const attachment = normalizeImageRef(block.attachment)
+    return attachment ? { kind: 'image', attachment } : { kind: 'image' }
+  }
   const text = truncate(textOf(block), maxText)
   if (!text) return null
   return { kind: kind === 'reasoning' ? 'reasoning' : 'text', text }
+}
+
+/** Signature used to merge a running node with its duplicated legacy partial. */
+function blockSignature(block) {
+  if (!block || typeof block !== 'object') return ''
+  if (block.kind === 'image') return `image:${(block.attachment && block.attachment.attachmentId) || ''}`
+  return `${block.kind}:${String(block.text || '')}`
+}
+
+/** Append blocks without duplicating the platform's node/partial mirror. */
+function mergeBlocks(left, right) {
+  const seen = new Set(left.map(blockSignature))
+  const out = left.slice()
+  for (const block of right) {
+    const signature = blockSignature(block)
+    if (!signature || seen.has(signature)) continue
+    seen.add(signature)
+    out.push(block)
+  }
+  return out
 }
 
 /** Fold reasoning text and tool names into the compact process summary. */
@@ -131,6 +156,33 @@ function summarizeProcess(blocks) {
 function normalizeBlocks(value, maxText) {
   const list = Array.isArray(value) ? value : Array.isArray(value && value.blocks) ? value.blocks : []
   return list.map((block) => normalizeBlock(block, maxText)).filter(Boolean)
+}
+
+/**
+ * Pull durable image/file references out of one user message. The panel receives
+ * the platform snapshot, whose user content is
+ * `[{ type: 'image', attachment }, { type: 'file', attachment }, { type: 'text' }]`.
+ * @param {unknown} data session message data
+ * @returns {{images: Array<object>, files: Array<object>}}
+ */
+export function messageAttachments(data) {
+  const holder = data && typeof data === 'object' ? data : {}
+  const message = holder.message && typeof holder.message === 'object' ? holder.message : holder
+  const content = Array.isArray(message.content) ? message.content : Array.isArray(holder.content) ? holder.content : []
+  const images = []
+  const files = []
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue
+    const kind = String(part.type || part.kind || '')
+    if (kind === 'image') {
+      const ref = normalizeImageRef(part.attachment)
+      if (ref) images.push(ref)
+    } else if (kind === 'file') {
+      const ref = normalizeFileRef(part.attachment)
+      if (ref) files.push(ref)
+    }
+  }
+  return { images, files }
 }
 
 function nodeTurn(node) {
@@ -186,7 +238,8 @@ function rowOf(node, maxText, detail) {
   const turn = nodeTurn(node)
   const data = node.data || {}
   if (USER_KINDS.has(kind)) {
-    return { kind: 'user', key: node.key, turn, text: truncate(textOf(data), maxText) }
+    const { images, files } = messageAttachments(data)
+    return { kind: 'user', key: node.key, turn, text: truncate(textOf(data), maxText), images, files }
   }
   if (ASSISTANT_KINDS.has(kind)) {
     let blocks = normalizeBlocks(data, maxText)
@@ -286,45 +339,59 @@ export function buildTranscript(chat, options = {}) {
     }
   }
   // The platform publishes one streaming answer twice: a running `assistant`
-  // Node and the derived `legacy.partial`. Render whichever exists exactly once.
-  const streamingSteps = new Set(
-    rows.filter((row) => row.kind === 'assistant' && row.streaming).map((row) => `${row.turn}:${row.step}`),
-  )
-  const streamingTurns = new Set(rows.filter((row) => row.kind === 'assistant' && row.streaming).map((row) => row.turn))
-  const renderedCalls = new Set(rows.filter((row) => row.kind === 'tool' && row.callId).map((row) => row.callId))
+  // Node and the derived `legacy.partial`. They are two views of the same step,
+  // so merge their blocks instead of rendering one and dropping the other: the
+  // running node often carries only reasoning/tool blocks while the streamed
+  // text lives on the partial (this is what made the bubble look empty).
   const legacy = (chat && chat.legacy) || {}
   const partial = legacy.partial
+  const streamingRow = rows.find((row) => row.kind === 'assistant' && row.streaming) || null
   if (partial && typeof partial === 'object') {
     const blocks = normalizeBlocks(partial, maxText)
     const turn = Number.isFinite(partial.turn) ? Number(partial.turn) : rows.length ? rows[rows.length - 1].turn : 0
     const step = Number.isFinite(partial.step) ? Number(partial.step) : 0
-    const alreadyRendered = streamingSteps.has(`${turn}:${step}`) || streamingTurns.has(turn)
-    if (!alreadyRendered && (blocks.length > 0 || rows.length === 0)) {
-      const full = detail === DETAIL_FULL
+    const full = detail === DETAIL_FULL
+    const visible = full ? blocks : blocks.filter((block) => block.kind === 'text' || block.kind === 'image')
+    const process = full ? null : summarizeProcess(blocks)
+    const target = streamingRow && (streamingRow.step === step || streamingRow.turn === turn) ? streamingRow : null
+    if (target) {
+      target.blocks = mergeBlocks(target.blocks, visible)
+      if (!full) target.process = mergeProcess(target.process, process)
+      target.streaming = partial.status !== 'settled'
+    } else if (blocks.length > 0 || rows.length === 0) {
       rows.push({
         kind: 'assistant',
         key: `partial:${turn}:${step}`,
         turn,
         step,
-        blocks: full ? blocks : blocks.filter((block) => block.kind === 'text' || block.kind === 'image'),
-        process: full ? null : summarizeProcess(blocks),
+        blocks: visible,
+        process,
         streaming: partial.status !== 'settled',
       })
     }
   }
+  // Live tool calls are the most useful "what is happening" signal while the
+  // answer streams with no text yet; attach them to the streaming bubble rather
+  // than spending a separate status row below it.
+  const renderedCalls = new Set(rows.filter((row) => row.kind === 'tool' && row.callId).map((row) => row.callId))
   const calls = (Array.isArray(legacy.runningCalls) ? legacy.runningCalls : []).filter(
     (call) => call && typeof call === 'object' && !renderedCalls.has(String(call.callId || call.id || '')),
   )
-  if (calls.length > 0 && detail !== DETAIL_FULL) {
-    // One status line for all live work keeps the reading transcript quiet.
+  if (calls.length > 0) {
     const names = calls.map((call) => String(call.name || '')).filter(Boolean)
-    rows.push({
-      kind: 'status',
-      key: 'status:running',
-      turn: Number.isFinite(calls[0].turn) ? Number(calls[0].turn) : rows.length ? rows[rows.length - 1].turn : 0,
-      names,
-      text: names.join(' · '),
-    })
+    const liveRow = rows.find((row) => row.kind === 'assistant' && row.streaming) || null
+    if (liveRow && detail !== DETAIL_FULL) {
+      liveRow.activities = names
+    } else if (detail !== DETAIL_FULL) {
+      // One status line for all live work keeps the reading transcript quiet.
+      rows.push({
+        kind: 'status',
+        key: 'status:running',
+        turn: Number.isFinite(calls[0].turn) ? Number(calls[0].turn) : rows.length ? rows[rows.length - 1].turn : 0,
+        names,
+        text: names.join(' · '),
+      })
+    }
   }
   for (const call of calls) {
     if (detail !== DETAIL_FULL) break
