@@ -1,0 +1,25 @@
+{
+  "name": "dsh-reader-demo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "README demo animations for dsh-reader, built with Remotion",
+  "scripts": {
+    "studio": "remotion studio",
+    "still": "remotion still",
+    "render": "node scripts/render.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.546",
+    "@remotion/cli": "4.0.546",
+    "@remotion/renderer": "4.0.546",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "remotion": "4.0.546"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.9.0"
+  }
+}

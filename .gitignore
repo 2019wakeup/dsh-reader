@@ -6,3 +6,4 @@ node_modules/
 eval/*.json
 dsh-reader/eval/*.json
 dsh-reader/plugin-market.json
+dsh-reader/demo/out/

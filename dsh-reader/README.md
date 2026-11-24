@@ -6,6 +6,28 @@ DSH 的阅读插件：在会话主区域新增「阅读」视图，读工作区�
 
 工作区自带三份试读素材：`示例-分布式系统阅读.md`、`示例-分布式系统.epub`、`示例-分布式系统.pdf`。
 
+## 演示
+
+三个 8–9 秒的 GIF，对应三条核心动线。动图由 [`demo/`](demo/) 里的 Remotion 工程逐帧渲染，选型对比和 GIF 参数见 [`demo/RESEARCH.md`](demo/RESEARCH.md)。
+
+**1 · 划词即解释，概念自动归档**
+
+![选中正文 → 点解释 → 概念卡原地浮出](docs/demos/01-select-explain.gif)
+
+选中正文里的词，点「解释」；概念卡原地浮出，正文里同一概念的其他出现处变成虚线下划线，之后悬停即可再看。
+
+**2 · 边读边问，不用离开书页**
+
+![引用原文 → 问 AI → 对话页签流式回答](docs/demos/02-read-and-ask.gif)
+
+选中一段原文点「问 AI」，引用带着书名、章节和位置进入底部输入框；回答逐字流进右侧「对话」页签，工具步骤折叠成「过程」。
+
+**3 · 长书导读：一本书，一张导图**
+
+![导读 → 思维导图 → 节点跳回原文](docs/demos/03-guide-mindmap.gif)
+
+打开「导读」生成章节摘要与全书主旨，切到「导图」看「书 → 篇 → 节」；点节点跳回原文，导图可导出 SVG / PNG / Markdown。
+
 ## 安装
 
 四种方式，按方便程度排列。
@@ -99,6 +121,7 @@ node eval/visual.mjs            # 视觉 eval（无头 Chrome，157 项检查 + 
 node eval/layout-host.mjs       # 宿主布局探针（6 项）
 node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
 node scripts/release-check.mjs  # 发布门禁（11 项）
+(cd demo && npm run render)     # 重新生成 README 演示 GIF（Remotion，见 demo/README.md）
 ```
 
 贡献与发布流程见公开仓库的 `CONTRIBUTING.md` 与 `docs/RELEASING.md`。
