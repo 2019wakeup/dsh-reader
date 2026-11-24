@@ -134,6 +134,30 @@
 
 前置：DSH 桌面版。
 
+### 方式一：插件市场索引（推荐）
+
+1. 插件页启用「实验性插件 → 自定义插件索引」；
+2. 打开「发现」，添加索引地址：
+
+   ```
+   https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json
+   ```
+3. 找到「砚读 · DSH 阅读插件」安装；之后有新版本会显示更新。
+
+### 方式二：npm
+
+```bash
+plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.0
+```
+
+### 方式三：Git 固定版本（无需 npm）
+
+```bash
+plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.13.0&path:/dsh-reader"
+```
+
+### 方式四：本地目录
+
 ```bash
 # 在 DSH Web GUI 的插件页添加本地目录 dsh-reader/
 # 或由 agent 调用 plugin_manager，target 为本仓库 dsh-reader/ 的绝对路径
@@ -171,6 +195,20 @@ pnpm release:check    # 11 项发布门禁
 | 发布检查（迁移、导出回环、资产、文档） | 11 |
 
 真书 dogfood 覆盖 523 页 PDF 与 27 章 EPUB 的渲染、目录、翻译、快速导读和导图。
+
+### 分发
+
+```bash
+cd dsh-reader
+node scripts/build-market-index.mjs --out ../plugin-market.json  # 生成索引，Git 源钉住当前提交
+node scripts/verify-market-index.mjs ../plugin-market.json        # 用 DSH 安装版校验格式
+node scripts/publish-check.mjs                                    # npm 打包与索引一致性
+npm publish --access public                                       # 需要 npm login
+```
+
+- 市场索引提交在仓库根目录，用户地址：`https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json`；
+- npm 发版后重新生成索引，脚本会自动把该版本切到 npm 源（便于安装状态与更新检查）；
+- Git 源必须钉 40 位提交，索引校验器会拒绝分支名或短 SHA。
 
 ## 项目结构
 

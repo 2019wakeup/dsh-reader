@@ -1,4 +1,4 @@
 - insert:
     - id: dsh-reader
-      name: dsh-reader
+      name: '@2019wakeup/dsh-reader'
       config: {}

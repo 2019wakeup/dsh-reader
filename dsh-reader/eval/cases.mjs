@@ -262,7 +262,8 @@ export const cases = [
       let entry = null
       const fakeWindow = { __ModuleLoader__: { load(registration) { entry = registration } } }
       new Function('window', code)(fakeWindow)
-      if (!entry || entry.id !== 'dsh-reader') throw new Error('bundle does not register')
+      const pkgName = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).name
+      if (!entry || entry.id !== pkgName) throw new Error('bundle does not register as ' + pkgName)
       let component = null
       const mod = entry.factory((name) => {
         if (name === 'react') return { createElement: () => null, useState: () => [], useRef: () => ({}), useEffect: () => {}, useMemo: () => ({}), Component: class {} }

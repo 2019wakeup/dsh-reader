@@ -8,8 +8,33 @@ DSH 的阅读插件：在会话主区域新增「阅读」视图，读工作区�
 
 ## 安装
 
+四种方式，按方便程度排列。
+
+### 方式一：插件市场索引（推荐，可一键安装与更新）
+
+1. 在插件页启用「实验性插件 → 自定义插件索引」；
+2. 打开「发现」标签页，添加索引地址：
+   ```
+   https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json
+   ```
+3. 在发现页找到「砚读 · DSH 阅读插件」安装；以后有新版本会直接显示更新按钮。
+
+### 方式二：npm
+
 ```bash
-# 在 DSH Web GUI：插件 → 添加插件 → 选择目录
+plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.0
+```
+
+### 方式三：Git 固定版本（无需 npm）
+
+```bash
+plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.13.0&path:/dsh-reader"
+```
+
+### 方式四：本地目录
+
+```bash
+# 在 DSH Web GUI：插件 → 添加插件 → 选择本目录
 # 或由 agent 调用 plugin_manager install_bundle，target 为本目录绝对路径
 ```
 
@@ -74,6 +99,15 @@ node eval/visual.mjs            # 视觉 eval（无头 Chrome，157 项检查 + 
 node eval/layout-host.mjs       # 宿主布局探针（6 项）
 node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
 node scripts/release-check.mjs  # 发布门禁（11 项）
+
+# 发布与分发
+node scripts/build-market-index.mjs   # 生成 plugin-market.json（npm 已发版时自动切到 npm 源）
+node scripts/verify-market-index.mjs  # 用 DSH 安装版校验索引格式
+node scripts/publish-check.mjs        # npm 打包与索引一致性检查
+npm publish --access public           # 需要先 npm login
+```
+
+发布后把 `plugin-market.json` 放到公开仓库根目录（本仓库发布流程会同步），索引地址即可被用户添加。
 ```
 
 ## 限制

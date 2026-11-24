@@ -1,9 +1,8 @@
 {
-  "name": "dsh-reader",
+  "name": "@2019wakeup/dsh-reader",
   "version": "0.13.0",
-  "private": true,
   "type": "module",
-  "description": "Reading workspace with concept cards for DeepSeek Harness",
+  "description": "Reading workspace with concept cards and in-reader conversation for DeepSeek Harness",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -16,7 +15,8 @@
     "lib",
     "cordis.patch.yml",
     "locale/*.json",
-    "docs",
+    "docs/DETAIL.md",
+    "LICENSE",
     "icon.svg",
     "assets"
   ],
@@ -49,9 +49,41 @@
     "release:check": "node scripts/release-check.mjs",
     "make:demo": "node scripts/make-demo-epub.mjs",
     "eval:visual": "node eval/visual.mjs",
-    "eval:layout": "node eval/layout-host.mjs"
+    "eval:layout": "node eval/layout-host.mjs",
+    "market:build": "node scripts/build-market-index.mjs",
+    "market:verify": "node scripts/verify-market-index.mjs",
+    "publish:check": "node scripts/publish-check.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": ">=0.2.0-rc.1 <0.3.0-0"
+  },
+  "license": "MIT",
+  "author": "2019wakeup",
+  "homepage": "https://github.com/2019wakeup/dsh-reader#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/2019wakeup/dsh-reader.git",
+    "directory": "dsh-reader"
+  },
+  "bugs": {
+    "url": "https://github.com/2019wakeup/dsh-reader/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek",
+    "deepseek-harness",
+    "plugin",
+    "reader",
+    "pdf",
+    "epub",
+    "markdown",
+    "reading",
+    "annotations"
+  ],
+  "engines": {
+    "dsh": ">=0.2.2-rc.5 <0.3.0-0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

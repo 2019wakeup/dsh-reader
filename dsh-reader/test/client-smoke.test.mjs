@@ -59,7 +59,8 @@ function mount() {
 
 test('bundle id matches the package name', () => {
   const entry = loadBundle()
-  assert.equal(entry.id, 'dsh-reader')
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(entry.id, pkg.name)
 })
 
 test('registers the reader conversation view', () => {
