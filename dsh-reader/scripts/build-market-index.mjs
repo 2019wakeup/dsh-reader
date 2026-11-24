@@ -52,8 +52,10 @@ function npm(args) {
 
 function publishedVersion() {
   try {
-    const seen = npm(['view', `${pkg.name}@${pkg.version}`, 'version', '--json'])
-    return seen.replace(/"/g, '') === pkg.version ? pkg.version : null
+    const raw = npm(['view', `${pkg.name}@${pkg.version}`, 'version', '--json'])
+    const parsed = JSON.parse(raw)
+    const seen = Array.isArray(parsed) ? parsed[0] : parsed
+    return seen === pkg.version ? pkg.version : null
   } catch {
     return null
   }
