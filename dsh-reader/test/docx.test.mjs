@@ -99,6 +99,17 @@ test('splits h1 chapters, wraps tables and drops TOC leaders', () => {
   assert.deepEqual(outline.map((item) => item.level), [1, 2, 1])
 })
 
+test('accepts an ArrayBuffer like the host fetch returns', async () => {
+  const docx = zipBytes([
+    ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>'],
+    ['word/styles.xml', STYLES],
+  ])
+  const engine = { convertToHtml: async () => ({ value: '<h1>第一章</h1><p>正文</p>' }) }
+  const result = await docxOpen(docx.buffer, { mammoth: engine })
+  assert.equal(result.chapters.length, 1)
+  assert.equal(result.chapters[0].label, '第一章')
+})
+
 test('rejects a zip without word/document.xml', async () => {
   const docx = zipBytes([['word/styles.xml', STYLES]])
   const engine = { convertToHtml: async () => ({ value: '<p>x</p>' }) }

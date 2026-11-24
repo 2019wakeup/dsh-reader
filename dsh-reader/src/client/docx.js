@@ -168,7 +168,8 @@ export function loadMammoth(src = MAMMOTH_URL) {
  * @param {{mammoth?: object, loadMammoth?: () => Promise<object>}} [options]
  */
 export async function docxOpen(bytes, options = {}) {
-  const files = await unzip(bytes)
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const files = await unzip(u8)
   if (files.size > 5000) throw new Error('docx has too many parts')
   if (!files.has('word/document.xml')) throw new Error('docx is missing word/document.xml')
   // Inflating the main part first enforces the 40MB per-entry budget before
@@ -190,7 +191,7 @@ export async function docxOpen(bytes, options = {}) {
           return { src: url }
         })
       : undefined
-  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  const arrayBuffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)
   const result = await engine.convertToHtml({ arrayBuffer }, { styleMap: styleMapFor(styles), convertImage })
   const clean = sanitizeDocxHtml(result && result.value)
   const { chapters, outline } = splitDocxChapters(clean)

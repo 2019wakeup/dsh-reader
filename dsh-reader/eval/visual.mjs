@@ -22,7 +22,89 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const BASELINE = path.join(here, 'visual', 'baseline')
 
 const UPDATE = process.env.VISUAL_UPDATE === '1'
-const DEMOS = ['示例-分布式系统阅读.md', '示例-Markdown语法.md', '示例-分布式系统.epub', '示例-分布式系统.pdf']
+const DEMOS = ['示例-分布式系统阅读.md', '示例-Markdown语法.md', '示例-分布式系统.epub', '示例-分布式系统.pdf', '示例-Word文档.docx']
+const DOCX_DEMO = '示例-Word文档.docx'
+
+function docxZip(entries) {
+  const enc = new TextEncoder()
+  const locals = []
+  const centrals = []
+  let offset = 0
+  for (const [name, text] of entries) {
+    const nameBytes = enc.encode(name)
+    const data = enc.encode(text)
+    const local = new Uint8Array(30 + nameBytes.length + data.length)
+    const lv = new DataView(local.buffer)
+    lv.setUint32(0, 0x04034b50, true)
+    lv.setUint16(4, 20, true)
+    lv.setUint32(18, data.length, true)
+    lv.setUint32(22, data.length, true)
+    lv.setUint16(26, nameBytes.length, true)
+    local.set(nameBytes, 30)
+    local.set(data, 30 + nameBytes.length)
+    locals.push(local)
+    const central = new Uint8Array(46 + nameBytes.length)
+    const cv = new DataView(central.buffer)
+    cv.setUint32(0, 0x02014b50, true)
+    cv.setUint16(4, 20, true)
+    cv.setUint16(6, 20, true)
+    cv.setUint32(20, data.length, true)
+    cv.setUint32(24, data.length, true)
+    cv.setUint16(28, nameBytes.length, true)
+    cv.setUint32(42, offset, true)
+    central.set(nameBytes, 46)
+    centrals.push(central)
+    offset += local.length
+  }
+  const cdOffset = offset
+  const cdSize = centrals.reduce((sum, part) => sum + part.length, 0)
+  const eocd = new Uint8Array(22)
+  const ev = new DataView(eocd.buffer)
+  ev.setUint32(0, 0x06054b50, true)
+  ev.setUint16(8, entries.length, true)
+  ev.setUint16(10, entries.length, true)
+  ev.setUint32(12, cdSize, true)
+  ev.setUint32(16, cdOffset, true)
+  const out = new Uint8Array(offset + cdSize + eocd.length)
+  let at = 0
+  for (const part of locals) { out.set(part, at); at += part.length }
+  for (const part of centrals) { out.set(part, at); at += part.length }
+  out.set(eocd, at)
+  return out
+}
+
+async function ensureDocxDemo() {
+  const target = path.join(workspace, DOCX_DEMO)
+  try {
+    await fs.access(target)
+    return
+  } catch {
+    /* generate below */
+  }
+  const contentTypes =
+    '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
+  const rels =
+    '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
+  const styles =
+    '<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style></w:styles>'
+  const body =
+    '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>第一章 技术报告</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>技术报告正文，用来说明 Word 阅读与划词。</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>1.1 数据表</w:t></w:r></w:p>' +
+    '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>指标</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>数值</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>吞吐</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>1200</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+    '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>第二章 结论</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>结论正文。</w:t></w:r></w:p>'
+  const document = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`
+  await fs.writeFile(
+    target,
+    docxZip([
+      ['[Content_Types].xml', contentTypes],
+      ['_rels/.rels', rels],
+      ['word/document.xml', document],
+      ['word/styles.xml', styles],
+    ]),
+  )
+}
 
 const results = []
 function record(name, pass, detail) {
@@ -327,6 +409,7 @@ function requireSync(file) {
 
 async function main() {
   await fs.mkdir(BASELINE, { recursive: true })
+  await ensureDocxDemo()
   const fixtures = await buildFixtures()
   const harnessCode = await makeHarness()
   const server = await startServer(fixtures, harnessCode)
@@ -1992,6 +2075,27 @@ async function main() {
         reason: selectionAssets.reason,
       }),
     )
+    // Word: open the generated fixture and assert the prose/TOC pipeline.
+    await clickAny('.rd-toolbar button', ['←'])
+    await page.waitForSelector('.rd-library', { timeout: 8000 })
+    await clickAny('.rd-entry', [DOCX_DEMO])
+    await page.waitForSelector('.rd-prose h1', { timeout: 20000 })
+    const docx = await page.evaluate(() => ({
+      text: document.querySelector('.rd-prose')?.textContent || '',
+      h1: document.querySelectorAll('.rd-prose h1').length,
+      tables: document.querySelectorAll('.rd-prose .rd-table-wrap table').length,
+    }))
+    record('docx opens', docx.text.includes('技术报告正文') && docx.h1 >= 1, `h1=${docx.h1}`)
+    record('docx table wraps', docx.tables >= 1, `${docx.tables} tables`)
+    await clickAny('.rd-toolbar button', ['目录', 'Contents'])
+    await page.waitForSelector('.rd-drawer-item', { timeout: 8000 })
+    const docxToc = await page.$$eval('.rd-drawer-item', (nodes) => nodes.map((node) => node.textContent.trim()))
+    record(
+      'docx toc lists chapters',
+      docxToc.some((label) => label.includes('第一章')) && docxToc.some((label) => label.includes('第二章')),
+      docxToc.join(' | ').slice(0, 80),
+    )
+    await page.keyboard.press('Escape')
   } catch (error) {
     try {
       const dump = await page.evaluate(() => ({
