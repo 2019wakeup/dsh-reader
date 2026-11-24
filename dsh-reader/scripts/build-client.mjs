@@ -41,6 +41,7 @@ const files = [
   'src/client/text-decode.js',
   'src/client/chat-transcript.js',
   'src/client/chat-panel.js',
+  'src/client/guide-jobs.js',
   'src/client/chat-context.js',
   'src/client/app.js',
   'src/client/entry.js',

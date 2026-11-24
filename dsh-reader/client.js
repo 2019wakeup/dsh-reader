@@ -5677,6 +5677,98 @@ function ChatSubmitWatcher(props) {
 
 
 /**
+ * Guide jobs outlive the ReaderView.
+ *
+ * Switching to the conversation page unmounts the reader; aborting the stream
+ * there threw away both the model work and the progress UI. A job keeps the
+ * fetch alive, stores the latest progress/result, and lets a remounted reader
+ * subscribe again.
+ */
+
+const jobs = new Map()
+
+/** Latest job for a document, or null. */
+function guideJobFor(key) {
+  return jobs.get(key) || null
+}
+
+/**
+ * Start (or replace) a guide job for one document.
+ * @param {string} key document fingerprint
+ * @param {(tools: {signal: AbortSignal, report: (progress: object) => void}) => Promise<{guide?: object, store?: object, reused?: number}>} runner
+ */
+function startGuideJob(key, runner) {
+  const previous = jobs.get(key)
+  if (previous && previous.state.busy) previous.abort()
+
+  const listeners = new Set()
+  const controller = new AbortController()
+  const state = {
+    busy: true,
+    progress: null,
+    error: '',
+    cancelled: false,
+    guide: null,
+    store: null,
+    reused: 0,
+  }
+  const emit = () => {
+    for (const listener of [...listeners]) {
+      try {
+        listener(state)
+      } catch {
+        /* a listener must not break the job */
+      }
+    }
+  }
+  const job = {
+    key,
+    state,
+    subscribe(listener) {
+      listeners.add(listener)
+      listener(state)
+      return () => listeners.delete(listener)
+    },
+    abort() {
+      if (!state.busy) return
+      state.cancelled = true
+      state.busy = false
+      state.progress = null
+      controller.abort()
+      emit()
+    },
+  }
+  jobs.set(key, job)
+
+  const report = (progress) => {
+    if (!state.busy || state.cancelled) return
+    state.progress = progress
+    emit()
+  }
+
+  Promise.resolve(runner({ signal: controller.signal, report }))
+    .then((result) => {
+      if (state.cancelled) return
+      state.busy = false
+      state.progress = null
+      state.guide = (result && result.guide) || null
+      state.store = (result && result.store) || null
+      state.reused = Number(result && result.reused) || 0
+      emit()
+    })
+    .catch((error) => {
+      if (state.cancelled) return
+      state.busy = false
+      state.progress = null
+      state.error = String((error && error.message) || error)
+      emit()
+    })
+
+  return job
+}
+
+
+/**
  * Reading-context helpers for the in-reader conversation panel.
  *
  * Pure functions only: they turn the reader's own state into the small payload
@@ -6355,7 +6447,6 @@ function ReaderView(props) {
   const toastTimer = React.useRef(null)
   const svgRef = React.useRef(null)
   const importInputRef = React.useRef(null)
-  const guideAbortRef = React.useRef(null)
   const historyRef = React.useRef(null)
   const reporterRef = React.useRef(null)
 
@@ -8430,15 +8521,37 @@ function ReaderView(props) {
     return () => observer.disconnect()
   }, [doc, chapter, translationMode, translationLang, translationFrom, layoutTick, translationTick])
 
-  const generateGuide = async () => {
+  const guideUnsubRef = React.useRef(null)
+  const applyGuideState = (state) => {
+    setGuideBusy(state.busy)
+    setGuideProgress(state.progress)
+    setGuideError(state.cancelled ? '' : state.error)
+    if (state.store) mergeStore(state.store)
+  }
+  const attachGuideJob = (job) => {
+    if (guideUnsubRef.current) guideUnsubRef.current()
+    guideUnsubRef.current = job ? job.subscribe(applyGuideState) : null
+  }
+
+  // A guide job is owned by the module, not by this component: leaving the
+  // reading view only detaches the subscription and never aborts the stream.
+  React.useEffect(() => {
+    const job = docKey ? guideJobFor(docKey) : null
+    if (job) attachGuideJob(job)
+    return () => {
+      if (guideUnsubRef.current) {
+        guideUnsubRef.current()
+        guideUnsubRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docKey])
+
+  const generateGuide = () => {
     if (!doc || !docKey) return
-    setGuideBusy(true)
     setGuideError('')
-    setGuideProgress(null)
-    const controller = new AbortController()
-    guideAbortRef.current = controller
-    try {
-      setGuideProgress({ phase: 'structure', done: 0, total: 1, title: t('label.guideAnalyzing') })
+    const job = startGuideJob(docKey, async ({ signal, report }) => {
+      report({ phase: 'structure', done: 0, total: 1, title: t('label.guideAnalyzing') })
       const quickGuide = prefs.guideDepth === 'quick'
       const structureOptions = quickGuide ? { maxSections: 32, maxParts: 24, oneSectionPerPart: true } : {}
       let structure = null
@@ -8450,6 +8563,7 @@ function ReaderView(props) {
         else if (doc.pdf.structurePromise) structure = (await doc.pdf.structurePromise) || (await pdfGuideStructure(doc.pdf, structureOptions))
         else structure = await pdfGuideStructure(doc.pdf, structureOptions)
       } else structure = markdownGuideStructure(decodeText(doc.bytes), structureOptions)
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
       const sections = (structure && structure.sections) || []
       const parts = (structure && structure.parts) || []
       if (sections.length === 0) throw new Error(t('label.noTextLayer'))
@@ -8460,24 +8574,17 @@ function ReaderView(props) {
         steps >= 5 &&
         !window.confirm(`${t('label.guideEstimate')} ${sections.length} 段 · ${parts.length} 篇 · ~${tokens} tokens`)
       ) {
-        return
+        return {}
       }
-      setGuideProgress({ phase: 'section', done: 0, total: sections.length, title: '' })
+      report({ phase: 'section', done: 0, total: sections.length, title: '' })
       const result = await api.guideStream(
         sessionId,
         { docKey, title: doc.name, sections, parts },
-        { signal: controller.signal, onProgress: (event) => setGuideProgress(event) },
+        { signal, onProgress: report },
       )
-      if (result.store) mergeStore(result.store)
-      flash(`${t('label.guideDone')} · ${t('label.guideReused')} ${result.reused}`)
-    } catch (e) {
-      if (e && e.name === 'AbortError') flash(t('label.guideCancelled'))
-      else setGuideError(String(e.message || e))
-    } finally {
-      setGuideBusy(false)
-      setGuideProgress(null)
-      guideAbortRef.current = null
-    }
+      return { guide: result.guide, store: result.store, reused: result.reused }
+    })
+    attachGuideJob(job)
   }
 
   const jumpToSection = (section) => {
@@ -9665,7 +9772,7 @@ function ReaderView(props) {
             {
               className: 'rd-btn',
               style: { marginTop: '10px' },
-              onClick: () => guideAbortRef.current && guideAbortRef.current.abort(),
+              onClick: () => { const job = docKey ? guideJobFor(docKey) : null; if (job) { job.abort(); flash(t('label.guideCancelled')) } },
             },
             t('action.stop'),
           ),
