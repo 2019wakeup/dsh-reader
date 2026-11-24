@@ -196,40 +196,6 @@ pnpm release:check    # 11 项发布门禁
 
 真书 dogfood 覆盖 523 页 PDF 与 27 章 EPUB 的渲染、目录、翻译、快速导读和导图。
 
-### 发布与分发
-
-发布凭据只存在 GitHub 仓库 secret，本机不留 npm token。
-
-**一次性准备**
-
-1. npmjs.com → Access Tokens → **Granular Access Token**：权限 Read and write，Packages and scopes 只选 `@2019wakeup`，勾选 **Bypass 2FA**，有效期设 30 天；
-2. 把 token 存入 GitHub：Settings → Secrets and variables → Actions → New repository secret，名称 `NPM_TOKEN`；
-3. 用完（或过期）在 npm 后台 revoke，需要发版时再建一个。
-
-**发版**
-
-- Actions → **Release to npm** → Run workflow；或本地打 tag 推送：
-
-  ```bash
-  git tag v0.13.1 && git push origin v0.13.1
-  ```
-
-- 工作流会 `pnpm install/build/test/eval`，校验 tag 与 `dsh-reader/package.json` 版本一致，再执行 `npm publish --provenance`。npm 包页面会显示「由 GitHub Actions 构建并签名」，来源可验证。
-
-**发布后更新索引**
-
-```bash
-cd dsh-reader
-node scripts/build-market-index.mjs --out ../plugin-market.json  # 检测到 npm 上有该版本后自动切到 npm 源
-node scripts/verify-market-index.mjs ../plugin-market.json        # 用 DSH 安装版校验格式
-```
-
-提交 `plugin-market.json` 并推送。索引地址：`https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json`。Git 源必须钉 40 位提交，校验器会拒绝分支名或短 SHA。
-
-**更安全（可选，发布过一次以后）**
-
-npm 包设置 → Trusted Publishing → 添加 GitHub Actions（owner/repo/工作流 `release.yml`）。之后删除 `NPM_TOKEN` secret，工作流通过 GitHub OIDC 发布，仓库和本机都不再保存任何长期凭据。
-
 ## 项目结构
 
 ```text

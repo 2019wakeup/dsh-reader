@@ -101,13 +101,7 @@ node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
 node scripts/release-check.mjs  # 发布门禁（11 项）
 ```
 
-发布走公开仓库的 CI（`.github/workflows/release.yml`）：`NPM_TOKEN` 只存在 GitHub secret，打 tag 或手动触发工作流，带 provenance 发布，本机不留 token。发布后生成并校验市场索引：
-
-```bash
-node scripts/build-market-index.mjs   # npm 已发版时自动切到 npm 源
-node scripts/verify-market-index.mjs  # 用 DSH 安装版校验格式
-node scripts/publish-check.mjs        # npm 打包与索引一致性
-```
+贡献与发布流程见公开仓库的 `CONTRIBUTING.md` 与 `docs/RELEASING.md`。
 
 ## 限制
 
