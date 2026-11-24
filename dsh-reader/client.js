@@ -1620,7 +1620,7 @@ const READER_CSS = `
 .rd-pdf-page canvas{display:block;max-width:100%}
 .rd-text-layer{position:absolute;inset:0;overflow:hidden;line-height:1;opacity:1}
 .rd-text-layer span{position:absolute;color:transparent;white-space:pre;cursor:text;transform-origin:0 0}
-.rd-text-layer span::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent)}
+.rd-text-layer span::selection{background:rgba(47,111,237,.42);color:transparent}
 .rd-prose ::selection{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent)}
 .rd-pdf-hl{position:absolute;background:color-mix(in srgb,var(--hl,#f2c94c) 30%,transparent);pointer-events:none;border-radius:2px}
 .rd-note-mask{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
@@ -1692,6 +1692,10 @@ const READER_CSS = `
 .rd-chat-md th,.rd-chat-md td{border:1px solid var(--dsw-alias-border-l1);padding:4px 6px;text-align:left;vertical-align:top}
 .rd-chat-md th{background:var(--dsw-alias-bg-layer-2);font-weight:600}
 .rd-chat-md hr{border:0;border-top:1px solid var(--dsw-alias-border-l1);margin:1em 0}
+.rd-chat-md .rd-math-block{display:block;overflow-x:auto;overflow-y:hidden;margin:.6em 0;padding:1px 0}
+.rd-chat-md .rd-math-inline{display:inline-block;max-width:100%;vertical-align:-0.15em}
+.rd-chat-md .katex{font-size:1.02em}
+.rd-chat-md .katex-display{margin:.4em 0}
 .rd-chat-process{margin:7px 0 0;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .rd-chat-process>summary{display:inline-flex;align-items:center;gap:5px;list-style:none;cursor:pointer;padding:2px 9px;border:0;border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);transition:background var(--rd-motion-fast) ease,color var(--rd-motion-fast) ease}
 .rd-chat-process>summary:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
@@ -2253,6 +2257,133 @@ function markdownRender(source, options = {}) {
     .replace(/\r\n?/g, '\n')
     .split('\n')
   return renderBlocks(lines, options)
+}
+
+
+const KATEX_JS = '/dsh-reader-live/assets/katex/katex.min.js'
+const KATEX_CSS = '/dsh-reader-live/assets/katex/katex.min.css'
+
+let katexInstance = null
+let katexPromise = null
+
+/** The loaded KaTeX instance, or null before the first formula is rendered. */
+function loadedKatex() {
+  return katexInstance
+}
+
+/** Inline TeX keeps its delimiters tight; this rejects prices like `$5 和 $6`. */
+function isInlineMath(tex) {
+  return Boolean(tex) && !/^\s/.test(tex) && !/\s$/.test(tex) && !/^\d+(?:[.,]\d+)?$/.test(tex)
+}
+
+/** True when the text contains inline or block TeX delimiters. */
+function hasMath(text) {
+  return mathParts(String(text || '')).some((part) => part.tex)
+}
+
+/**
+ * Load KaTeX once, on demand. The CSS is injected first so the fonts resolve
+ * relative to the stylesheet (`assets/katex/fonts/*.woff2`).
+ * @returns {Promise<object>} window.katex
+ */
+function ensureKatex() {
+  if (katexInstance) return Promise.resolve(katexInstance)
+  if (katexPromise) return katexPromise
+  if (typeof document === 'undefined') return Promise.reject(new Error('katex unavailable'))
+  katexPromise = new Promise((resolve, reject) => {
+    if (!document.querySelector('link[data-reader-katex]')) {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = KATEX_CSS
+      link.dataset.readerKatex = '1'
+      document.head.appendChild(link)
+    }
+    if (window.katex) {
+      katexInstance = window.katex
+      resolve(katexInstance)
+      return
+    }
+    const script = document.createElement('script')
+    script.src = KATEX_JS
+    script.async = true
+    script.dataset.readerKatex = '1'
+    script.onload = () => {
+      if (window.katex) {
+        katexInstance = window.katex
+        resolve(katexInstance)
+      } else {
+        reject(new Error('katex unavailable'))
+      }
+    }
+    script.onerror = () => reject(new Error('katex failed to load'))
+    document.head.appendChild(script)
+  }).catch((error) => {
+    katexPromise = null
+    throw error
+  })
+  return katexPromise
+}
+
+function mathParts(text) {
+  const pattern = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g
+  const parts = []
+  let last = 0
+  let match
+  while ((match = pattern.exec(text)) !== null) {
+    const display = match[1] !== undefined || match[2] !== undefined
+    const tex = match[1] ?? match[2] ?? match[3] ?? match[4] ?? ''
+    if (!tex.trim() || (!display && !isInlineMath(tex))) {
+      last = match.index + match[0].length
+      continue
+    }
+    if (match.index > last) parts.push({ text: text.slice(last, match.index) })
+    parts.push({ tex, display })
+    last = match.index + match[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
+}
+
+/**
+ * Replace TeX delimiters in a sanitized HTML string with KaTeX markup.
+ * Code and pre nodes are left untouched.
+ * @param {string} html sanitized HTML
+ * @param {object} [katex] window.katex (defaults to the loaded instance)
+ */
+function renderMathInHtml(html, katex = katexInstance) {
+  if (!katex || typeof document === 'undefined') return String(html || '')
+  const container = document.createElement('div')
+  container.innerHTML = String(html || '')
+  const walker = document.createTreeWalker(container, 4)
+  const nodes = []
+  while (walker.nextNode()) nodes.push(walker.currentNode)
+  for (const node of nodes) {
+    const parent = node.parentElement
+    if (!parent || parent.closest('pre, code')) continue
+    const parts = mathParts(node.nodeValue || '')
+    if (!parts.some((part) => part.tex)) continue
+    const fragment = document.createDocumentFragment()
+    for (const part of parts) {
+      if (part.tex) {
+        const span = document.createElement('span')
+        span.className = part.display ? 'rd-math-block' : 'rd-math-inline'
+        try {
+          span.innerHTML = katex.renderToString(part.tex, {
+            displayMode: part.display,
+            throwOnError: false,
+            strict: 'ignore',
+          })
+        } catch {
+          span.textContent = part.tex
+        }
+        fragment.appendChild(span)
+      } else if (part.text) {
+        fragment.appendChild(document.createTextNode(part.text))
+      }
+    }
+    parent.replaceChild(fragment, node)
+  }
+  return container.innerHTML
 }
 
 
@@ -4956,6 +5087,7 @@ function chatMessageCount(chat) {
 
 
 
+
 /**
  * In-reader conversation panel.
  *
@@ -4983,7 +5115,8 @@ function renderMarkdown(text) {
   const source = String(text || '')
   if (!source.trim()) return ''
   try {
-    return sanitizeHtml(markdownRender(source), () => null)
+    const clean = sanitizeHtml(markdownRender(source), () => null)
+    return loadedKatex() ? renderMathInHtml(clean) : clean
   } catch {
     return ''
   }
@@ -5372,6 +5505,26 @@ function ReaderChatPanel(props) {
     node.scrollTop = node.scrollHeight
   }, [rows, nearBottom])
 
+  const [, setMathTick] = React.useState(0)
+  React.useEffect(() => {
+    if (loadedKatex()) return undefined
+    const texts = []
+    for (const row of rows) {
+      if (row.text) texts.push(row.text)
+      for (const block of row.blocks || []) if (block.text) texts.push(block.text)
+    }
+    if (!texts.some(hasMath)) return undefined
+    let alive = true
+    ensureKatex()
+      .then(() => {
+        if (alive) setMathTick((tick) => tick + 1)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [rows])
+
   const motionRows = React.useRef({ mounted: false, seen: new Set(), marked: new Set() })
   const rowMotion = rows.map((row) => {
     const state = motionRows.current
@@ -5520,6 +5673,98 @@ function ChatSubmitWatcher(props) {
     }
   }, [phase])
   return null
+}
+
+
+/**
+ * Guide jobs outlive the ReaderView.
+ *
+ * Switching to the conversation page unmounts the reader; aborting the stream
+ * there threw away both the model work and the progress UI. A job keeps the
+ * fetch alive, stores the latest progress/result, and lets a remounted reader
+ * subscribe again.
+ */
+
+const jobs = new Map()
+
+/** Latest job for a document, or null. */
+function guideJobFor(key) {
+  return jobs.get(key) || null
+}
+
+/**
+ * Start (or replace) a guide job for one document.
+ * @param {string} key document fingerprint
+ * @param {(tools: {signal: AbortSignal, report: (progress: object) => void}) => Promise<{guide?: object, store?: object, reused?: number}>} runner
+ */
+function startGuideJob(key, runner) {
+  const previous = jobs.get(key)
+  if (previous && previous.state.busy) previous.abort()
+
+  const listeners = new Set()
+  const controller = new AbortController()
+  const state = {
+    busy: true,
+    progress: null,
+    error: '',
+    cancelled: false,
+    guide: null,
+    store: null,
+    reused: 0,
+  }
+  const emit = () => {
+    for (const listener of [...listeners]) {
+      try {
+        listener(state)
+      } catch {
+        /* a listener must not break the job */
+      }
+    }
+  }
+  const job = {
+    key,
+    state,
+    subscribe(listener) {
+      listeners.add(listener)
+      listener(state)
+      return () => listeners.delete(listener)
+    },
+    abort() {
+      if (!state.busy) return
+      state.cancelled = true
+      state.busy = false
+      state.progress = null
+      controller.abort()
+      emit()
+    },
+  }
+  jobs.set(key, job)
+
+  const report = (progress) => {
+    if (!state.busy || state.cancelled) return
+    state.progress = progress
+    emit()
+  }
+
+  Promise.resolve(runner({ signal: controller.signal, report }))
+    .then((result) => {
+      if (state.cancelled) return
+      state.busy = false
+      state.progress = null
+      state.guide = (result && result.guide) || null
+      state.store = (result && result.store) || null
+      state.reused = Number(result && result.reused) || 0
+      emit()
+    })
+    .catch((error) => {
+      if (state.cancelled) return
+      state.busy = false
+      state.progress = null
+      state.error = String((error && error.message) || error)
+      emit()
+    })
+
+  return job
 }
 
 
@@ -6050,7 +6295,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.15.0'
+const READER_VERSION = '0.15.1'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -6202,7 +6447,6 @@ function ReaderView(props) {
   const toastTimer = React.useRef(null)
   const svgRef = React.useRef(null)
   const importInputRef = React.useRef(null)
-  const guideAbortRef = React.useRef(null)
   const historyRef = React.useRef(null)
   const reporterRef = React.useRef(null)
 
@@ -8277,15 +8521,37 @@ function ReaderView(props) {
     return () => observer.disconnect()
   }, [doc, chapter, translationMode, translationLang, translationFrom, layoutTick, translationTick])
 
-  const generateGuide = async () => {
+  const guideUnsubRef = React.useRef(null)
+  const applyGuideState = (state) => {
+    setGuideBusy(state.busy)
+    setGuideProgress(state.progress)
+    setGuideError(state.cancelled ? '' : state.error)
+    if (state.store) mergeStore(state.store)
+  }
+  const attachGuideJob = (job) => {
+    if (guideUnsubRef.current) guideUnsubRef.current()
+    guideUnsubRef.current = job ? job.subscribe(applyGuideState) : null
+  }
+
+  // A guide job is owned by the module, not by this component: leaving the
+  // reading view only detaches the subscription and never aborts the stream.
+  React.useEffect(() => {
+    const job = docKey ? guideJobFor(docKey) : null
+    if (job) attachGuideJob(job)
+    return () => {
+      if (guideUnsubRef.current) {
+        guideUnsubRef.current()
+        guideUnsubRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docKey])
+
+  const generateGuide = () => {
     if (!doc || !docKey) return
-    setGuideBusy(true)
     setGuideError('')
-    setGuideProgress(null)
-    const controller = new AbortController()
-    guideAbortRef.current = controller
-    try {
-      setGuideProgress({ phase: 'structure', done: 0, total: 1, title: t('label.guideAnalyzing') })
+    const job = startGuideJob(docKey, async ({ signal, report }) => {
+      report({ phase: 'structure', done: 0, total: 1, title: t('label.guideAnalyzing') })
       const quickGuide = prefs.guideDepth === 'quick'
       const structureOptions = quickGuide ? { maxSections: 32, maxParts: 24, oneSectionPerPart: true } : {}
       let structure = null
@@ -8297,6 +8563,7 @@ function ReaderView(props) {
         else if (doc.pdf.structurePromise) structure = (await doc.pdf.structurePromise) || (await pdfGuideStructure(doc.pdf, structureOptions))
         else structure = await pdfGuideStructure(doc.pdf, structureOptions)
       } else structure = markdownGuideStructure(decodeText(doc.bytes), structureOptions)
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
       const sections = (structure && structure.sections) || []
       const parts = (structure && structure.parts) || []
       if (sections.length === 0) throw new Error(t('label.noTextLayer'))
@@ -8307,24 +8574,17 @@ function ReaderView(props) {
         steps >= 5 &&
         !window.confirm(`${t('label.guideEstimate')} ${sections.length} 段 · ${parts.length} 篇 · ~${tokens} tokens`)
       ) {
-        return
+        return {}
       }
-      setGuideProgress({ phase: 'section', done: 0, total: sections.length, title: '' })
+      report({ phase: 'section', done: 0, total: sections.length, title: '' })
       const result = await api.guideStream(
         sessionId,
         { docKey, title: doc.name, sections, parts },
-        { signal: controller.signal, onProgress: (event) => setGuideProgress(event) },
+        { signal, onProgress: report },
       )
-      if (result.store) mergeStore(result.store)
-      flash(`${t('label.guideDone')} · ${t('label.guideReused')} ${result.reused}`)
-    } catch (e) {
-      if (e && e.name === 'AbortError') flash(t('label.guideCancelled'))
-      else setGuideError(String(e.message || e))
-    } finally {
-      setGuideBusy(false)
-      setGuideProgress(null)
-      guideAbortRef.current = null
-    }
+      return { guide: result.guide, store: result.store, reused: result.reused }
+    })
+    attachGuideJob(job)
   }
 
   const jumpToSection = (section) => {
@@ -9512,7 +9772,7 @@ function ReaderView(props) {
             {
               className: 'rd-btn',
               style: { marginTop: '10px' },
-              onClick: () => guideAbortRef.current && guideAbortRef.current.abort(),
+              onClick: () => { const job = docKey ? guideJobFor(docKey) : null; if (job) { job.abort(); flash(t('label.guideCancelled')) } },
             },
             t('action.stop'),
           ),
