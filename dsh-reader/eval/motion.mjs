@@ -818,7 +818,21 @@ async function main() {
         return { pass: false, detail: 'child explain action missing' }
       }
       await page.waitForFunction(() => document.querySelectorAll('.rd-card').length >= 2, { timeout: 8000 })
-      await sleep(340)
+      // Wait for the stacking animation to settle; measuring mid-flight used to
+      // read a partial -4.5px shift and made this check flaky under load.
+      await page
+        .waitForFunction(
+          () => {
+            const cards = [...document.querySelectorAll('.rd-card')]
+            return (
+              cards.length >= 2 &&
+              cards.every((card) => card.getAnimations().every((animation) => animation.playState === 'finished'))
+            )
+          },
+          { timeout: 5000 },
+        )
+        .catch(() => {})
+      await sleep(120)
       const records = await completeRecords(await stopProbe(), '.rd-card', (item) => hasClass(item, 'rd-card') && onlyOpacityTransform(item))
       const cardAnimations = records.filter((item) => hasClass(item, 'rd-card') && onlyOpacityTransform(item))
       const state = await page.evaluate(() => {

@@ -44,13 +44,22 @@ function extOf(name) {
   return m ? '.' + m[1].toLowerCase() : ''
 }
 
+/**
+ * Normalize a workspace-relative path to POSIX separators. Windows hosts can
+ * hand over `sub\\book.md`; every client-side path consumer expects `/`.
+ * @param {string} value
+ */
+function normalizeRelPath(value) {
+  return String(value || '').replace(/\\/g, '/')
+}
+
 function basename(file) {
-  const parts = String(file || '').split('/')
+  const parts = normalizeRelPath(file).split('/')
   return parts[parts.length - 1] || file
 }
 
 function dirname(file) {
-  const parts = String(file || '').split('/')
+  const parts = normalizeRelPath(file).split('/')
   parts.pop()
   return parts.join('/') || '.'
 }
@@ -59,7 +68,7 @@ function normalizeTerm(value) {
   return String(value || '').trim().toLowerCase()
 }
 
-const READABLE = new Set(['.md', '.markdown', '.txt', '.epub', '.pdf'])
+const READABLE = new Set(['.md', '.markdown', '.txt', '.epub', '.pdf', '.docx'])
 
 function debounce(fn, wait) {
   let timer = null
@@ -67,6 +76,21 @@ function debounce(fn, wait) {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => fn(...args), wait)
   }
+}
+
+/**
+ * Modifier key shown in help text for the current platform.
+ * @returns {string} `⌘` on Apple platforms, `Ctrl` elsewhere
+ */
+function modifierLabel() {
+  const platform =
+    (typeof navigator !== 'undefined' && (navigator.userAgentData?.platform || navigator.platform)) || ''
+  return /Mac|iPhone|iPad|iPod/i.test(platform) ? '⌘' : 'Ctrl'
+}
+
+/** Undo/redo hint that matches the platform modifier. */
+function undoLabel() {
+  return modifierLabel() === '⌘' ? '⌘Z / ⌘⇧Z' : 'Ctrl+Z / Ctrl+Shift+Z'
 }
 
 
@@ -614,6 +638,11 @@ function buildAssetQuoteSuffix(assets, t) {
 
 
 const ZH = {
+  'error.fileNotFound': '文件不存在',
+  'error.permissionDenied': '没有权限读取该文件',
+  'error.fileBusy': '文件被其他程序占用，请关闭后重试',
+  'label.copied': '已复制',
+  'label.copyFailed': '复制失败，请手动选择文本',
   'view.label': '阅读',
   'library.title': '书库',
   'library.empty': '这个目录里还没有可读的文档',
@@ -899,6 +928,11 @@ const ZH = {
 }
 
 const EN = {
+  'error.fileNotFound': 'File not found',
+  'error.permissionDenied': 'Permission denied',
+  'error.fileBusy': 'The file is in use. Close it and try again.',
+  'label.copied': 'Copied',
+  'label.copyFailed': 'Copy failed; select the text manually',
   'view.label': 'Reader',
   'library.title': 'Library',
   'library.empty': 'No readable documents in this folder',
@@ -1222,6 +1256,17 @@ const EXPLAIN_TIMEOUT_MS = 100_000
 
 const timeoutText = () => (typeof t === 'function' ? t('label.timeout') : 'request timed out')
 
+const FILE_ERROR_KEYS = {
+  'file not found': 'error.fileNotFound',
+  'permission denied': 'error.permissionDenied',
+  'file busy': 'error.fileBusy',
+}
+
+function fileErrorText(code, status) {
+  const key = code && FILE_ERROR_KEYS[code]
+  return key && typeof t === 'function' ? t(key) : 'HTTP ' + status
+}
+
 /**
  * Fetch JSON from the plugin host.
  *
@@ -1261,7 +1306,10 @@ const api = {
   fetchBytes(sessionId, path) {
     const url = `${BASE}/api/file?sessionId=${encodeURIComponent(sessionId || '')}&path=${encodeURIComponent(path)}`
     return fetch(url).then(async (res) => {
-      if (!res.ok) throw new Error('HTTP ' + res.status)
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(fileErrorText(data && data.error, res.status))
+      }
       const bytes = await res.arrayBuffer()
       return { bytes, fingerprint: res.headers.get('x-doc-fingerprint') || '' }
     })
@@ -1396,7 +1444,7 @@ const api = {
 
 const READER_CSS = `
 .rd-root,.rd-root *,.rd-hover-zone *,.rd-note-mask *{box-sizing:border-box}
-.rd-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:ui-sans-serif,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.rd-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif}
 .rd-toolbar{display:flex;align-items:center;gap:8px;height:44px;flex:0 0 auto;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base)}
 .rd-icon-btn{width:30px;min-width:30px;padding:0;display:inline-flex;align-items:center;justify-content:center}
 .rd-icon-btn svg{display:block;width:18px;height:18px;flex:0 0 auto}
@@ -1422,7 +1470,7 @@ const READER_CSS = `
 .rd-btn.ghost:hover{background:var(--dsw-alias-bg-layer-1)}
 .rd-btn:disabled{opacity:.45;cursor:default}
 .rd-body{display:flex;flex:1;min-height:0}
-.rd-main{flex:1;min-width:0;overflow:auto;position:relative;scroll-behavior:smooth;overscroll-behavior:contain}
+.rd-main{flex:1;min-width:0;overflow:auto;position:relative;scroll-behavior:smooth;overscroll-behavior:contain;scrollbar-gutter:stable}
 .rd-page{max-width:760px;margin:0 auto;padding:40px 28px 120px;font-size:var(--rd-fs,18px);line-height:var(--rd-lh,1.85)}
 .rd-prose>h1{font-size:1.7em;line-height:1.3;margin:1.4em 0 .6em;font-weight:700}
 .rd-prose>h2{font-size:1.4em;line-height:1.35;margin:1.4em 0 .5em;font-weight:650}
@@ -1431,7 +1479,7 @@ const READER_CSS = `
 .rd-prose p{margin:.9em 0}
 .rd-prose blockquote{margin:1em 0;padding:.2em 0 .2em 1em;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
 .rd-prose pre{margin:1em 0;padding:14px 16px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);overflow:auto;font-size:.86em;line-height:1.6}
-.rd-prose code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--dsw-alias-bg-layer-2);padding:1px 5px;border-radius:5px}
+.rd-prose code{font-family:ui-monospace,SFMono-Regular,Menlo,"Cascadia Mono",Consolas,monospace;font-size:.9em;background:var(--dsw-alias-bg-layer-2);padding:1px 5px;border-radius:5px}
 .rd-prose pre code{background:transparent;padding:0;border-radius:0}
 .rd-prose ul,.rd-prose ol{margin:.8em 0;padding-left:1.4em}
 .rd-prose li{margin:.3em 0}
@@ -2421,6 +2469,231 @@ async function epubOpen(bytes) {
 }
 
 
+
+const MAMMOTH_URL = '/dsh-reader-live/assets/mammoth.browser.min.js'
+
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
+
+let mammothPromise = null
+
+function localName(element) {
+  return String((element && (element.localName || element.tagName)) || '')
+    .toLowerCase()
+    .split(':')
+    .pop()
+}
+
+function attr(element, name) {
+  if (!element) return ''
+  return element.getAttribute(name) || element.getAttribute(`w:${name}`) || ''
+}
+
+function descendants(root, name) {
+  return Array.from(root.getElementsByTagName('*')).filter((element) => localName(element) === name)
+}
+
+/**
+ * Read paragraph styles that carry a heading level, either through a `heading N`
+ * style name or through `w:outlineLvl` (common in Chinese and WPS templates).
+ * @param {string} stylesXml contents of word/styles.xml
+ * @returns {Array<{styleId: string, name: string, level: number}>}
+ */
+function parseStyleOutline(stylesXml) {
+  if (!stylesXml || typeof DOMParser === 'undefined') return []
+  const parsed = new DOMParser().parseFromString(stylesXml, 'application/xml')
+  if (parsed.querySelector('parsererror')) return []
+  const styles = []
+  for (const style of descendants(parsed, 'style')) {
+    if ((attr(style, 'type') || '').toLowerCase() !== 'paragraph') continue
+    const styleId = attr(style, 'styleId')
+    const nameElement = descendants(style, 'name')[0]
+    const name = attr(nameElement, 'val')
+    if (!styleId || !name) continue
+    const pPr = descendants(style, 'pPr')[0]
+    const outlineElement = pPr ? descendants(pPr, 'outlineLvl')[0] : null
+    const outline = outlineElement ? Number(attr(outlineElement, 'val')) : NaN
+    let level = Number.isFinite(outline) && outline >= 0 && outline <= 5 ? outline + 1 : 0
+    if (!level) {
+      const match = /^(?:heading|标题)\s*([1-6])$/i.exec(name.trim())
+      if (match) level = Number(match[1])
+    }
+    if (level) styles.push({ styleId, name, level })
+  }
+  return styles
+}
+
+const CODE_STYLE = /^(html preformatted|preformatted text|代码|代码块|源代码)$/i
+
+/**
+ * Collect paragraph style names that should render as a code block.
+ * @param {string} stylesXml contents of word/styles.xml
+ */
+function parseCodeStyles(stylesXml) {
+  if (!stylesXml || typeof DOMParser === 'undefined') return []
+  const parsed = new DOMParser().parseFromString(stylesXml, 'application/xml')
+  if (parsed.querySelector('parsererror')) return []
+  const names = []
+  for (const style of descendants(parsed, 'style')) {
+    if ((attr(style, 'type') || '').toLowerCase() !== 'paragraph') continue
+    const name = attr(descendants(style, 'name')[0], 'val')
+    if (name && CODE_STYLE.test(name.trim())) names.push(name.trim())
+  }
+  return names
+}
+
+/**
+ * Build mammoth style-map entries for headings and code styles.
+ * @param {Array<{name: string, level: number}>} styles
+ * @param {string[]} [codeStyles]
+ */
+function styleMapFor(styles, codeStyles = []) {
+  const map = (styles || []).map(({ name, level }) => `p[style-name='${String(name).replace(/'/g, "\\'")}'] => h${level}`)
+  for (const name of codeStyles) map.push(`p[style-name='${String(name).replace(/'/g, "\\'")}'] => pre`)
+  return map
+}
+
+function wrapTables(root) {
+  for (const table of Array.from(root.querySelectorAll('table'))) {
+    if (table.parentElement && table.parentElement.classList.contains('rd-table-wrap')) continue
+    const wrap = document.createElement('div')
+    wrap.className = 'rd-table-wrap'
+    table.parentNode.insertBefore(wrap, table)
+    wrap.appendChild(table)
+  }
+}
+
+function stripTocLeaders(root) {
+  for (const paragraph of Array.from(root.querySelectorAll('p'))) {
+    const text = String(paragraph.textContent || '').trim()
+    if (/^.{0,120}(?:\.{3,}|…{2,}|·{3,})\s*\d+\s*$/.test(text)) paragraph.remove()
+  }
+}
+
+/**
+ * Sanitize mammoth output: mammoth does not sanitize, and Word files are
+ * untrusted input. Keep the semantic tags, drop scripts and unsafe URLs.
+ * @param {string} html
+ */
+function sanitizeDocxHtml(html) {
+  if (typeof document === 'undefined') return String(html || '')
+  const container = document.createElement('div')
+  container.innerHTML = String(html || '')
+  for (const node of Array.from(container.querySelectorAll('script,iframe,object,embed,style,link,meta,base,form'))) {
+    node.remove()
+  }
+  for (const element of Array.from(container.querySelectorAll('*'))) {
+    for (const attribute of Array.from(element.attributes)) {
+      if (/^on/i.test(attribute.name)) element.removeAttribute(attribute.name)
+      if (attribute.name === 'href' && !/^(https?:|mailto:|#)/i.test(attribute.value)) element.removeAttribute('href')
+      if (attribute.name === 'src' && !/^(https?:|blob:|data:image\/)/i.test(attribute.value)) element.removeAttribute('src')
+    }
+  }
+  return container.innerHTML
+}
+
+/**
+ * Split mammoth's flat HTML into h1 chapters and build the outline. The split
+ * rule is frozen once published: annotations store only the chapter index.
+ * @param {string} html sanitized document HTML
+ */
+function splitDocxChapters(html) {
+  if (typeof document === 'undefined') return { chapters: [], outline: [] }
+  const container = document.createElement('div')
+  container.innerHTML = String(html || '')
+  wrapTables(container)
+  stripTocLeaders(container)
+  const chapters = []
+  const outline = []
+  let current = null
+  const startChapter = (label) => {
+    current = { label: label || '正文', html: '', text: '' }
+    chapters.push(current)
+  }
+  for (const node of Array.from(container.childNodes)) {
+    const tag = node.nodeType === 1 ? String(node.tagName || '').toLowerCase() : ''
+    if (tag === 'h1') startChapter((node.textContent || '').trim() || `第 ${chapters.length + 1} 章`)
+    else if (!current) startChapter('正文')
+    if (node.nodeType === 1) {
+      current.html += node.outerHTML || ''
+      current.text += `${node.textContent || ''}\n`
+      if (/^h[1-3]$/.test(tag)) outline.push({ level: Number(tag[1]), label: (node.textContent || '').trim() })
+    } else {
+      current.html += node.textContent || ''
+      current.text += node.textContent || ''
+    }
+  }
+  if (chapters.length === 0) startChapter('正文')
+  for (const chapter of chapters) chapter.text = chapter.text.trim()
+  return { chapters, outline }
+}
+
+/**
+ * Load the vendored mammoth bundle once. The bundle is UMD and publishes
+ * `window.mammoth`; it is only requested when the user opens a .docx file.
+ * @param {string} [src]
+ */
+function loadMammoth(src = MAMMOTH_URL) {
+  if (typeof window !== 'undefined' && window.mammoth) return Promise.resolve(window.mammoth)
+  if (typeof document === 'undefined') return Promise.reject(new Error('docx parser unavailable'))
+  if (mammothPromise) return mammothPromise
+  mammothPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = src
+    script.async = true
+    script.dataset.readerDocx = '1'
+    script.onload = () => {
+      if (window.mammoth) resolve(window.mammoth)
+      else reject(new Error('docx parser unavailable'))
+    }
+    script.onerror = () => reject(new Error('docx parser failed to load'))
+    document.head.appendChild(script)
+  }).catch((error) => {
+    mammothPromise = null
+    throw error
+  })
+  return mammothPromise
+}
+
+/**
+ * Parse a .docx into chapters for the existing HTML reading pipeline.
+ * @param {Uint8Array} bytes docx bytes
+ * @param {{mammoth?: object, loadMammoth?: () => Promise<object>}} [options]
+ */
+async function docxOpen(bytes, options = {}) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const files = await unzip(u8)
+  if (files.size > 5000) throw new Error('docx has too many parts')
+  if (!files.has('word/document.xml')) throw new Error('docx is missing word/document.xml')
+  // Inflating the main part first enforces the 40MB per-entry budget before
+  // mammoth expands the whole archive.
+  const documentXml = await zipText(files, 'word/document.xml')
+  if (documentXml.length > 20 * 1024 * 1024) throw new Error('docx document is too large')
+  const stylesXml = files.has('word/styles.xml') ? await zipText(files, 'word/styles.xml') : ''
+  const styles = stylesXml ? parseStyleOutline(stylesXml) : []
+  const codeStyles = stylesXml ? parseCodeStyles(stylesXml) : []
+  const engine = options.mammoth || (await (options.loadMammoth || loadMammoth)())
+  if (!engine || typeof engine.convertToHtml !== 'function') throw new Error('docx parser unavailable')
+  const assets = []
+  const convertImage =
+    engine.images && typeof engine.images.imgElement === 'function'
+      ? engine.images.imgElement(async (image) => {
+          const type = String(image.contentType || '')
+          if (!IMAGE_TYPES.has(type) || typeof URL.createObjectURL !== 'function') return { src: '' }
+          const buffer = await image.readAsArrayBuffer()
+          const url = URL.createObjectURL(new Blob([buffer], { type }))
+          assets.push(url)
+          return { src: url }
+        })
+      : undefined
+  const arrayBuffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)
+  const result = await engine.convertToHtml({ arrayBuffer }, { styleMap: styleMapFor(styles, codeStyles), convertImage })
+  const clean = sanitizeDocxHtml(result && result.value)
+  const { chapters, outline } = splitDocxChapters(clean)
+  if (chapters.length === 0) throw new Error('empty docx')
+  return { chapters, outline, assets }
+}
+
+
 let pdfjsPromise = null
 
 function loadPdfjs() {
@@ -2463,7 +2736,7 @@ async function pdfOpen(bytes) {
 async function pdfRenderPage(pdf, pageNumber, canvas, layer, scale, onTask) {
   const page = await pdf.doc.getPage(pageNumber)
   const viewport = page.getViewport({ scale })
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const dpr = Math.min(window.devicePixelRatio || 1, 3)
   canvas.width = Math.floor(viewport.width * dpr)
   canvas.height = Math.floor(viewport.height * dpr)
   canvas.style.width = viewport.width + 'px'
@@ -2490,6 +2763,7 @@ async function pdfRenderPage(pdf, pageNumber, canvas, layer, scale, onTask) {
     span.style.left = tx[4] + 'px'
     span.style.top = tx[5] - height + 'px'
     span.style.fontSize = height + 'px'
+    span.style.fontFamily = 'Arial, "Microsoft YaHei", sans-serif'
     layer.appendChild(span)
     const expected = (item.width || 0) * viewport.scale
     const actual = span.getBoundingClientRect().width
@@ -2999,6 +3273,7 @@ function shortcutFor(event, context = {}) {
   if (modifier && !event.altKey && key.toLowerCase() === 'z') {
     return event.shiftKey ? 'redo' : 'undo'
   }
+  if (modifier && !event.altKey && !event.shiftKey && key.toLowerCase() === 'y') return 'redo'
   if (modifier && !event.altKey && key.toLowerCase() === 'f') return 'search'
   if (modifier || event.altKey) return null
   if (key === 'Home') return 'start'
@@ -3587,7 +3862,7 @@ function panelPosition(input) {
 function buildTranslatedHtml(html, resolve) {
   const container = document.createElement('div')
   container.innerHTML = String(html || '')
-  for (const node of container.querySelectorAll('p, li, blockquote, h2, h3, h4, td, pre')) {
+  for (const node of container.querySelectorAll('p, li, blockquote, h2, h3, h4, pre')) {
     if (node.closest('.rd-card, .rd-trans')) continue
     const text = normalizeBlockText(node.textContent)
     if (!text) continue
@@ -4040,6 +4315,7 @@ function annotationsMarkdown(store, now = Date.now()) {
 }
 
 
+
 /**
  * Find a stale document entry that shares the current path but has a different
  * fingerprint and still carries annotations to migrate.
@@ -4050,7 +4326,7 @@ function annotationsMarkdown(store, now = Date.now()) {
 function staleDocFor(docs, path, key) {
   for (const [docKey, doc] of Object.entries(docs || {})) {
     if (docKey === key) continue
-    if (!doc || doc.path !== path) continue
+    if (!doc || normalizeRelPath(doc.path) !== normalizeRelPath(path)) continue
     if (Array.isArray(doc.annotations) && doc.annotations.length > 0) {
       return { fromKey: docKey, count: doc.annotations.length }
     }
@@ -4139,7 +4415,8 @@ function hostAvailableHeight(node, viewportHeight) {
     if (clips) {
       const rect = parent.getBoundingClientRect()
       const padBottom = parseFloat(style.paddingBottom) || 0
-      const candidate = rect.bottom - padBottom
+      const scrollbar = Math.max(0, (parent.offsetHeight || 0) - (parent.clientHeight || 0))
+      const candidate = rect.bottom - padBottom - scrollbar
       if (candidate > 0 && candidate < bottom) bottom = candidate
       // The nearest scroll container already bounds everything above it.
       if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
@@ -4169,6 +4446,43 @@ function fitHostHeight(node, viewportHeight) {
   if (Math.abs(current - available) <= 1 && node.style.height) return available
   node.style.height = `${available}px`
   return available
+}
+
+
+/**
+ * Decode a text file the way Windows users actually save them: UTF-8 (with or
+ * without BOM), UTF-16 with BOM, and the GBK/GB18030 family used by older
+ * Chinese editors. Falls back to UTF-8 replacement characters when nothing
+ * matches, so opening never blocks on encoding.
+ * @param {ArrayBuffer|Uint8Array} bytes file bytes
+ */
+function decodeText(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  if (u8.length >= 3 && u8[0] === 0xef && u8[1] === 0xbb && u8[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(u8.subarray(3))
+  }
+  if (u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(u8.subarray(2))
+  }
+  if (u8.length >= 2 && u8[0] === 0xfe && u8[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(u8.subarray(2))
+  }
+  // BOM-less UTF-16: ASCII-heavy text has a NUL in every other byte.
+  if (u8.length >= 4 && u8[1] === 0 && u8[3] === 0 && u8[0] !== 0) {
+    return new TextDecoder('utf-16le').decode(u8)
+  }
+  if (u8.length >= 4 && u8[0] === 0 && u8[2] === 0 && u8[1] !== 0) {
+    return new TextDecoder('utf-16be').decode(u8)
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(u8)
+  } catch {
+    try {
+      return new TextDecoder('gb18030').decode(u8)
+    } catch {
+      return new TextDecoder('utf-8').decode(u8)
+    }
+  }
 }
 
 
@@ -5240,7 +5554,9 @@ function currentPosition(doc, state = {}) {
   const ext = String(doc.ext || '')
   const name = String(doc.name || '')
   const path = String(doc.path || '')
-  const chapters = doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null
+  const chapters =
+    (doc.docx && Array.isArray(doc.docx.chapters) && doc.docx.chapters) ||
+    (doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null)
   const isPdf = ext === '.pdf' || /\.pdf$/i.test(name)
   if (isPdf) {
     const totalPages = doc.pdf ? Number(doc.pdf.numPages) : NaN
@@ -5384,8 +5700,10 @@ async function buildContextWindow(doc, state = {}) {
     if (pages.length === 0) return null
     text = parts.join('\n\n')
     title = `${name} · 第 ${pages[0] === pages[pages.length - 1] ? pages[0] : `${pages[0]}-${pages[pages.length - 1]}`} 页`
-  } else if (ext === '.epub') {
-    const chapters = doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null
+  } else if (ext === '.epub' || ext === '.docx') {
+    const chapters =
+    (doc.docx && Array.isArray(doc.docx.chapters) && doc.docx.chapters) ||
+    (doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null)
     if (!chapters) return null
     const requestedChapter = Number(known.chapter)
     const index = Number.isFinite(requestedChapter) && requestedChapter > 0 ? Math.floor(requestedChapter) : 0
@@ -5499,8 +5817,9 @@ const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
 const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
 const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
 
-function decodeText(bytes) {
-  return new TextDecoder('utf-8').decode(bytes)
+/** Chapters exposed by the packaged text formats (EPUB and Word). */
+function chaptersFor(target) {
+  return (target && target.docx && target.docx.chapters) || (target && target.epub && target.epub.chapters) || []
 }
 
 function markdownImageResolver(sessionId, doc) {
@@ -5514,9 +5833,9 @@ function markdownImageResolver(sessionId, doc) {
     } catch {
       /* keep the raw path */
     }
-    const parts = String(doc.path).split('/')
+    const parts = normalizeRelPath(doc.path).split('/')
     parts.pop()
-    for (const part of decoded.split('/')) {
+    for (const part of normalizeRelPath(decoded).split('/')) {
       if (!part || part === '.') continue
       if (part === '..') parts.pop()
       else parts.push(part)
@@ -5731,7 +6050,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.14.0'
+const READER_VERSION = '0.15.0'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -5768,7 +6087,7 @@ class ReaderBoundary extends React.Component {
                   message: this.state.error?.message,
                   stack: this.state.error?.stack,
                 })
-                if (navigator.clipboard) navigator.clipboard.writeText(text)
+                if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
               },
             },
             t('action.copyDiagnostics'),
@@ -6074,6 +6393,16 @@ function ReaderView(props) {
     toastTimer.current = setTimeout(() => setToast(null), 4000)
   }
 
+  const copyText = async (text) => {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(String(text || ''))
+      flash(t('label.copied'))
+    } catch {
+      flash(t('label.copyFailed'))
+    }
+  }
+
   const mergeStore = (next) => {
     if (!next) return
     setStore((current) => (Number(next.revision || 0) >= Number(current.revision || 0) ? next : current))
@@ -6322,11 +6651,32 @@ function ReaderView(props) {
     return root ? root.closest('.rd-main') || root.parentElement : null
   }
 
+  // Ctrl+wheel is the Windows pinch/zoom gesture. Keep it inside the reader
+  // instead of letting Chromium scale the whole DSH window.
+  React.useEffect(() => {
+    if (!doc) return undefined
+    const main = readingScroller()
+    if (!main) return undefined
+    const onWheel = (event) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      const direction = event.deltaY < 0 ? 1 : -1
+      if (doc.ext === '.pdf') {
+        setZoom((current) => Math.min(2.5, Math.max(0.6, +(current + direction * 0.15).toFixed(2))))
+      } else {
+        const current = Number(prefs.fontSize) || 18
+        changePrefs({ fontSize: Math.min(26, Math.max(14, current + direction)) })
+      }
+    }
+    main.addEventListener('wheel', onWheel, { passive: false })
+    return () => main.removeEventListener('wheel', onWheel)
+  }, [doc && doc.path, doc && doc.ext, prefs.fontSize])
+
   // Title of the chapter/section currently on screen, used for quote locations.
   const docChapterTitle = () => {
     if (!doc) return ''
-    if (doc.ext === '.epub' && doc.epub && doc.epub.chapters[chapter]) {
-      return String(doc.epub.chapters[chapter].label || '')
+    if ((doc.ext === '.epub' || doc.ext === '.docx') && chaptersFor(doc)[chapter]) {
+      return String(chaptersFor(doc)[chapter].label || '')
     }
     if (doc.ext === '.pdf') return ''
     const root = contentRef.current
@@ -6351,7 +6701,9 @@ function ReaderView(props) {
       scrollHeight: main.scrollHeight,
       clientHeight: main.clientHeight,
     })
-    if (doc.ext === '.epub' && doc.epub) return Math.round(chapterProgress(chapter, local, doc.epub.chapters.length) * 100)
+    if ((doc.ext === '.epub' || doc.ext === '.docx') && chaptersFor(doc).length) {
+      return Math.round(chapterProgress(chapter, local, chaptersFor(doc).length) * 100)
+    }
     return Math.round(local * 100)
   }
 
@@ -6398,8 +6750,8 @@ function ReaderView(props) {
       scrollHeight: main.scrollHeight,
       clientHeight: main.clientHeight,
     })
-    if (doc.ext === '.epub' && doc.epub) {
-      setReadingProgress(chapterProgress(chapter, local, doc.epub.chapters.length))
+    if ((doc.ext === '.epub' || doc.ext === '.docx') && chaptersFor(doc).length) {
+      setReadingProgress(chapterProgress(chapter, local, chaptersFor(doc).length))
     } else {
       setReadingProgress(local)
     }
@@ -6440,8 +6792,9 @@ function ReaderView(props) {
       main.scrollTo({ top: target.top, behavior: 'instant' })
       return
     }
-    if (doc.ext !== '.epub' || !doc.epub) return
-    if (target.kind === 'end' && chapter < doc.epub.chapters.length - 1) goChapter(chapter + 1, 'top')
+    const chapters = chaptersFor(doc)
+    if ((doc.ext !== '.epub' && doc.ext !== '.docx') || chapters.length === 0) return
+    if (target.kind === 'end' && chapter < chapters.length - 1) goChapter(chapter + 1, 'top')
     if (target.kind === 'start' && chapter > 0) goChapter(chapter - 1, 'bottom')
   }
 
@@ -6490,6 +6843,7 @@ function ReaderView(props) {
 
   React.useEffect(() => {
     const onKey = (event) => {
+      if (event.isComposing) return
       const action = shortcutFor(event, { editable: isEditableTarget(event.target), pageKeys: prefs.pageKeys })
       if (action === 'undo' || action === 'redo') {
         event.preventDefault()
@@ -6611,7 +6965,11 @@ function ReaderView(props) {
   }, [])
 
   const revokeAssets = (target) => {
-    for (const url of (target && target.epub && target.epub.assetUrls) || []) {
+    const urls = [
+      ...((target && target.epub && target.epub.assetUrls) || []),
+      ...((target && target.docx && target.docx.assets) || []),
+    ]
+    for (const url of urls) {
       try {
         URL.revokeObjectURL(url)
       } catch {
@@ -6631,6 +6989,9 @@ function ReaderView(props) {
       if (ext === '.epub') {
         next.epub = await epubOpen(opened.bytes)
         if (next.epub.fixedLayout) throw new Error(t('label.fxlUnsupported'))
+      }
+      if (ext === '.docx') {
+        next.docx = await docxOpen(opened.bytes)
       }
       if (ext === '.pdf') {
         next.pdf = await pdfOpen(opened.bytes)
@@ -7114,6 +7475,10 @@ function ReaderView(props) {
         if (fragment) setPendingAnchor(fragment)
       }
     }
+    if (doc && doc.ext === '.docx' && href.startsWith('#')) {
+      const local = document.getElementById(decodeURIComponent(href.slice(1)))
+      if (local && local.scrollIntoView) local.scrollIntoView({ block: 'start' })
+    }
   }
 
   const updateAnnotation = async (id, patch) => {
@@ -7445,7 +7810,23 @@ function ReaderView(props) {
     setSearchBusy(true)
     setSearchDone(false)
     try {
-      if (doc.ext === '.pdf' && doc.pdf) {
+      if (doc.ext === '.docx' && doc.docx) {
+        const chapters = doc.docx.chapters || []
+        const results = []
+        const needle = query.toLowerCase()
+        for (const [index, chapter] of chapters.entries()) {
+          const text = String(chapter.text || '')
+          for (const hit of searchText(text, query, 50 - results.length)) {
+            results.push({
+              ...hit,
+              chapter: index,
+              occurrence: text.slice(0, hit.index).toLowerCase().split(needle).length - 1,
+            })
+          }
+          if (results.length >= 50) break
+        }
+        setSearchResults(results)
+      } else if (doc.ext === '.pdf' && doc.pdf) {
         const results = []
         for (let pageNumber = 1; pageNumber <= doc.pdf.numPages && results.length < 50; pageNumber += 1) {
           const page = await doc.pdf.doc.getPage(pageNumber)
@@ -7480,15 +7861,23 @@ function ReaderView(props) {
       jumpToPdfPage(result.page)
       return
     }
-    const root = contentRef.current
-    if (!root) return
-    const found = findQuoteRange(root, searchQuery.trim(), result.occurrence || 0)
-    if (found) {
-      const node = found.range.startContainer
-      const element = node.nodeType === 3 ? node.parentElement : node
-      if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
-      pulseRange(found.range, pulseOptions())
+    const reveal = () => {
+      const root = contentRef.current
+      if (!root) return
+      const found = findQuoteRange(root, searchQuery.trim(), result.occurrence || 0)
+      if (found) {
+        const node = found.range.startContainer
+        const element = node.nodeType === 3 ? node.parentElement : node
+        if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+        pulseRange(found.range, pulseOptions())
+      }
     }
+    if (doc?.ext === '.docx' && Number.isFinite(result.chapter) && result.chapter !== chapter) {
+      goChapter(result.chapter, 'top')
+      requestAnimationFrame(() => requestAnimationFrame(reveal))
+      return
+    }
+    reveal()
   }
 
   const renderSelectionTranslation = () => {
@@ -7611,7 +8000,7 @@ function ReaderView(props) {
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')
+    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
     const blocks = []
     const seen = new Set()
     for (const node of nodes) {
@@ -7901,6 +8290,7 @@ function ReaderView(props) {
       const structureOptions = quickGuide ? { maxSections: 32, maxParts: 24, oneSectionPerPart: true } : {}
       let structure = null
       if (doc.ext === '.epub' && doc.epub) structure = epubGuideStructure(doc.epub, structureOptions)
+      else if (doc.ext === '.docx' && doc.docx) structure = epubGuideStructure(doc.docx, structureOptions)
       else if (doc.ext === '.pdf' && doc.pdf) {
         if (quickGuide) structure = await pdfGuideStructure(doc.pdf, structureOptions)
         else if (doc.pdf.structure) structure = doc.pdf.structure
@@ -7941,10 +8331,11 @@ function ReaderView(props) {
     if (!section) return
     // The fullscreen overlay hides the book; jumping to the source must reveal it.
     if (mapFullscreen) setMapFullscreen(false)
-    if (doc?.ext === '.epub') {
+    if (doc?.ext === '.epub' || doc?.ext === '.docx') {
       const match = String(section.id || '').match(/^(?:e|c)(\d+)/i)
       const index = Number.isFinite(section.chapter) ? section.chapter : match ? Number(match[1]) : NaN
-      if (Number.isFinite(index) && doc.epub.chapters[index]) jumpToChapter(index)
+      const chapters = chaptersFor(doc)
+      if (Number.isFinite(index) && chapters[index]) jumpToChapter(index)
       return
     }
     if (doc?.ext === '.pdf') {
@@ -8453,11 +8844,12 @@ function ReaderView(props) {
           h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => setPage((p) => Math.min(doc.pdf.numPages, p + step)) }, '›'),
         )
       }
-      if (doc.ext === '.epub') {
+      if (doc.ext === '.epub' || doc.ext === '.docx') {
+        const chapters = chaptersFor(doc)
         buttons.push(
           h('button', { key: 'prev', className: 'rd-btn ghost', onClick: () => { if (chapter > 0) goChapter(chapter - 1, 'bottom') } }, '‹'),
-          h('span', { key: 'chapter', className: 'rd-muted', style: { fontSize: '12px' } }, `${chapter + 1} / ${doc.epub.chapters.length}`),
-          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => { if (chapter < doc.epub.chapters.length - 1) goChapter(chapter + 1, 'top') } }, '›'),
+          h('span', { key: 'chapter', className: 'rd-muted', style: { fontSize: '12px' } }, `${chapter + 1} / ${chapters.length}`),
+          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => { if (chapter < chapters.length - 1) goChapter(chapter + 1, 'top') } }, '›'),
         )
       }
       buttons.push(h('span', { key: 'spacer', className: 'rd-spacer' }))
@@ -8567,7 +8959,7 @@ function ReaderView(props) {
   }
 
   const renderLibrary = () => {
-    const parts = dir === '.' ? [] : dir.split('/')
+    const parts = dir === '.' ? [] : normalizeRelPath(dir).split('/')
     const trail = [{ label: '…', path: '.' }]
     let acc = ''
     for (const part of parts) {
@@ -8622,7 +9014,7 @@ function ReaderView(props) {
 
   const renderedHtml = React.useMemo(() => {
     if (!doc || doc.ext === '.pdf') return ''
-    if (doc.ext === '.epub') return (doc.epub.chapters[chapter] || {}).html || ''
+    if (doc.ext === '.epub' || doc.ext === '.docx') return (chaptersFor(doc)[chapter] || {}).html || ''
     return markdownRender(decodeText(doc.bytes), { resolveImage: markdownImageResolver(sessionId, doc) })
   }, [doc, chapter])
 
@@ -8721,8 +9113,8 @@ function ReaderView(props) {
     if (!drawer || !doc) return null
     let body = null
     if (drawer === 'toc') {
-      if (doc.ext === '.epub') {
-        body = doc.epub.chapters.map((item, index) =>
+      if (doc.ext === '.epub' || doc.ext === '.docx') {
+        body = chaptersFor(doc).map((item, index) =>
           h(
             'div',
             {
@@ -10141,7 +10533,7 @@ function ReaderView(props) {
         {
           className: 'rd-btn',
           onClick: () => {
-            navigator.clipboard.writeText(menu.text)
+            copyText(menu.text)
             setMenu(null)
           },
         },
@@ -10287,7 +10679,7 @@ function ReaderView(props) {
             'div',
             { className: 'rd-help-box', onClick: (event) => event.stopPropagation() },
             h('h3', { style: { marginTop: 0 } }, t('label.shortcuts')),
-            [['← / →', t('help.paging')], ['⌘Z / ⌘⇧Z', t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
+            [['← / →', t('help.paging')], [undoLabel(), t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
               ([keys, label]) => h('div', { key: keys, className: 'rd-help-row' }, h('span', null, label), h('b', null, keys)),
             ),
           ),

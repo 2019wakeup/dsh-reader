@@ -1,6 +1,6 @@
 export const READER_CSS = `
 .rd-root,.rd-root *,.rd-hover-zone *,.rd-note-mask *{box-sizing:border-box}
-.rd-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:ui-sans-serif,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.rd-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif}
 .rd-toolbar{display:flex;align-items:center;gap:8px;height:44px;flex:0 0 auto;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base)}
 .rd-icon-btn{width:30px;min-width:30px;padding:0;display:inline-flex;align-items:center;justify-content:center}
 .rd-icon-btn svg{display:block;width:18px;height:18px;flex:0 0 auto}
@@ -26,7 +26,7 @@ export const READER_CSS = `
 .rd-btn.ghost:hover{background:var(--dsw-alias-bg-layer-1)}
 .rd-btn:disabled{opacity:.45;cursor:default}
 .rd-body{display:flex;flex:1;min-height:0}
-.rd-main{flex:1;min-width:0;overflow:auto;position:relative;scroll-behavior:smooth;overscroll-behavior:contain}
+.rd-main{flex:1;min-width:0;overflow:auto;position:relative;scroll-behavior:smooth;overscroll-behavior:contain;scrollbar-gutter:stable}
 .rd-page{max-width:760px;margin:0 auto;padding:40px 28px 120px;font-size:var(--rd-fs,18px);line-height:var(--rd-lh,1.85)}
 .rd-prose>h1{font-size:1.7em;line-height:1.3;margin:1.4em 0 .6em;font-weight:700}
 .rd-prose>h2{font-size:1.4em;line-height:1.35;margin:1.4em 0 .5em;font-weight:650}
@@ -35,7 +35,7 @@ export const READER_CSS = `
 .rd-prose p{margin:.9em 0}
 .rd-prose blockquote{margin:1em 0;padding:.2em 0 .2em 1em;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
 .rd-prose pre{margin:1em 0;padding:14px 16px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);overflow:auto;font-size:.86em;line-height:1.6}
-.rd-prose code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--dsw-alias-bg-layer-2);padding:1px 5px;border-radius:5px}
+.rd-prose code{font-family:ui-monospace,SFMono-Regular,Menlo,"Cascadia Mono",Consolas,monospace;font-size:.9em;background:var(--dsw-alias-bg-layer-2);padding:1px 5px;border-radius:5px}
 .rd-prose pre code{background:transparent;padding:0;border-radius:0}
 .rd-prose ul,.rd-prose ol{margin:.8em 0;padding-left:1.4em}
 .rd-prose li{margin:.3em 0}

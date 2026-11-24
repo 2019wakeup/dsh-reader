@@ -1,4 +1,9 @@
 const ZH = {
+  'error.fileNotFound': '文件不存在',
+  'error.permissionDenied': '没有权限读取该文件',
+  'error.fileBusy': '文件被其他程序占用，请关闭后重试',
+  'label.copied': '已复制',
+  'label.copyFailed': '复制失败，请手动选择文本',
   'view.label': '阅读',
   'library.title': '书库',
   'library.empty': '这个目录里还没有可读的文档',
@@ -284,6 +289,11 @@ const ZH = {
 }
 
 const EN = {
+  'error.fileNotFound': 'File not found',
+  'error.permissionDenied': 'Permission denied',
+  'error.fileBusy': 'The file is in use. Close it and try again.',
+  'label.copied': 'Copied',
+  'label.copyFailed': 'Copy failed; select the text manually',
   'view.label': 'Reader',
   'library.title': 'Library',
   'library.empty': 'No readable documents in this folder',

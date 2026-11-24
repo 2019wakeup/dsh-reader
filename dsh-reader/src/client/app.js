@@ -30,8 +30,9 @@ const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
 const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
 const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
 
-function decodeText(bytes) {
-  return new TextDecoder('utf-8').decode(bytes)
+/** Chapters exposed by the packaged text formats (EPUB and Word). */
+function chaptersFor(target) {
+  return (target && target.docx && target.docx.chapters) || (target && target.epub && target.epub.chapters) || []
 }
 
 function markdownImageResolver(sessionId, doc) {
@@ -45,9 +46,9 @@ function markdownImageResolver(sessionId, doc) {
     } catch {
       /* keep the raw path */
     }
-    const parts = String(doc.path).split('/')
+    const parts = normalizeRelPath(doc.path).split('/')
     parts.pop()
-    for (const part of decoded.split('/')) {
+    for (const part of normalizeRelPath(decoded).split('/')) {
       if (!part || part === '.') continue
       if (part === '..') parts.pop()
       else parts.push(part)
@@ -299,7 +300,7 @@ class ReaderBoundary extends React.Component {
                   message: this.state.error?.message,
                   stack: this.state.error?.stack,
                 })
-                if (navigator.clipboard) navigator.clipboard.writeText(text)
+                if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
               },
             },
             t('action.copyDiagnostics'),
@@ -605,6 +606,16 @@ export function ReaderView(props) {
     toastTimer.current = setTimeout(() => setToast(null), 4000)
   }
 
+  const copyText = async (text) => {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(String(text || ''))
+      flash(t('label.copied'))
+    } catch {
+      flash(t('label.copyFailed'))
+    }
+  }
+
   const mergeStore = (next) => {
     if (!next) return
     setStore((current) => (Number(next.revision || 0) >= Number(current.revision || 0) ? next : current))
@@ -853,11 +864,32 @@ export function ReaderView(props) {
     return root ? root.closest('.rd-main') || root.parentElement : null
   }
 
+  // Ctrl+wheel is the Windows pinch/zoom gesture. Keep it inside the reader
+  // instead of letting Chromium scale the whole DSH window.
+  React.useEffect(() => {
+    if (!doc) return undefined
+    const main = readingScroller()
+    if (!main) return undefined
+    const onWheel = (event) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      const direction = event.deltaY < 0 ? 1 : -1
+      if (doc.ext === '.pdf') {
+        setZoom((current) => Math.min(2.5, Math.max(0.6, +(current + direction * 0.15).toFixed(2))))
+      } else {
+        const current = Number(prefs.fontSize) || 18
+        changePrefs({ fontSize: Math.min(26, Math.max(14, current + direction)) })
+      }
+    }
+    main.addEventListener('wheel', onWheel, { passive: false })
+    return () => main.removeEventListener('wheel', onWheel)
+  }, [doc && doc.path, doc && doc.ext, prefs.fontSize])
+
   // Title of the chapter/section currently on screen, used for quote locations.
   const docChapterTitle = () => {
     if (!doc) return ''
-    if (doc.ext === '.epub' && doc.epub && doc.epub.chapters[chapter]) {
-      return String(doc.epub.chapters[chapter].label || '')
+    if ((doc.ext === '.epub' || doc.ext === '.docx') && chaptersFor(doc)[chapter]) {
+      return String(chaptersFor(doc)[chapter].label || '')
     }
     if (doc.ext === '.pdf') return ''
     const root = contentRef.current
@@ -882,7 +914,9 @@ export function ReaderView(props) {
       scrollHeight: main.scrollHeight,
       clientHeight: main.clientHeight,
     })
-    if (doc.ext === '.epub' && doc.epub) return Math.round(chapterProgress(chapter, local, doc.epub.chapters.length) * 100)
+    if ((doc.ext === '.epub' || doc.ext === '.docx') && chaptersFor(doc).length) {
+      return Math.round(chapterProgress(chapter, local, chaptersFor(doc).length) * 100)
+    }
     return Math.round(local * 100)
   }
 
@@ -929,8 +963,8 @@ export function ReaderView(props) {
       scrollHeight: main.scrollHeight,
       clientHeight: main.clientHeight,
     })
-    if (doc.ext === '.epub' && doc.epub) {
-      setReadingProgress(chapterProgress(chapter, local, doc.epub.chapters.length))
+    if ((doc.ext === '.epub' || doc.ext === '.docx') && chaptersFor(doc).length) {
+      setReadingProgress(chapterProgress(chapter, local, chaptersFor(doc).length))
     } else {
       setReadingProgress(local)
     }
@@ -971,8 +1005,9 @@ export function ReaderView(props) {
       main.scrollTo({ top: target.top, behavior: 'instant' })
       return
     }
-    if (doc.ext !== '.epub' || !doc.epub) return
-    if (target.kind === 'end' && chapter < doc.epub.chapters.length - 1) goChapter(chapter + 1, 'top')
+    const chapters = chaptersFor(doc)
+    if ((doc.ext !== '.epub' && doc.ext !== '.docx') || chapters.length === 0) return
+    if (target.kind === 'end' && chapter < chapters.length - 1) goChapter(chapter + 1, 'top')
     if (target.kind === 'start' && chapter > 0) goChapter(chapter - 1, 'bottom')
   }
 
@@ -1021,6 +1056,7 @@ export function ReaderView(props) {
 
   React.useEffect(() => {
     const onKey = (event) => {
+      if (event.isComposing) return
       const action = shortcutFor(event, { editable: isEditableTarget(event.target), pageKeys: prefs.pageKeys })
       if (action === 'undo' || action === 'redo') {
         event.preventDefault()
@@ -1142,7 +1178,11 @@ export function ReaderView(props) {
   }, [])
 
   const revokeAssets = (target) => {
-    for (const url of (target && target.epub && target.epub.assetUrls) || []) {
+    const urls = [
+      ...((target && target.epub && target.epub.assetUrls) || []),
+      ...((target && target.docx && target.docx.assets) || []),
+    ]
+    for (const url of urls) {
       try {
         URL.revokeObjectURL(url)
       } catch {
@@ -1162,6 +1202,9 @@ export function ReaderView(props) {
       if (ext === '.epub') {
         next.epub = await epubOpen(opened.bytes)
         if (next.epub.fixedLayout) throw new Error(t('label.fxlUnsupported'))
+      }
+      if (ext === '.docx') {
+        next.docx = await docxOpen(opened.bytes)
       }
       if (ext === '.pdf') {
         next.pdf = await pdfOpen(opened.bytes)
@@ -1645,6 +1688,10 @@ export function ReaderView(props) {
         if (fragment) setPendingAnchor(fragment)
       }
     }
+    if (doc && doc.ext === '.docx' && href.startsWith('#')) {
+      const local = document.getElementById(decodeURIComponent(href.slice(1)))
+      if (local && local.scrollIntoView) local.scrollIntoView({ block: 'start' })
+    }
   }
 
   const updateAnnotation = async (id, patch) => {
@@ -1976,7 +2023,23 @@ export function ReaderView(props) {
     setSearchBusy(true)
     setSearchDone(false)
     try {
-      if (doc.ext === '.pdf' && doc.pdf) {
+      if (doc.ext === '.docx' && doc.docx) {
+        const chapters = doc.docx.chapters || []
+        const results = []
+        const needle = query.toLowerCase()
+        for (const [index, chapter] of chapters.entries()) {
+          const text = String(chapter.text || '')
+          for (const hit of searchText(text, query, 50 - results.length)) {
+            results.push({
+              ...hit,
+              chapter: index,
+              occurrence: text.slice(0, hit.index).toLowerCase().split(needle).length - 1,
+            })
+          }
+          if (results.length >= 50) break
+        }
+        setSearchResults(results)
+      } else if (doc.ext === '.pdf' && doc.pdf) {
         const results = []
         for (let pageNumber = 1; pageNumber <= doc.pdf.numPages && results.length < 50; pageNumber += 1) {
           const page = await doc.pdf.doc.getPage(pageNumber)
@@ -2011,15 +2074,23 @@ export function ReaderView(props) {
       jumpToPdfPage(result.page)
       return
     }
-    const root = contentRef.current
-    if (!root) return
-    const found = findQuoteRange(root, searchQuery.trim(), result.occurrence || 0)
-    if (found) {
-      const node = found.range.startContainer
-      const element = node.nodeType === 3 ? node.parentElement : node
-      if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
-      pulseRange(found.range, pulseOptions())
+    const reveal = () => {
+      const root = contentRef.current
+      if (!root) return
+      const found = findQuoteRange(root, searchQuery.trim(), result.occurrence || 0)
+      if (found) {
+        const node = found.range.startContainer
+        const element = node.nodeType === 3 ? node.parentElement : node
+        if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+        pulseRange(found.range, pulseOptions())
+      }
     }
+    if (doc?.ext === '.docx' && Number.isFinite(result.chapter) && result.chapter !== chapter) {
+      goChapter(result.chapter, 'top')
+      requestAnimationFrame(() => requestAnimationFrame(reveal))
+      return
+    }
+    reveal()
   }
 
   const renderSelectionTranslation = () => {
@@ -2142,7 +2213,7 @@ export function ReaderView(props) {
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')
+    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
     const blocks = []
     const seen = new Set()
     for (const node of nodes) {
@@ -2432,6 +2503,7 @@ export function ReaderView(props) {
       const structureOptions = quickGuide ? { maxSections: 32, maxParts: 24, oneSectionPerPart: true } : {}
       let structure = null
       if (doc.ext === '.epub' && doc.epub) structure = epubGuideStructure(doc.epub, structureOptions)
+      else if (doc.ext === '.docx' && doc.docx) structure = epubGuideStructure(doc.docx, structureOptions)
       else if (doc.ext === '.pdf' && doc.pdf) {
         if (quickGuide) structure = await pdfGuideStructure(doc.pdf, structureOptions)
         else if (doc.pdf.structure) structure = doc.pdf.structure
@@ -2472,10 +2544,11 @@ export function ReaderView(props) {
     if (!section) return
     // The fullscreen overlay hides the book; jumping to the source must reveal it.
     if (mapFullscreen) setMapFullscreen(false)
-    if (doc?.ext === '.epub') {
+    if (doc?.ext === '.epub' || doc?.ext === '.docx') {
       const match = String(section.id || '').match(/^(?:e|c)(\d+)/i)
       const index = Number.isFinite(section.chapter) ? section.chapter : match ? Number(match[1]) : NaN
-      if (Number.isFinite(index) && doc.epub.chapters[index]) jumpToChapter(index)
+      const chapters = chaptersFor(doc)
+      if (Number.isFinite(index) && chapters[index]) jumpToChapter(index)
       return
     }
     if (doc?.ext === '.pdf') {
@@ -2984,11 +3057,12 @@ export function ReaderView(props) {
           h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => setPage((p) => Math.min(doc.pdf.numPages, p + step)) }, '›'),
         )
       }
-      if (doc.ext === '.epub') {
+      if (doc.ext === '.epub' || doc.ext === '.docx') {
+        const chapters = chaptersFor(doc)
         buttons.push(
           h('button', { key: 'prev', className: 'rd-btn ghost', onClick: () => { if (chapter > 0) goChapter(chapter - 1, 'bottom') } }, '‹'),
-          h('span', { key: 'chapter', className: 'rd-muted', style: { fontSize: '12px' } }, `${chapter + 1} / ${doc.epub.chapters.length}`),
-          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => { if (chapter < doc.epub.chapters.length - 1) goChapter(chapter + 1, 'top') } }, '›'),
+          h('span', { key: 'chapter', className: 'rd-muted', style: { fontSize: '12px' } }, `${chapter + 1} / ${chapters.length}`),
+          h('button', { key: 'next', className: 'rd-btn ghost', onClick: () => { if (chapter < chapters.length - 1) goChapter(chapter + 1, 'top') } }, '›'),
         )
       }
       buttons.push(h('span', { key: 'spacer', className: 'rd-spacer' }))
@@ -3098,7 +3172,7 @@ export function ReaderView(props) {
   }
 
   const renderLibrary = () => {
-    const parts = dir === '.' ? [] : dir.split('/')
+    const parts = dir === '.' ? [] : normalizeRelPath(dir).split('/')
     const trail = [{ label: '…', path: '.' }]
     let acc = ''
     for (const part of parts) {
@@ -3153,7 +3227,7 @@ export function ReaderView(props) {
 
   const renderedHtml = React.useMemo(() => {
     if (!doc || doc.ext === '.pdf') return ''
-    if (doc.ext === '.epub') return (doc.epub.chapters[chapter] || {}).html || ''
+    if (doc.ext === '.epub' || doc.ext === '.docx') return (chaptersFor(doc)[chapter] || {}).html || ''
     return markdownRender(decodeText(doc.bytes), { resolveImage: markdownImageResolver(sessionId, doc) })
   }, [doc, chapter])
 
@@ -3252,8 +3326,8 @@ export function ReaderView(props) {
     if (!drawer || !doc) return null
     let body = null
     if (drawer === 'toc') {
-      if (doc.ext === '.epub') {
-        body = doc.epub.chapters.map((item, index) =>
+      if (doc.ext === '.epub' || doc.ext === '.docx') {
+        body = chaptersFor(doc).map((item, index) =>
           h(
             'div',
             {
@@ -4672,7 +4746,7 @@ export function ReaderView(props) {
         {
           className: 'rd-btn',
           onClick: () => {
-            navigator.clipboard.writeText(menu.text)
+            copyText(menu.text)
             setMenu(null)
           },
         },
@@ -4818,7 +4892,7 @@ export function ReaderView(props) {
             'div',
             { className: 'rd-help-box', onClick: (event) => event.stopPropagation() },
             h('h3', { style: { marginTop: 0 } }, t('label.shortcuts')),
-            [['← / →', t('help.paging')], ['⌘Z / ⌘⇧Z', t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
+            [['← / →', t('help.paging')], [undoLabel(), t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
               ([keys, label]) => h('div', { key: keys, className: 'rd-help-row' }, h('span', null, label), h('b', null, keys)),
             ),
           ),

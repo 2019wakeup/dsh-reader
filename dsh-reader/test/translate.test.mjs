@@ -20,6 +20,13 @@ test('builds a translation-only html keeping untranslated blocks', () => {
   assert.match(output, /标题/)
 })
 
+test('keeps table cells untranslated', () => {
+  const html = '<p>hello</p><table><tr><td>cell</td></tr></table>'
+  const output = buildTranslatedHtml(html, () => '译文')
+  assert.match(output, /<p>译文<\/p>/)
+  assert.match(output, /<td>cell<\/td>/)
+})
+
 test('translate prompt asks for an id-keyed json map', () => {
   const { system, user } = buildTranslatePrompt({
     target: 'en',

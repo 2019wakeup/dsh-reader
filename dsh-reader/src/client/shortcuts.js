@@ -11,6 +11,7 @@ export function shortcutFor(event, context = {}) {
   if (modifier && !event.altKey && key.toLowerCase() === 'z') {
     return event.shiftKey ? 'redo' : 'undo'
   }
+  if (modifier && !event.altKey && !event.shiftKey && key.toLowerCase() === 'y') return 'redo'
   if (modifier && !event.altKey && key.toLowerCase() === 'f') return 'search'
   if (modifier || event.altKey) return null
   if (key === 'Home') return 'start'

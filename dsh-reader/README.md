@@ -6,7 +6,7 @@
 - **递归学习**：解释里遇到新概念，就在悬浮卡里继续追问、生成子卡；父卡保留、概念链可见，最多 3 层。
 - **交给原生对话**：需要工具、联网或多轮推演时，把选区（含图 / 内联 SVG / MathML）交给当前会话，回答在书页旁流出来。
 
-PDF / EPUB / Markdown / TXT 都在会话主区域打开；核心是**概念卡**——划词解释后自动沉淀成一张留在原文旁边的卡片，记录定义、语境、例子和出处，跨书、跨论文复用「本书用法」。
+PDF / EPUB / Word（.docx）/ Markdown / TXT 都在会话主区域打开；核心是**概念卡**——划词解释后自动沉淀成一张留在原文旁边的卡片，记录定义、语境、例子和出处，跨书、跨论文复用「本书用法」。
 
 ![划词 → 解释 → 概念卡原地浮出](https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/dsh-reader/docs/demos/01-select-explain.gif)
 
@@ -32,7 +32,7 @@ PDF / EPUB / Markdown / TXT 都在会话主区域打开；核心是**概念卡**
 1. 下载安装 [DeepSeek 官方桌面端](https://www.deepseek.com/download/)，登录 DeepSeek 账号；
 2. 侧栏 → **插件** → **添加插件**，输入 `@2019wakeup/dsh-reader@latest`，装好后在插件详情打开「启用」，重启桌面端。
 
-> `@latest` 现在就是 0.14.0；如果习惯插件市场索引、或想固定版本，也可以按下面的步骤安装和更新。
+> `@latest` 现在就是 0.15.0；如果习惯插件市场索引、或想固定版本，也可以按下面的步骤安装和更新。
 
 ### 也可以从插件市场索引安装
 
@@ -42,6 +42,10 @@ PDF / EPUB / Markdown / TXT 都在会话主区域打开；核心是**概念卡**
    https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json
    ```
 3. 在发现页找到「砚读 · DSH 阅读插件」安装；以后有新版本会直接显示更新按钮。
+
+### Windows 桌面端
+
+Windows 10/11（x64）使用同一套桌面端与安装步骤；插件与阅读数据位于 `%USERPROFILE%\.dsh\profiles\desktop`，工作区数据仍在 `.dsh-reader/`。文件编码、路径分隔符、文件占用与快捷键已按 Windows 处理；不支持 `.doc` 旧格式，请先另存为 `.docx`。
 
 ### 开发者：命令行
 
@@ -75,10 +79,10 @@ dsh plugin --profile web add ./dsh-reader
 - 追问：卡内就概念继续提问，可带相关概念上下文；同概念跨书复用时追加「本书用法」。
 - 悬停：已收录概念在正文中显示虚线，停留 150ms 浮出卡片，不遮挡当前行。
 - 导读（长书，可选「快速（篇级）」/「标准（段+篇）」成本档位）：PDF 读真实书签、按章分块、段→篇→全书两层归约；显示阶段进度、可停止；思维导图为「书→篇→节」；增量缓存；导出 PNG/SVG/MD。
-- 目录：PDF 优先真实书签（缩进/页码/当前页高亮），无书签时按 20 页分组；EPUB/Markdown 按章节/标题。
+- 目录：PDF 优先真实书签（缩进/页码/当前页高亮），无书签时按 20 页分组；EPUB/Word/Markdown 按章节/标题。
 - 概念抽屉默认按当前书过滤，可切「全部」。
-- 搜索：⌘F 全文搜索（Markdown/EPUB 定位原文，PDF 逐页提取跳页）。
-- 翻译：Markdown/EPUB 三态「关 / 段落对照 / 仅译文」；PDF 右侧译文抽屉按页对照；划词可即时翻译；可选中文/英文/日文，按段缓存不重复计费。
+- 搜索：⌘F 全文搜索（Markdown/EPUB/Word 定位原文，Word 跨章；PDF 逐页提取跳页）。
+- 翻译：Markdown/EPUB/Word 三态「关 / 段落对照 / 仅译文」；PDF 右侧译文抽屉按页对照；划词可即时翻译；可选中文/英文/日文，按段缓存不重复计费。Word 表格单元格不参与段落对照，避免译文撑破列宽。
 - 阅读：浅色/深色/米黄主题、PDF 双页、方向键或 J/K 翻页；设置重启保留。
 - 数据：JSON 导出/导入、标注 Markdown 导出、最近 5 份备份一键恢复；最近 10 次发送内容可在设置查看。
 - 概念：支持合并（别名/出现位置随目标保留）；原文改动后按路径发现旧标注并一键迁移。
@@ -119,13 +123,13 @@ dsh plugin --profile web add ./dsh-reader
 ## 开发
 
 ```bash
-node --test test/*.test.mjs     # 单元与冒烟测试（401 条）
+node --test test/*.test.mjs     # 单元与冒烟测试（429 条）
 node eval/run.mjs               # 产品级 eval（18 项）
 node eval/visual.mjs            # 视觉 eval（无头 Chrome，163 项检查 + 22 张像素基线）
 node eval/motion.mjs            # 动效 eval（无头 Chrome，16 项）
 node eval/layout-host.mjs       # 宿主布局探针（6 项）
 node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
-node scripts/release-check.mjs  # 发布门禁（12 项）
+node scripts/release-check.mjs  # 发布门禁（13 项）
 (cd demo && npm run render)     # 重新生成 README 演示 GIF（Remotion，见 demo/README.md）
 ```
 
@@ -135,6 +139,8 @@ node scripts/release-check.mjs  # 发布门禁（12 项）
 
 - 扫描版 PDF（无文本层）不能标注。
 - 固定版式 EPUB（FXL）不支持。
+- `.doc` 旧格式、`.rtf`、`.wps` 不支持；Word 不还原分页、页眉页脚、分栏、文本框与页码。
+- Windows 上不支持 `.doc` 文件关联与右键打开；请从书库或拖拽进入。
 - 段落对照翻译、概念图谱、移动端尚未包含（见 1.0 PRD 决策）。
 - 解释/导读/追问需要 DSH 已配置可用模型。
 - 解释请求有 90 秒上限：模型迟迟不返回时会被中止并在卡片上显示超时（重试按钮可直接再试）。慢的渠道可以用环境变量 `DSH_READER_EXPLAIN_TIMEOUT_MS` 调高；失败原因会写进 `.dsh-reader/store.json` 的 `debug.lastError`。

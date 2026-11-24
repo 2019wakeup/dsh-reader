@@ -3,6 +3,8 @@ import path from 'node:path'
 import { migrateV1 } from './migrate.js'
 import { defaultPrefs } from './prefs.js'
 import { MAX_READING_SESSIONS, MAX_SESSION_ID_CHARS, normalizeReaderPosition } from './reader-context.js'
+import { toPosix } from './paths.js'
+import { writeFileAtomic } from './atomic-write.js'
 
 const DATA_DIR = '.dsh-reader'
 const STORE_FILE = 'store.json'
@@ -69,7 +71,7 @@ function normalizeDocs(raw) {
   for (const [key, doc] of Object.entries(raw)) {
     if (!isRecord(doc)) continue
     docs[key] = {
-      path: typeof doc.path === 'string' ? doc.path : '',
+      path: typeof doc.path === 'string' ? toPosix(doc.path) : '',
       size: Number.isFinite(doc.size) ? doc.size : 0,
       mtime: Number.isFinite(doc.mtime) ? doc.mtime : 0,
       annotations: Array.isArray(doc.annotations)
@@ -182,7 +184,7 @@ export async function backupStore(cwd) {
   await fs.writeFile(path.join(dir, name), raw)
   const entries = (await fs.readdir(dir)).filter((entry) => /^store-.*\.json$/.test(entry)).sort()
   for (const stale of entries.slice(0, Math.max(0, entries.length - BACKUP_KEEP))) {
-    await fs.rm(path.join(dir, stale), { force: true })
+    await fs.rm(path.join(dir, stale), { force: true }).catch(() => {})
   }
   return name
 }
@@ -251,9 +253,7 @@ export async function writeStore(cwd, store, options = {}) {
   const dir = path.join(cwd, DATA_DIR)
   await fs.mkdir(dir, { recursive: true })
   const file = storePath(cwd)
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  await fs.writeFile(tmp, JSON.stringify(normalizeV2(store), null, 2), 'utf8')
-  await fs.rename(tmp, file)
+  await writeFileAtomic(file, JSON.stringify(normalizeV2(store), null, 2))
 }
 
 const writeQueues = new Map()
@@ -310,7 +310,7 @@ export function upsertDoc(store, input) {
   }
   store.docs[docKey] = {
     ...current,
-    path: input.path || current.path,
+    path: toPosix(input.path || current.path),
     size: Number.isFinite(input.size) ? input.size : current.size,
     mtime: Number.isFinite(input.mtime) ? input.mtime : current.mtime,
     annotations: Array.isArray(input.annotations) ? input.annotations : current.annotations,

@@ -6,6 +6,17 @@ const EXPLAIN_TIMEOUT_MS = 100_000
 
 const timeoutText = () => (typeof t === 'function' ? t('label.timeout') : 'request timed out')
 
+const FILE_ERROR_KEYS = {
+  'file not found': 'error.fileNotFound',
+  'permission denied': 'error.permissionDenied',
+  'file busy': 'error.fileBusy',
+}
+
+function fileErrorText(code, status) {
+  const key = code && FILE_ERROR_KEYS[code]
+  return key && typeof t === 'function' ? t(key) : 'HTTP ' + status
+}
+
 /**
  * Fetch JSON from the plugin host.
  *
@@ -45,7 +56,10 @@ export const api = {
   fetchBytes(sessionId, path) {
     const url = `${BASE}/api/file?sessionId=${encodeURIComponent(sessionId || '')}&path=${encodeURIComponent(path)}`
     return fetch(url).then(async (res) => {
-      if (!res.ok) throw new Error('HTTP ' + res.status)
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(fileErrorText(data && data.error, res.status))
+      }
       const bytes = await res.arrayBuffer()
       return { bytes, fingerprint: res.headers.get('x-doc-fingerprint') || '' }
     })

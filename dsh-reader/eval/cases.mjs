@@ -3,6 +3,7 @@ import { parseHTML } from 'linkedom'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -25,18 +26,18 @@ if (dom.window.Range) {
   dom.window.Range.prototype.getClientRects = () => []
 }
 
-const { applyHighlights } = await import(path.join(root, 'src/client/annotations.js'))
-const { markTerms } = await import(path.join(root, 'src/client/concepts.js'))
-const { markdownRender } = await import(path.join(root, 'src/client/markdown.js'))
-const { markdownSections } = await import(path.join(root, 'src/client/sections.js'))
-const { docFingerprint } = await import(path.join(root, 'lib/fingerprint.js'))
-const { readStore } = await import(path.join(root, 'lib/store.js'))
-const { parseSectionReply, parseOverviewReply } = await import(path.join(root, 'lib/guide.js'))
-const { buildTree, layoutTree, chunkNodeLines, mapGridVars } = await import(path.join(root, 'src/client/mindmap.js'))
-const { clampCardPosition } = await import(path.join(root, 'src/client/card-drag.js'))
-const { takeTranslationBatch, isNearViewport } = await import(path.join(root, 'src/client/translation-schedule.js'))
-const { buildTranscript, formatLocation, buildQuoteText } = await import(path.join(root, 'src/client/chat-transcript.js'))
-const { buildReadingReport, buildReaderContextPayload, buildReaderReadPayload } = await import(path.join(root, 'lib/reader-context.js'))
+const { applyHighlights } = await import(pathToFileURL(path.join(root, 'src/client/annotations.js')).href)
+const { markTerms } = await import(pathToFileURL(path.join(root, 'src/client/concepts.js')).href)
+const { markdownRender } = await import(pathToFileURL(path.join(root, 'src/client/markdown.js')).href)
+const { markdownSections } = await import(pathToFileURL(path.join(root, 'src/client/sections.js')).href)
+const { docFingerprint } = await import(pathToFileURL(path.join(root, 'lib/fingerprint.js')).href)
+const { readStore } = await import(pathToFileURL(path.join(root, 'lib/store.js')).href)
+const { parseSectionReply, parseOverviewReply } = await import(pathToFileURL(path.join(root, 'lib/guide.js')).href)
+const { buildTree, layoutTree, chunkNodeLines, mapGridVars } = await import(pathToFileURL(path.join(root, 'src/client/mindmap.js')).href)
+const { clampCardPosition } = await import(pathToFileURL(path.join(root, 'src/client/card-drag.js')).href)
+const { takeTranslationBatch, isNearViewport } = await import(pathToFileURL(path.join(root, 'src/client/translation-schedule.js')).href)
+const { buildTranscript, formatLocation, buildQuoteText } = await import(pathToFileURL(path.join(root, 'src/client/chat-transcript.js')).href)
+const { buildReadingReport, buildReaderContextPayload, buildReaderReadPayload } = await import(pathToFileURL(path.join(root, 'lib/reader-context.js')).href)
 
 function mount(html) {
   const host = document.createElement('div')

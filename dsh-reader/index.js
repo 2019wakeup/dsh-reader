@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { resolveInWorkspace } from './lib/paths.js'
+import { isInside, resolveInWorkspace, toPosix } from './lib/paths.js'
 import { createDeadline } from './lib/deadline.js'
 import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLatestBackup } from './lib/store.js'
 import { recordSent } from './lib/sent.js'
@@ -34,6 +34,7 @@ const MAX_BODY_BYTES = 20 * 1024 * 1024
 const MIME = {
   '.pdf': 'application/pdf',
   '.epub': 'application/epub+zip',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.md': 'text/markdown; charset=utf-8',
   '.markdown': 'text/markdown; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
@@ -56,6 +57,18 @@ function httpError(status, message) {
   const error = new Error(message)
   error.status = status
   return error
+}
+
+const IGNORED_ENTRY = /^(~\$.*|desktop\.ini|Thumbs\.db|\$RECYCLE\.BIN|System Volume Information)$/i
+const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+/** Map a fs error to a small JSON contract without leaking absolute paths. */
+function fileError(error) {
+  const code = error && error.code
+  if (code === 'ENOENT') return { status: 404, error: 'file not found' }
+  if (code === 'EACCES' || code === 'EPERM') return { status: 403, error: 'permission denied' }
+  if (code === 'EBUSY' || code === 'ETXTBSY') return { status: 423, error: 'file busy' }
+  return null
 }
 
 function normalizeTerm(term) {
@@ -122,14 +135,14 @@ async function listDir(cwd, dir) {
     return json({ error: 'directory unavailable' }, 404)
   }
   const rows = entries
-    .filter((entry) => !entry.name.startsWith('.'))
+    .filter((entry) => !entry.name.startsWith('.') && !IGNORED_ENTRY.test(entry.name))
     .map((entry) => ({
       name: entry.name,
       type: entry.isDirectory() ? 'dir' : 'file',
-      path: path.relative(cwd, path.join(target.abs, entry.name)),
+      path: toPosix(path.relative(cwd, path.join(target.abs, entry.name))),
     }))
-    .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
-  return json({ cwd, dir: path.relative(cwd, target.abs) || '.', entries: rows })
+    .sort((a, b) => (a.type === b.type ? NAME_COLLATOR.compare(a.name, b.name) : a.type === 'dir' ? -1 : 1))
+  return json({ cwd, dir: toPosix(path.relative(cwd, target.abs)) || '.', entries: rows })
 }
 
 async function readFile(cwd, rel) {
@@ -138,8 +151,9 @@ async function readFile(cwd, rel) {
   let stat
   try {
     stat = await fs.stat(target.abs)
-  } catch {
-    return json({ error: 'file not found' }, 404)
+  } catch (error) {
+    const mapped = fileError(error)
+    return mapped ? json({ error: mapped.error }, mapped.status) : json({ error: 'file not found' }, 404)
   }
   if (!stat.isFile()) return json({ error: 'not a file' }, 400)
   if (stat.size > MAX_FILE_BYTES) return json({ error: 'file too large' }, 413)
@@ -149,9 +163,20 @@ async function readFile(cwd, rel) {
   } catch {
     root = path.resolve(cwd)
   }
-  const real = await fs.realpath(target.abs).catch(() => null)
-  if (real && real !== root && !real.startsWith(root + path.sep)) return json({ error: 'ESCAPE' }, 403)
-  const bytes = await fs.readFile(target.abs)
+  let real
+  try {
+    real = await fs.realpath(target.abs)
+  } catch {
+    return json({ error: 'ESCAPE' }, 403)
+  }
+  if (!isInside(root, real)) return json({ error: 'ESCAPE' }, 403)
+  let bytes
+  try {
+    bytes = await fs.readFile(target.abs)
+  } catch (error) {
+    const mapped = fileError(error)
+    return mapped ? json({ error: mapped.error }, mapped.status) : json({ error: 'read failed' }, 500)
+  }
   const type = MIME[path.extname(target.abs).toLowerCase()] || 'application/octet-stream'
   return new Response(bytes, {
     headers: {
