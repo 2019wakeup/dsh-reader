@@ -32,7 +32,7 @@ PDF / EPUB / Word（.docx）/ Markdown / TXT 都在会话主区域打开；核�
 1. 下载安装 [DeepSeek 官方桌面端](https://www.deepseek.com/download/)，登录 DeepSeek 账号；
 2. 侧栏 → **插件** → **添加插件**，输入 `@2019wakeup/dsh-reader@latest`，装好后在插件详情打开「启用」，重启桌面端。
 
-> `@latest` 现在就是 0.14.0；如果习惯插件市场索引、或想固定版本，也可以按下面的步骤安装和更新。
+> `@latest` 现在就是 0.15.0；如果习惯插件市场索引、或想固定版本，也可以按下面的步骤安装和更新。
 
 ### 也可以从插件市场索引安装
 
@@ -121,7 +121,7 @@ dsh plugin --profile web add ./dsh-reader
 ## 开发
 
 ```bash
-node --test test/*.test.mjs     # 单元与冒烟测试（401 条）
+node --test test/*.test.mjs     # 单元与冒烟测试（428 条）
 node eval/run.mjs               # 产品级 eval（18 项）
 node eval/visual.mjs            # 视觉 eval（无头 Chrome，163 项检查 + 22 张像素基线）
 node eval/motion.mjs            # 动效 eval（无头 Chrome，16 项）
