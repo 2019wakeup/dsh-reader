@@ -89,6 +89,8 @@ dsh plugin --profile web add ./dsh-reader
 
 ## 读书对话
 
+![选中原文点「问 AI」，引用与选区图形进入输入框，回答在右侧对话气泡里流式出现](https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/dsh-reader/docs/demos/02-read-and-ask.gif)
+
 用一直存在的底部输入框和原生智能体聊，不另开窗口、不换会话：
 
 1. 选中正文一段，浮层点「问 AI」。原文带着书名、章节和位置进入底部输入框，抽屉自动切到「对话」页签。
