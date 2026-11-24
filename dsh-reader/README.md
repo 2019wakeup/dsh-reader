@@ -99,15 +99,14 @@ node eval/visual.mjs            # 视觉 eval（无头 Chrome，157 项检查 + 
 node eval/layout-host.mjs       # 宿主布局探针（6 项）
 node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
 node scripts/release-check.mjs  # 发布门禁（11 项）
-
-# 发布与分发
-node scripts/build-market-index.mjs   # 生成 plugin-market.json（npm 已发版时自动切到 npm 源）
-node scripts/verify-market-index.mjs  # 用 DSH 安装版校验索引格式
-node scripts/publish-check.mjs        # npm 打包与索引一致性检查
-npm publish --access public           # 需要先 npm login
 ```
 
-发布后把 `plugin-market.json` 放到公开仓库根目录（本仓库发布流程会同步），索引地址即可被用户添加。
+发布走公开仓库的 CI（`.github/workflows/release.yml`）：`NPM_TOKEN` 只存在 GitHub secret，打 tag 或手动触发工作流，带 provenance 发布，本机不留 token。发布后生成并校验市场索引：
+
+```bash
+node scripts/build-market-index.mjs   # npm 已发版时自动切到 npm 源
+node scripts/verify-market-index.mjs  # 用 DSH 安装版校验格式
+node scripts/publish-check.mjs        # npm 打包与索引一致性
 ```
 
 ## 限制
