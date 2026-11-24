@@ -1,6 +1,6 @@
 {
   "name": "@2019wakeup/dsh-reader",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "type": "module",
   "description": "Reading workspace with concept cards and in-reader conversation for DeepSeek Harness",
   "exports": {

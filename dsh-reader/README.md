@@ -22,13 +22,13 @@ DSH 的阅读插件：在会话主区域新增「阅读」视图，读工作区�
 ### 方式二：npm
 
 ```bash
-plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.0
+plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.1
 ```
 
 ### 方式三：Git 固定版本（无需 npm）
 
 ```bash
-plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.13.0&path:/dsh-reader"
+plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.13.1&path:/dsh-reader"
 ```
 
 ### 方式四：本地目录
