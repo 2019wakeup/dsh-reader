@@ -14,6 +14,7 @@ const files = [
   'src/client/sanitize.js',
   'src/client/markdown.js',
   'src/client/epub.js',
+  'src/client/docx.js',
   'src/client/pdf.js',
   'src/client/concepts.js',
   'src/client/annotations.js',

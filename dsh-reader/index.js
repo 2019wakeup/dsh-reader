@@ -34,6 +34,7 @@ const MAX_BODY_BYTES = 20 * 1024 * 1024
 const MIME = {
   '.pdf': 'application/pdf',
   '.epub': 'application/epub+zip',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.md': 'text/markdown; charset=utf-8',
   '.markdown': 'text/markdown; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',

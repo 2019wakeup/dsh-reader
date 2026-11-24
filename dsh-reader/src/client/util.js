@@ -35,7 +35,7 @@ export function normalizeTerm(value) {
   return String(value || '').trim().toLowerCase()
 }
 
-export const READABLE = new Set(['.md', '.markdown', '.txt', '.epub', '.pdf'])
+export const READABLE = new Set(['.md', '.markdown', '.txt', '.epub', '.pdf', '.docx'])
 
 export function debounce(fn, wait) {
   let timer = null
