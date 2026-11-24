@@ -121,7 +121,7 @@ dsh plugin --profile web add ./dsh-reader
 ## 开发
 
 ```bash
-node --test test/*.test.mjs     # 单元与冒烟测试（428 条）
+node --test test/*.test.mjs     # 单元与冒烟测试（429 条）
 node eval/run.mjs               # 产品级 eval（18 项）
 node eval/visual.mjs            # 视觉 eval（无头 Chrome，163 项检查 + 22 张像素基线）
 node eval/motion.mjs            # 动效 eval（无头 Chrome，16 项）

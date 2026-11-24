@@ -300,7 +300,7 @@ class ReaderBoundary extends React.Component {
                   message: this.state.error?.message,
                   stack: this.state.error?.stack,
                 })
-                if (navigator.clipboard) navigator.clipboard.writeText(text)
+                if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
               },
             },
             t('action.copyDiagnostics'),
@@ -604,6 +604,16 @@ export function ReaderView(props) {
     setToast({ message: String(message), action: action || null })
     clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(null), 4000)
+  }
+
+  const copyText = async (text) => {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(String(text || ''))
+      flash(t('label.copied'))
+    } catch {
+      flash(t('label.copyFailed'))
+    }
   }
 
   const mergeStore = (next) => {
@@ -1046,6 +1056,7 @@ export function ReaderView(props) {
 
   React.useEffect(() => {
     const onKey = (event) => {
+      if (event.isComposing) return
       const action = shortcutFor(event, { editable: isEditableTarget(event.target), pageKeys: prefs.pageKeys })
       if (action === 'undo' || action === 'redo') {
         event.preventDefault()
@@ -4735,7 +4746,7 @@ export function ReaderView(props) {
         {
           className: 'rd-btn',
           onClick: () => {
-            navigator.clipboard.writeText(menu.text)
+            copyText(menu.text)
             setMenu(null)
           },
         },

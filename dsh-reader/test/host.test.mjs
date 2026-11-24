@@ -255,6 +255,8 @@ test('lists POSIX paths and hides Windows junk files', async (t) => {
     await fs.writeFile(path.join(cwd, name), 'junk')
   }
   await fs.writeFile(path.join(cwd, 'sub', 'note.md'), '# note')
+  await fs.writeFile(path.join(cwd, '第2章.md'), '# 2')
+  await fs.writeFile(path.join(cwd, '第10章.md'), '# 10')
   const res = await call('/dsh-reader-live/api/list?sessionId=s1&dir=.')
   const body = await res.json()
   const names = body.entries.map((entry) => entry.name)
@@ -262,6 +264,8 @@ test('lists POSIX paths and hides Windows junk files', async (t) => {
     assert.ok(!names.includes(hidden), `${hidden} must not be listed`)
   }
   assert.equal(body.entries.find((entry) => entry.name === 'sub').path, 'sub')
+  const ordered = names.filter((name) => name.startsWith('第'))
+  assert.deepEqual(ordered, ['第2章.md', '第10章.md'])
   const nested = await call('/dsh-reader-live/api/list?sessionId=s1&dir=sub')
   const nestedBody = await nested.json()
   assert.equal(nestedBody.dir, 'sub')

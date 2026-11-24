@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import os from 'node:os'
 import path from 'node:path'
-import { resolveInWorkspace, toPosix } from '../lib/paths.js'
+import { isInside, resolveInWorkspace, toPosix } from '../lib/paths.js'
 
 const root = path.join(os.tmpdir(), 'reader-ws')
 
@@ -46,4 +46,11 @@ test('normalizes win32 separators for the wire format', () => {
   assert.equal(toPosix('sub\\book.md'), 'sub/book.md')
   assert.equal(toPosix('sub/book.md'), 'sub/book.md')
   assert.equal(toPosix(''), '')
+})
+
+test('contains the root and its descendants only', () => {
+  assert.equal(isInside(root, root), true)
+  assert.equal(isInside(root, path.join(root, 'book', 'ch1.md')), true)
+  assert.equal(isInside(root, path.join(root, '..', 'outside.md')), false)
+  assert.equal(isInside(root, `${root}2`), false)
 })
