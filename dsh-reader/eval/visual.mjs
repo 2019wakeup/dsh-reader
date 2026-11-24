@@ -2096,6 +2096,46 @@ async function main() {
       docxToc.join(' | ').slice(0, 80),
     )
     await page.keyboard.press('Escape')
+
+    await page.evaluate(() => {
+      const paragraph = document.querySelector('.rd-prose p')
+      const range = document.createRange()
+      range.selectNodeContents(paragraph)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    })
+    const docxMenu = await page.waitForSelector('.rd-mini', { timeout: 8000 }).then(() => true).catch(() => false)
+    record('docx selection opens the toolbar', docxMenu, '')
+    if (docxMenu) {
+      const actions = await page.$$eval('.rd-mini button', (nodes) =>
+        nodes.map((node) => `${node.textContent || ''} ${node.getAttribute('aria-label') || ''}`),
+      )
+      record(
+        'docx selection exposes explain/highlight/note',
+        actions.some((text) => text.includes('解释')) &&
+          actions.some((text) => text.includes('高亮')) &&
+          actions.some((text) => text.includes('笔记')),
+        actions.join('|').slice(0, 80),
+      )
+      await page.keyboard.press('Escape')
+    }
+
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('f')
+    await page.keyboard.up('Meta')
+    await page.waitForSelector('.rd-search input', { timeout: 8000 })
+    await page.type('.rd-search input', '结论')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(() => document.querySelectorAll('.rd-search .rd-drawer-item').length > 0, { timeout: 8000 })
+    const docxHits = await page.$$eval('.rd-search .rd-drawer-item', (nodes) => nodes.map((node) => node.textContent))
+    record('docx search hits a later chapter', docxHits.some((text) => text.includes('结论')), docxHits.join(' | ').slice(0, 80))
+    await clickAny('.rd-search .rd-drawer-item', ['结论'])
+    await page.waitForFunction(() => (document.querySelector('.rd-prose')?.textContent || '').includes('结论正文'), { timeout: 8000 }).catch(() => {})
+    const chapterTwo = await page.evaluate(() => document.querySelector('.rd-prose')?.textContent || '')
+    record('docx search jumps across chapters', chapterTwo.includes('结论正文'), chapterTwo.slice(0, 30))
+    await page.keyboard.press('Escape')
   } catch (error) {
     try {
       const dump = await page.evaluate(() => ({
