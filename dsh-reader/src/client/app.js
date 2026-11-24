@@ -30,10 +30,6 @@ const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
 const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
 const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
 
-function decodeText(bytes) {
-  return new TextDecoder('utf-8').decode(bytes)
-}
-
 function markdownImageResolver(sessionId, doc) {
   if (!sessionId || !doc || !doc.path) return undefined
   return (source) => {
@@ -4818,7 +4814,7 @@ export function ReaderView(props) {
             'div',
             { className: 'rd-help-box', onClick: (event) => event.stopPropagation() },
             h('h3', { style: { marginTop: 0 } }, t('label.shortcuts')),
-            [['← / →', t('help.paging')], ['⌘Z / ⌘⇧Z', t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
+            [['← / →', t('help.paging')], [undoLabel(), t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
               ([keys, label]) => h('div', { key: keys, className: 'rd-help-row' }, h('span', null, label), h('b', null, keys)),
             ),
           ),

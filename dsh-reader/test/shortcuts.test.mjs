@@ -31,6 +31,8 @@ test('maps undo and redo with the platform modifier', () => {
   assert.equal(shortcutFor(key('z', { metaKey: true })), 'undo')
   assert.equal(shortcutFor(key('Z', { ctrlKey: true })), 'undo')
   assert.equal(shortcutFor(key('z', { metaKey: true, shiftKey: true })), 'redo')
+  assert.equal(shortcutFor(key('y', { ctrlKey: true })), 'redo')
+  assert.equal(shortcutFor(key('Y', { ctrlKey: true })), 'redo')
 })
 
 test('maps command-f to search', () => {

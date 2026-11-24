@@ -78,6 +78,21 @@ function debounce(fn, wait) {
   }
 }
 
+/**
+ * Modifier key shown in help text for the current platform.
+ * @returns {string} `⌘` on Apple platforms, `Ctrl` elsewhere
+ */
+function modifierLabel() {
+  const platform =
+    (typeof navigator !== 'undefined' && (navigator.userAgentData?.platform || navigator.platform)) || ''
+  return /Mac|iPhone|iPad|iPod/i.test(platform) ? '⌘' : 'Ctrl'
+}
+
+/** Undo/redo hint that matches the platform modifier. */
+function undoLabel() {
+  return modifierLabel() === '⌘' ? '⌘Z / ⌘⇧Z' : 'Ctrl+Z / Ctrl+Shift+Z'
+}
+
 
 const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
 const RING_CLASS = 'rd-jump-ring'
@@ -623,6 +638,9 @@ function buildAssetQuoteSuffix(assets, t) {
 
 
 const ZH = {
+  'error.fileNotFound': '文件不存在',
+  'error.permissionDenied': '没有权限读取该文件',
+  'error.fileBusy': '文件被其他程序占用，请关闭后重试',
   'view.label': '阅读',
   'library.title': '书库',
   'library.empty': '这个目录里还没有可读的文档',
@@ -908,6 +926,9 @@ const ZH = {
 }
 
 const EN = {
+  'error.fileNotFound': 'File not found',
+  'error.permissionDenied': 'Permission denied',
+  'error.fileBusy': 'The file is in use. Close it and try again.',
   'view.label': 'Reader',
   'library.title': 'Library',
   'library.empty': 'No readable documents in this folder',
@@ -1231,6 +1252,17 @@ const EXPLAIN_TIMEOUT_MS = 100_000
 
 const timeoutText = () => (typeof t === 'function' ? t('label.timeout') : 'request timed out')
 
+const FILE_ERROR_KEYS = {
+  'file not found': 'error.fileNotFound',
+  'permission denied': 'error.permissionDenied',
+  'file busy': 'error.fileBusy',
+}
+
+function fileErrorText(code, status) {
+  const key = code && FILE_ERROR_KEYS[code]
+  return key && typeof t === 'function' ? t(key) : 'HTTP ' + status
+}
+
 /**
  * Fetch JSON from the plugin host.
  *
@@ -1270,7 +1302,10 @@ const api = {
   fetchBytes(sessionId, path) {
     const url = `${BASE}/api/file?sessionId=${encodeURIComponent(sessionId || '')}&path=${encodeURIComponent(path)}`
     return fetch(url).then(async (res) => {
-      if (!res.ok) throw new Error('HTTP ' + res.status)
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(fileErrorText(data && data.error, res.status))
+      }
       const bytes = await res.arrayBuffer()
       return { bytes, fingerprint: res.headers.get('x-doc-fingerprint') || '' }
     })
@@ -3008,6 +3043,7 @@ function shortcutFor(event, context = {}) {
   if (modifier && !event.altKey && key.toLowerCase() === 'z') {
     return event.shiftKey ? 'redo' : 'undo'
   }
+  if (modifier && !event.altKey && !event.shiftKey && key.toLowerCase() === 'y') return 'redo'
   if (modifier && !event.altKey && key.toLowerCase() === 'f') return 'search'
   if (modifier || event.altKey) return null
   if (key === 'Home') return 'start'
@@ -4179,6 +4215,43 @@ function fitHostHeight(node, viewportHeight) {
   if (Math.abs(current - available) <= 1 && node.style.height) return available
   node.style.height = `${available}px`
   return available
+}
+
+
+/**
+ * Decode a text file the way Windows users actually save them: UTF-8 (with or
+ * without BOM), UTF-16 with BOM, and the GBK/GB18030 family used by older
+ * Chinese editors. Falls back to UTF-8 replacement characters when nothing
+ * matches, so opening never blocks on encoding.
+ * @param {ArrayBuffer|Uint8Array} bytes file bytes
+ */
+function decodeText(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  if (u8.length >= 3 && u8[0] === 0xef && u8[1] === 0xbb && u8[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(u8.subarray(3))
+  }
+  if (u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(u8.subarray(2))
+  }
+  if (u8.length >= 2 && u8[0] === 0xfe && u8[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(u8.subarray(2))
+  }
+  // BOM-less UTF-16: ASCII-heavy text has a NUL in every other byte.
+  if (u8.length >= 4 && u8[1] === 0 && u8[3] === 0 && u8[0] !== 0) {
+    return new TextDecoder('utf-16le').decode(u8)
+  }
+  if (u8.length >= 4 && u8[0] === 0 && u8[2] === 0 && u8[1] !== 0) {
+    return new TextDecoder('utf-16be').decode(u8)
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(u8)
+  } catch {
+    try {
+      return new TextDecoder('gb18030').decode(u8)
+    } catch {
+      return new TextDecoder('utf-8').decode(u8)
+    }
+  }
 }
 
 
@@ -5508,10 +5581,6 @@ function writeSavedViewState(sessionId, value) {
 const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
 const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
 const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
-
-function decodeText(bytes) {
-  return new TextDecoder('utf-8').decode(bytes)
-}
 
 function markdownImageResolver(sessionId, doc) {
   if (!sessionId || !doc || !doc.path) return undefined
@@ -10297,7 +10366,7 @@ function ReaderView(props) {
             'div',
             { className: 'rd-help-box', onClick: (event) => event.stopPropagation() },
             h('h3', { style: { marginTop: 0 } }, t('label.shortcuts')),
-            [['← / →', t('help.paging')], ['⌘Z / ⌘⇧Z', t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
+            [['← / →', t('help.paging')], [undoLabel(), t('help.undo')], ['?', t('help.help')], ['Esc', t('help.close')]].map(
               ([keys, label]) => h('div', { key: keys, className: 'rd-help-row' }, h('span', null, label), h('b', null, keys)),
             ),
           ),

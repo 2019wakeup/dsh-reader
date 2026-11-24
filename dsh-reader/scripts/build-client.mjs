@@ -36,6 +36,7 @@ const files = [
   'src/client/relink.js',
   'src/client/search.js',
   'src/client/host-layout.js',
+  'src/client/text-decode.js',
   'src/client/chat-transcript.js',
   'src/client/chat-panel.js',
   'src/client/chat-context.js',

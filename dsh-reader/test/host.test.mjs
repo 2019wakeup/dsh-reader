@@ -233,10 +233,48 @@ test('does not serve html as html', async (t) => {
 })
 
 test('rejects a symlink that escapes the workspace', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('creating symlinks needs Developer Mode or elevation on Windows')
+    return
+  }
   const { cwd, call } = await setup(t)
-  await fs.symlink('/etc/hosts', path.join(cwd, 'leak.md'))
-  const res = await call('/dsh-reader-live/api/file?sessionId=s1&path=leak.md')
-  assert.equal(res.status, 403)
+  const outside = path.join(os.tmpdir(), `reader-outside-${process.pid}-${Date.now()}.md`)
+  await fs.writeFile(outside, 'secret')
+  try {
+    await fs.symlink(outside, path.join(cwd, 'leak.md'))
+    const res = await call('/dsh-reader-live/api/file?sessionId=s1&path=leak.md')
+    assert.equal(res.status, 403)
+  } finally {
+    await fs.rm(outside, { force: true })
+  }
+})
+
+test('lists POSIX paths and hides Windows junk files', async (t) => {
+  const { cwd, call } = await setup(t)
+  for (const name of ['~$draft.md', 'desktop.ini', 'Thumbs.db']) {
+    await fs.writeFile(path.join(cwd, name), 'junk')
+  }
+  await fs.writeFile(path.join(cwd, 'sub', 'note.md'), '# note')
+  const res = await call('/dsh-reader-live/api/list?sessionId=s1&dir=.')
+  const body = await res.json()
+  const names = body.entries.map((entry) => entry.name)
+  for (const hidden of ['~$draft.md', 'desktop.ini', 'Thumbs.db']) {
+    assert.ok(!names.includes(hidden), `${hidden} must not be listed`)
+  }
+  assert.equal(body.entries.find((entry) => entry.name === 'sub').path, 'sub')
+  const nested = await call('/dsh-reader-live/api/list?sessionId=s1&dir=sub')
+  const nestedBody = await nested.json()
+  assert.equal(nestedBody.dir, 'sub')
+  assert.equal(nestedBody.entries[0].path, 'sub/note.md')
+})
+
+test('reports a missing file without leaking the workspace path', async (t) => {
+  const { cwd, call } = await setup(t)
+  const res = await call('/dsh-reader-live/api/file?sessionId=s1&path=missing.md')
+  assert.equal(res.status, 404)
+  const body = await res.json()
+  assert.equal(body.error, 'file not found')
+  assert.ok(!JSON.stringify(body).includes(cwd), 'response must not contain the absolute workspace path')
 })
 
 test('explains a new concept once and reuses it afterwards', async (t) => {

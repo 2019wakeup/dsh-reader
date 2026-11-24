@@ -44,3 +44,18 @@ export function debounce(fn, wait) {
     timer = setTimeout(() => fn(...args), wait)
   }
 }
+
+/**
+ * Modifier key shown in help text for the current platform.
+ * @returns {string} `⌘` on Apple platforms, `Ctrl` elsewhere
+ */
+export function modifierLabel() {
+  const platform =
+    (typeof navigator !== 'undefined' && (navigator.userAgentData?.platform || navigator.platform)) || ''
+  return /Mac|iPhone|iPad|iPod/i.test(platform) ? '⌘' : 'Ctrl'
+}
+
+/** Undo/redo hint that matches the platform modifier. */
+export function undoLabel() {
+  return modifierLabel() === '⌘' ? '⌘Z / ⌘⇧Z' : 'Ctrl+Z / Ctrl+Shift+Z'
+}

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { writeFileAtomic } from './atomic-write.js'
 
 export const READING_DIR = '.dsh-reader'
 export const CONTEXT_FILE = 'context.json'
@@ -145,14 +146,7 @@ function enqueueContextWrite(cwd, task) {
 async function writeContextFile(cwd, context) {
   const dir = path.join(cwd, READING_DIR)
   await fs.mkdir(dir, { recursive: true })
-  const file = readingContextPath(cwd)
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  try {
-    await fs.writeFile(tmp, JSON.stringify(context, null, 2), 'utf8')
-    await fs.rename(tmp, file)
-  } finally {
-    await fs.rm(tmp, { force: true }).catch(() => {})
-  }
+  await writeFileAtomic(readingContextPath(cwd), JSON.stringify(context, null, 2))
 }
 
 /**
