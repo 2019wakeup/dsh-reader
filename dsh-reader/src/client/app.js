@@ -2012,7 +2012,23 @@ export function ReaderView(props) {
     setSearchBusy(true)
     setSearchDone(false)
     try {
-      if (doc.ext === '.pdf' && doc.pdf) {
+      if (doc.ext === '.docx' && doc.docx) {
+        const chapters = doc.docx.chapters || []
+        const results = []
+        const needle = query.toLowerCase()
+        for (const [index, chapter] of chapters.entries()) {
+          const text = String(chapter.text || '')
+          for (const hit of searchText(text, query, 50 - results.length)) {
+            results.push({
+              ...hit,
+              chapter: index,
+              occurrence: text.slice(0, hit.index).toLowerCase().split(needle).length - 1,
+            })
+          }
+          if (results.length >= 50) break
+        }
+        setSearchResults(results)
+      } else if (doc.ext === '.pdf' && doc.pdf) {
         const results = []
         for (let pageNumber = 1; pageNumber <= doc.pdf.numPages && results.length < 50; pageNumber += 1) {
           const page = await doc.pdf.doc.getPage(pageNumber)
@@ -2047,15 +2063,23 @@ export function ReaderView(props) {
       jumpToPdfPage(result.page)
       return
     }
-    const root = contentRef.current
-    if (!root) return
-    const found = findQuoteRange(root, searchQuery.trim(), result.occurrence || 0)
-    if (found) {
-      const node = found.range.startContainer
-      const element = node.nodeType === 3 ? node.parentElement : node
-      if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
-      pulseRange(found.range, pulseOptions())
+    const reveal = () => {
+      const root = contentRef.current
+      if (!root) return
+      const found = findQuoteRange(root, searchQuery.trim(), result.occurrence || 0)
+      if (found) {
+        const node = found.range.startContainer
+        const element = node.nodeType === 3 ? node.parentElement : node
+        if (element && element.scrollIntoView) element.scrollIntoView({ block: 'center' })
+        pulseRange(found.range, pulseOptions())
+      }
     }
+    if (doc?.ext === '.docx' && Number.isFinite(result.chapter) && result.chapter !== chapter) {
+      goChapter(result.chapter, 'top')
+      requestAnimationFrame(() => requestAnimationFrame(reveal))
+      return
+    }
+    reveal()
   }
 
   const renderSelectionTranslation = () => {

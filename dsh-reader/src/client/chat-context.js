@@ -29,7 +29,9 @@ export function currentPosition(doc, state = {}) {
   const ext = String(doc.ext || '')
   const name = String(doc.name || '')
   const path = String(doc.path || '')
-  const chapters = doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null
+  const chapters =
+    (doc.docx && Array.isArray(doc.docx.chapters) && doc.docx.chapters) ||
+    (doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null)
   const isPdf = ext === '.pdf' || /\.pdf$/i.test(name)
   if (isPdf) {
     const totalPages = doc.pdf ? Number(doc.pdf.numPages) : NaN
@@ -174,8 +176,10 @@ export async function buildContextWindow(doc, state = {}) {
     if (pages.length === 0) return null
     text = parts.join('\n\n')
     title = `${name} · 第 ${pages[0] === pages[pages.length - 1] ? pages[0] : `${pages[0]}-${pages[pages.length - 1]}`} 页`
-  } else if (ext === '.epub') {
-    const chapters = doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null
+  } else if (ext === '.epub' || ext === '.docx') {
+    const chapters =
+    (doc.docx && Array.isArray(doc.docx.chapters) && doc.docx.chapters) ||
+    (doc.epub && Array.isArray(doc.epub.chapters) ? doc.epub.chapters : null)
     if (!chapters) return null
     const requestedChapter = Number(known.chapter)
     const index = Number.isFinite(requestedChapter) && requestedChapter > 0 ? Math.floor(requestedChapter) : 0

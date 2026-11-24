@@ -31,6 +31,32 @@ test('currentPosition 输出 EPUB 章节与百分比', () => {
   assert.equal(position.total, 0)
 })
 
+test('currentPosition 输出 docx 章节且不带页码', () => {
+  const doc = {
+    name: '报告.docx',
+    ext: '.docx',
+    path: '报告.docx',
+    docx: { chapters: [{ label: '第一章' }, { label: '第二章' }] },
+  }
+  const position = currentPosition(doc, { chapter: 1, percent: 60 })
+  assert.equal(position.chapter, 1)
+  assert.equal(position.chapterTitle, '第二章')
+  assert.equal(position.page, 0)
+  assert.equal(position.percent, 60)
+})
+
+test('buildContextWindow 读取 docx 当前章节', async () => {
+  const doc = {
+    name: '报告.docx',
+    ext: '.docx',
+    path: '报告.docx',
+    docx: { chapters: [{ label: '第一章', html: '<h1>第一章</h1><p>正文内容</p>' }] },
+  }
+  const window = await buildContextWindow(doc, { chapter: 0 })
+  assert.match(window.title, /第一章/)
+  assert.match(window.text, /正文内容/)
+})
+
 test('currentPosition 缺字段兜底并夹取百分比', () => {
   assert.equal(currentPosition(null), null)
   const plain = currentPosition({ name: '书.md', ext: '.md' }, {})
