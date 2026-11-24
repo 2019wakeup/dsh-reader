@@ -1,0 +1,91 @@
+{
+  "format": 1,
+  "title": {
+    "zh": "砚读 · DSH 阅读插件",
+    "en": "Yandu · DSH Reader"
+  },
+  "description": {
+    "zh": "在 DSH 里读 PDF / EPUB / Markdown，概念卡与原生对话连着读。",
+    "en": "Read PDF, EPUB and Markdown in DSH with concept cards and an in-reader conversation panel."
+  },
+  "metadata": {
+    "categories": {
+      "reading": {
+        "title": {
+          "zh": "阅读",
+          "en": "Reading"
+        }
+      }
+    },
+    "labels": {
+      "bilingual": {
+        "title": {
+          "zh": "中英双语",
+          "en": "Bilingual"
+        }
+      },
+      "conversation": {
+        "title": {
+          "zh": "边读边聊",
+          "en": "Read and chat"
+        }
+      }
+    },
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "@2019wakeup/dsh-reader",
+      "title": {
+        "zh": "阅读",
+        "en": "Reader"
+      },
+      "description": {
+        "zh": "在主区域阅读 PDF、EPUB 与 Markdown，划词高亮或让模型解释概念；保存过的概念在正文中悬停即可浮现，不打断阅读。",
+        "en": "Read PDF, EPUB and Markdown in the main area. Highlight text, ask the model to explain a concept, and hover a saved concept to recall it without leaving the page."
+      },
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzFmNmZlYiIvPgogIDxwYXRoIGQ9Ik0xOCAxNmgxMWE1IDUgMCAwIDEgNSA1djI3YTQgNCAwIDAgMC00LTRIMTh6IiBmaWxsPSIjZmZmIiBvcGFjaXR5PSIwLjk1Ii8+CiAgPHBhdGggZD0iTTQ2IDE2SDM1YTUgNSAwIDAgMC01IDV2MjdhNCA0IDAgMCAxIDQtNGgxMnoiIGZpbGw9IiNmZmYiIG9wYWNpdHk9IjAuNzUiLz4KICA8Y2lyY2xlIGN4PSI0NiIgY3k9IjQ0IiByPSI5IiBmaWxsPSIjZjJjOTRjIi8+CiAgPHBhdGggZD0iTTQyLjUgNDRsMi40IDIuNCA0LjYtNSIgc3Ryb2tlPSIjMWYzYjY2IiBzdHJva2Utd2lkdGg9IjIuMiIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
+      "author": "2019wakeup",
+      "homepage": "https://github.com/2019wakeup/dsh-reader",
+      "repository": {
+        "url": "https://github.com/2019wakeup/dsh-reader",
+        "directory": "dsh-reader"
+      },
+      "metadata": {
+        "category": "reading",
+        "keywords": [
+          "dsh",
+          "deepseek",
+          "deepseek-harness",
+          "plugin",
+          "reader",
+          "pdf",
+          "epub",
+          "markdown",
+          "reading",
+          "annotations"
+        ],
+        "labels": [
+          "bilingual",
+          "conversation"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.13.0",
+          "publishTimestamp": 1795489487,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/2019wakeup/dsh-reader.git",
+            "commit": "df20e905117c9d80b4c1bf4363dc7bf23768e53f",
+            "path": "dsh-reader"
+          },
+          "engines": {
+            "dsh": ">=0.2.2-rc.5 <0.3.0-0"
+          }
+        }
+      ]
+    }
+  ]
+}
