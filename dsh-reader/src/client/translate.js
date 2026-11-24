@@ -9,7 +9,7 @@ export { normalizeBlockText, blockHash }
 export function buildTranslatedHtml(html, resolve) {
   const container = document.createElement('div')
   container.innerHTML = String(html || '')
-  for (const node of container.querySelectorAll('p, li, blockquote, h2, h3, h4, td, pre')) {
+  for (const node of container.querySelectorAll('p, li, blockquote, h2, h3, h4, pre')) {
     if (node.closest('.rd-card, .rd-trans')) continue
     const text = normalizeBlockText(node.textContent)
     if (!text) continue

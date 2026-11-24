@@ -169,6 +169,12 @@ export function loadMammoth(src = MAMMOTH_URL) {
  */
 export async function docxOpen(bytes, options = {}) {
   const files = await unzip(bytes)
+  if (files.size > 5000) throw new Error('docx has too many parts')
+  if (!files.has('word/document.xml')) throw new Error('docx is missing word/document.xml')
+  // Inflating the main part first enforces the 40MB per-entry budget before
+  // mammoth expands the whole archive.
+  const documentXml = await zipText(files, 'word/document.xml')
+  if (documentXml.length > 20 * 1024 * 1024) throw new Error('docx document is too large')
   const styles = files.has('word/styles.xml') ? parseStyleOutline(await zipText(files, 'word/styles.xml')) : []
   const engine = options.mammoth || (await (options.loadMammoth || loadMammoth)())
   if (!engine || typeof engine.convertToHtml !== 'function') throw new Error('docx parser unavailable')

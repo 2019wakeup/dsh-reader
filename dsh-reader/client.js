@@ -2635,6 +2635,12 @@ function loadMammoth(src = MAMMOTH_URL) {
  */
 async function docxOpen(bytes, options = {}) {
   const files = await unzip(bytes)
+  if (files.size > 5000) throw new Error('docx has too many parts')
+  if (!files.has('word/document.xml')) throw new Error('docx is missing word/document.xml')
+  // Inflating the main part first enforces the 40MB per-entry budget before
+  // mammoth expands the whole archive.
+  const documentXml = await zipText(files, 'word/document.xml')
+  if (documentXml.length > 20 * 1024 * 1024) throw new Error('docx document is too large')
   const styles = files.has('word/styles.xml') ? parseStyleOutline(await zipText(files, 'word/styles.xml')) : []
   const engine = options.mammoth || (await (options.loadMammoth || loadMammoth)())
   if (!engine || typeof engine.convertToHtml !== 'function') throw new Error('docx parser unavailable')
@@ -3827,7 +3833,7 @@ function panelPosition(input) {
 function buildTranslatedHtml(html, resolve) {
   const container = document.createElement('div')
   container.innerHTML = String(html || '')
-  for (const node of container.querySelectorAll('p, li, blockquote, h2, h3, h4, td, pre')) {
+  for (const node of container.querySelectorAll('p, li, blockquote, h2, h3, h4, pre')) {
     if (node.closest('.rd-card, .rd-trans')) continue
     const text = normalizeBlockText(node.textContent)
     if (!text) continue
@@ -7954,7 +7960,7 @@ function ReaderView(props) {
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')
+    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
     const blocks = []
     const seen = new Set()
     for (const node of nodes) {

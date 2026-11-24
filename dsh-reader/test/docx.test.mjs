@@ -99,6 +99,12 @@ test('splits h1 chapters, wraps tables and drops TOC leaders', () => {
   assert.deepEqual(outline.map((item) => item.level), [1, 2, 1])
 })
 
+test('rejects a zip without word/document.xml', async () => {
+  const docx = zipBytes([['word/styles.xml', STYLES]])
+  const engine = { convertToHtml: async () => ({ value: '<p>x</p>' }) }
+  await assert.rejects(docxOpen(docx, { mammoth: engine }), /word\/document.xml/)
+})
+
 test('opens a docx through an injected mammoth engine', async () => {
   const docx = zipBytes([
     [

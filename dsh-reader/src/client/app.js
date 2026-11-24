@@ -2202,7 +2202,7 @@ export function ReaderView(props) {
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')
+    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
     const blocks = []
     const seen = new Set()
     for (const node of nodes) {
