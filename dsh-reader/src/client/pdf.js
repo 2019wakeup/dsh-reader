@@ -40,7 +40,7 @@ export async function pdfOpen(bytes) {
 export async function pdfRenderPage(pdf, pageNumber, canvas, layer, scale, onTask) {
   const page = await pdf.doc.getPage(pageNumber)
   const viewport = page.getViewport({ scale })
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const dpr = Math.min(window.devicePixelRatio || 1, 3)
   canvas.width = Math.floor(viewport.width * dpr)
   canvas.height = Math.floor(viewport.height * dpr)
   canvas.style.width = viewport.width + 'px'
@@ -67,6 +67,7 @@ export async function pdfRenderPage(pdf, pageNumber, canvas, layer, scale, onTas
     span.style.left = tx[4] + 'px'
     span.style.top = tx[5] - height + 'px'
     span.style.fontSize = height + 'px'
+    span.style.fontFamily = 'Arial, "Microsoft YaHei", sans-serif'
     layer.appendChild(span)
     const expected = (item.width || 0) * viewport.scale
     const actual = span.getBoundingClientRect().width

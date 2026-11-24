@@ -53,7 +53,8 @@ export function hostAvailableHeight(node, viewportHeight) {
     if (clips) {
       const rect = parent.getBoundingClientRect()
       const padBottom = parseFloat(style.paddingBottom) || 0
-      const candidate = rect.bottom - padBottom
+      const scrollbar = Math.max(0, (parent.offsetHeight || 0) - (parent.clientHeight || 0))
+      const candidate = rect.bottom - padBottom - scrollbar
       if (candidate > 0 && candidate < bottom) bottom = candidate
       // The nearest scroll container already bounds everything above it.
       if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {

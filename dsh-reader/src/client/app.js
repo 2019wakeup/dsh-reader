@@ -849,6 +849,27 @@ export function ReaderView(props) {
     return root ? root.closest('.rd-main') || root.parentElement : null
   }
 
+  // Ctrl+wheel is the Windows pinch/zoom gesture. Keep it inside the reader
+  // instead of letting Chromium scale the whole DSH window.
+  React.useEffect(() => {
+    if (!doc) return undefined
+    const main = readingScroller()
+    if (!main) return undefined
+    const onWheel = (event) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      const direction = event.deltaY < 0 ? 1 : -1
+      if (doc.ext === '.pdf') {
+        setZoom((current) => Math.min(2.5, Math.max(0.6, +(current + direction * 0.15).toFixed(2))))
+      } else {
+        const current = Number(prefs.fontSize) || 18
+        changePrefs({ fontSize: Math.min(26, Math.max(14, current + direction)) })
+      }
+    }
+    main.addEventListener('wheel', onWheel, { passive: false })
+    return () => main.removeEventListener('wheel', onWheel)
+  }, [doc && doc.path, doc && doc.ext, prefs.fontSize])
+
   // Title of the chapter/section currently on screen, used for quote locations.
   const docChapterTitle = () => {
     if (!doc) return ''
