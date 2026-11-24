@@ -6,7 +6,7 @@ const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>')
 globalThis.document = dom.window.document
 globalThis.DOMParser = dom.window.DOMParser
 
-const { parseStyleOutline, styleMapFor, sanitizeDocxHtml, splitDocxChapters, docxOpen } = await import('../src/client/docx.js')
+const { parseStyleOutline, parseCodeStyles, styleMapFor, sanitizeDocxHtml, splitDocxChapters, docxOpen } = await import('../src/client/docx.js')
 
 function zipBytes(entries) {
   const enc = new TextEncoder()
@@ -77,6 +77,12 @@ test('reads heading levels from names and outlineLvl', () => {
     { styleId: 'Heading2', name: 'heading 2', level: 2 },
   ])
   assert.deepEqual(styleMapFor(styles), ["p[style-name='标题 1'] => h1", "p[style-name='heading 2'] => h2"])
+})
+
+test('maps code styles to pre without touching headings', () => {
+  const styles = `<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Code"><w:name w:val="HTML Preformatted"/></w:style></w:styles>`
+  assert.deepEqual(parseCodeStyles(styles), ['HTML Preformatted'])
+  assert.deepEqual(styleMapFor([], parseCodeStyles(styles)), ["p[style-name='HTML Preformatted'] => pre"])
 })
 
 test('sanitizes scripts and unsafe urls', () => {

@@ -2518,12 +2518,34 @@ function parseStyleOutline(stylesXml) {
   return styles
 }
 
+const CODE_STYLE = /^(html preformatted|preformatted text|代码|代码块|源代码)$/i
+
 /**
- * Build mammoth style-map entries for the discovered heading styles.
- * @param {Array<{name: string, level: number}>} styles
+ * Collect paragraph style names that should render as a code block.
+ * @param {string} stylesXml contents of word/styles.xml
  */
-function styleMapFor(styles) {
-  return (styles || []).map(({ name, level }) => `p[style-name='${String(name).replace(/'/g, "\\'")}'] => h${level}`)
+function parseCodeStyles(stylesXml) {
+  if (!stylesXml || typeof DOMParser === 'undefined') return []
+  const parsed = new DOMParser().parseFromString(stylesXml, 'application/xml')
+  if (parsed.querySelector('parsererror')) return []
+  const names = []
+  for (const style of descendants(parsed, 'style')) {
+    if ((attr(style, 'type') || '').toLowerCase() !== 'paragraph') continue
+    const name = attr(descendants(style, 'name')[0], 'val')
+    if (name && CODE_STYLE.test(name.trim())) names.push(name.trim())
+  }
+  return names
+}
+
+/**
+ * Build mammoth style-map entries for headings and code styles.
+ * @param {Array<{name: string, level: number}>} styles
+ * @param {string[]} [codeStyles]
+ */
+function styleMapFor(styles, codeStyles = []) {
+  const map = (styles || []).map(({ name, level }) => `p[style-name='${String(name).replace(/'/g, "\\'")}'] => h${level}`)
+  for (const name of codeStyles) map.push(`p[style-name='${String(name).replace(/'/g, "\\'")}'] => pre`)
+  return map
 }
 
 function wrapTables(root) {
@@ -2642,7 +2664,9 @@ async function docxOpen(bytes, options = {}) {
   // mammoth expands the whole archive.
   const documentXml = await zipText(files, 'word/document.xml')
   if (documentXml.length > 20 * 1024 * 1024) throw new Error('docx document is too large')
-  const styles = files.has('word/styles.xml') ? parseStyleOutline(await zipText(files, 'word/styles.xml')) : []
+  const stylesXml = files.has('word/styles.xml') ? await zipText(files, 'word/styles.xml') : ''
+  const styles = stylesXml ? parseStyleOutline(stylesXml) : []
+  const codeStyles = stylesXml ? parseCodeStyles(stylesXml) : []
   const engine = options.mammoth || (await (options.loadMammoth || loadMammoth)())
   if (!engine || typeof engine.convertToHtml !== 'function') throw new Error('docx parser unavailable')
   const assets = []
@@ -2658,7 +2682,7 @@ async function docxOpen(bytes, options = {}) {
         })
       : undefined
   const arrayBuffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)
-  const result = await engine.convertToHtml({ arrayBuffer }, { styleMap: styleMapFor(styles), convertImage })
+  const result = await engine.convertToHtml({ arrayBuffer }, { styleMap: styleMapFor(styles, codeStyles), convertImage })
   const clean = sanitizeDocxHtml(result && result.value)
   const { chapters, outline } = splitDocxChapters(clean)
   if (chapters.length === 0) throw new Error('empty docx')
