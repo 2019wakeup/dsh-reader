@@ -1,53 +1,31 @@
 # 砚读 · DSH Reader
 
-在 DeepSeek Harness 的工作区里读 PDF、EPUB 和 Markdown。主要用在论文、技术文档、新领域入门和系统学习：阅读保持连续，遇到问题在原文处解决，解释和笔记沉淀成可以再次使用的概念卡。
+在 DeepSeek Harness 的工作区里读 PDF、EPUB 和 Markdown。阅读保持连续，问题在原位解决，解决结果留在书里。
 
-需要更长的对话时，选中原文点「问 AI」，引用直接进入 DSH 底部的原生输入框；回答实时流回阅读器右侧的「对话」页签，逐层追问不用离开书页。
+读一本难书时，打断阅读的往往不是阅读本身：遇到一个词，切到聊天窗口提问；得到回答，再切回来；读到下一段发现还要补充，于是又开一个会话。人回来了，上下文已经散了。
+
+砚读把这些环节放回书页。划词就能解释、翻译、记笔记，解释沉淀成可以复用的概念卡；需要工具、联网或更多轮推演时，选中原文交给当前会话的原生智能体，回答就在书页旁边流出来。
 
 ![CI](https://github.com/2019wakeup/dsh-reader/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Status](https://img.shields.io/badge/status-1.0%20RC-orange)
 
-![概念卡](dsh-reader/eval/visual/baseline/03b-card-hover.png)
+![选中原文点「问 AI」，引用进入输入框，回答在右侧「对话」页签里逐字流出](dsh-reader/docs/demos/02-read-and-ask.gif)
 
-## 先看三个 10 秒动图
+*选中一段原文点「问 AI」：引用带着书名、章节和位置进入 DSH 底部输入框，回答逐字流进右侧「对话」页签。*
 
-三条动线各一条 GIF，覆盖阅读时最常用的操作。动图不是录屏，而是用仓库里的 [`dsh-reader/demo/`](dsh-reader/demo/)（Remotion）逐帧渲染出来的；改了 UI 重跑 `npm run render` 即可更新。
+## 一条原则：阅读保持连续
 
-**划词即解释，概念自动归档**
-
-![划词 → 解释 → 概念卡](dsh-reader/docs/demos/01-select-explain.gif)
-
-选中正文里的词点「解释」，概念卡原地浮出；同一概念的其他出现处变成虚线下划线，之后悬停即可再看。
-
-**边读边问，不用离开书页**
-
-![引用原文 → 问 AI → 对话页签流式回答](dsh-reader/docs/demos/02-read-and-ask.gif)
-
-选中一段原文点「问 AI」，引用带着书名、章节和位置进入底部输入框；回答逐字流进右侧「对话」页签，工具步骤折叠成「过程」。
-
-**长书导读：一本书，一张导图**
-
-![导读 → 思维导图 → 节点跳回原文](dsh-reader/docs/demos/03-guide-mindmap.gif)
-
-「导读」生成章节摘要与全书主旨；「导图」给出书 → 篇 → 节，点节点跳回原文，可导出 SVG / PNG / Markdown。
-
-## 一个设计目标：让阅读保持连续
-
-读一本难书时，打断阅读的时刻通常来自解决问题的方式：遇到一个词，切到聊天窗口提问；得到一个回答，再切回来；读到下一段，发现还需要补充，于是又开一个会话。人回来了，上下文已经散了。
-
-砚读围绕一个目标设计：**阅读保持连续，问题在原位解决，解决结果留在书里。**
-
-由此形成四条产品原则：
+正文保留原位，浮窗不抢焦点；目录、搜索、导读和对话都从阅读器旁边展开，关掉之后还停在原来那段。由此形成四条产品原则：
 
 1. **阅读优先**：浮窗贴着选区出现，键盘和滚动仍由正文掌握；选词、翻页、关闭浮层的路径保持连贯。
 2. **原文处解决**：选词后直接出现解释、翻译和笔记工具；概念卡、追问、父子概念都从当前词附近的原文出发。
-3. **结果可沉淀**：解释自动保存为概念卡，记录出现位置；下次遇到同一概念直接复用，跨书也能累积“本书用法”。
+3. **结果可沉淀**：解释自动保存为概念卡，记录出现位置；下次遇到同一概念直接复用，跨书也能累积「本书用法」。
 4. **导航放在阅读旁边**：目录、搜索、导读和导图以侧栏或全屏浮层展开，阅读器始终停留在当前段落。
 
-## 核心功能：概念卡
+## 概念卡：解释留在原文旁边
 
-概念卡是这套设计的中心。它同时承担解释、追问、关联和记忆。
+![划词 → 解释 → 概念卡原地浮出](dsh-reader/docs/demos/01-select-explain.gif)
 
 ### 划词即解释
 
@@ -58,7 +36,7 @@
 解释成功后，概念自动写入当前工作区的概念库：
 
 - 记录**出现位置**，点一下就能回到原文；
-- 卡片可以固定、独立拖动、编辑、合并；叠加时每张卡单独响应指针。
+- 卡片可以固定、独立拖动、编辑、合并；叠加时每张卡单独响应指针；
 - 同一概念在第二本书里再次遇到时，追加「本书用法」，原有解释保留；
 - 概念库支持按本书/全部筛选，也可以从卡片直接定位。
 
@@ -68,34 +46,32 @@
 
 概念卡支持边读边问：读到哪、问到哪里，卡片就长到哪里。
 
-## 和原生对话连着读
+## 需要工具和联网时，把原文交给原生对话
 
 卡片内追问适合解决一个概念；需要工具、联网、会话记忆或多轮推演时，直接把原文交给原生对话。
 
-选中正文点「问 AI」，这段文字带着书名、章节和位置进入底部输入框，回车即由当前会话的智能体回答。回答逐字流进右侧「对话」页签：用户消息右对齐、标「你」，助手回答左对齐、标「助手」，引用的出处单独一行。同一轮里模型可能分多步调用工具，面板把它们合并成一条回答，只显示这一轮的正文和一行「过程 · N」，纯工具步骤不单独占行；展开先看到动作名，思考内容再点一级才展开，和原生对话页一致。
+选中正文点「问 AI」，这段文字带着书名、章节和位置进入底部输入框，回车即由当前会话的智能体回答。回答逐字流进右侧「对话」页签：用户消息右对齐、标「你」，助手回答左对齐、标「助手」，引用的出处单独一行。
 
-追问沿用同一个会话：再选一段、在面板里选词再引用，或者直接打字都可以。面板可以拖宽（默认 420px），也可以一键「在对话页打开」回到完整对话页。智能体还能通过 `reader_context` / `reader_read` 读到当前阅读位置附近的原文，回答不必依赖用户复制长段。
+同一轮里模型可能分多步调用工具，面板把它们合并成一条回答，只显示这一轮的正文和一行「过程 · N」，纯工具步骤不单独占行；展开先看到动作名，思考内容再点一级才展开，和原生对话页一致。
 
-![对话面板](dsh-reader/eval/visual/baseline/16-chat-panel.png)
+追问沿用同一个会话：再选一段、在面板里选词再引用，或者直接打字都可以。面板可以拖宽，也可以一键「在对话页打开」回到完整对话页。智能体还能通过 `reader_context` / `reader_read` 读到当前阅读位置附近的原文，回答不必依赖用户复制长段。
 
-## 阅读的其他环节
+## 长书先建立结构
 
-概念卡和对话之外，阅读本身还需要标注、导航和翻译。
-
-### 标注与笔记
-
-四色高亮、笔记、撤销/重做；跨粗体、代码的高亮会按段拆开；原文变化导致锚点失效时会给出提示。标注和概念一样写入工作区，随文件保留。
-
-### 导读与思维导图
+![导读 → 导图 → 点节点跳回原文](dsh-reader/docs/demos/03-guide-mindmap.gif)
 
 长书先恢复结构，再生成导读：
 
 - PDF 优先读取内嵌书签，书签损坏时按标题字号和层级恢复章节；
 - 按「段 → 篇 → 全书」分层归约，提供快速和标准两档成本；
-- 思维导图默认展开到章级，点击展开分片；支持缩放、拖拽、全屏和导出；
-- 点击导图节点可以查看该章摘要、要点，并跳回原文。
+- 思维导图给出「书 → 篇 → 节」的骨架，支持缩放、拖拽、全屏和导出；
+- 点击导图节点可以查看该章摘要、要点，并跳回原文位置。
 
-![思维导图](dsh-reader/eval/visual/baseline/05-mindmap.png)
+## 标注、翻译与检索
+
+### 标注与笔记
+
+四色高亮、笔记、撤销/重做；跨粗体、代码的高亮会按段拆开；原文变化导致锚点失效时会给出提示。标注和概念一样写入工作区，随文件保留。
 
 ### 翻译
 
@@ -131,6 +107,8 @@
 
 课程材料、行业报告、技术书都适合用这套流程：读的时候解决问题，读完留下可检索的概念和标注。
 
+这些场景都要求阅读保持连续：问题在原文旁解决，结果留在书里，下一次还能找到。
+
 ## 一次阅读会话
 
 | 步骤 | 会看到什么 |
@@ -144,117 +122,22 @@
 | 外文 | 段落对照、仅译文或 PDF 译文抽屉，按可见区域渐进 |
 | 收尾 | 概念库、标注 Markdown、导图导出、JSON 备份 |
 
-![导读](dsh-reader/eval/visual/baseline/04-guide.png)
+## 装上试试
 
-## 共同点
+在 DSH 的「插件 → 发现」里添加索引：
 
-这些场景都要求阅读保持连续：问题在原文旁解决，结果留在书里，下一次还能找到。
-
-**暂未覆盖**：扫描版 PDF（没有文本层，无法划词）、固定版式 EPUB（FXL）、手机端阅读。
-
-## 安装
-
-前置：DSH 桌面版。
-
-### 方式一：插件市场索引（推荐）
-
-1. 插件页启用「实验性插件 → 自定义插件索引」；
-2. 打开「发现」，添加索引地址：
-
-   ```
-   https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json
-   ```
-3. 找到「砚读 · DSH 阅读插件」安装；之后有新版本会显示更新。
-
-### 方式二：npm
-
-```bash
-plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.1
+```
+https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json
 ```
 
-### 方式三：Git 固定版本（无需 npm）
+找到「砚读 · DSH 阅读插件」安装；也可以直接 `plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.1`。安装后刷新页面，在任意会话顶部切到「阅读」。工作区自带三份试读素材。
 
-```bash
-plugin_manager install_bundle "git+https://github.com/2019wakeup/dsh-reader.git#v0.13.1&path:/dsh-reader"
-```
+更细的安装方式、快捷键、数据结构与限制见 [dsh-reader/README.md](dsh-reader/README.md)。
 
-### 方式四：本地目录
+## 边界
 
-```bash
-# 在 DSH Web GUI 的插件页添加本地目录 dsh-reader/
-# 或由 agent 调用 plugin_manager，target 为本仓库 dsh-reader/ 的绝对路径
-```
+扫描版 PDF（没有文本层）不能划词；固定版式 EPUB（FXL）不支持；段落对照翻译、概念图谱和移动端尚未包含。解释、导读和追问需要 DSH 已配置可用模型。
 
-安装后刷新页面，在会话顶部切换到「阅读」。仓库自带 Markdown、EPUB、PDF 三份示例书。
+---
 
-## 数据与隐私
-
-- 标注、概念、导读、译文保存在当前工作区 `.dsh-reader/store.json`，无遥测；
-- 对话消息不写进插件数据：面板只读当前会话的对话快照，消息由 DSH 会话日志保存；阅读位置与窗口文本存在 `.dsh-reader/context.json`，位置摘要写进 `store.json` 的 `reading` 字段；
-- 文档以内容指纹为主键，改名、移动后标注仍然有效；
-- 写入前自动备份最近 5 份，支持恢复；v1 数据自动迁移；
-- JSON 导入导出、标注 Markdown 导出；
-- 解释、导读、追问、翻译使用 DSH 中配置的模型；联网搜索只在追问时显式开启。
-
-## 开发与验证
-
-```bash
-cd dsh-reader
-pnpm install
-pnpm build            # 生成 client.js
-pnpm test             # 353 条单元/DOM 测试
-pnpm eval             # 17 项产品级 eval
-pnpm eval:visual      # 157 项视觉检查（需要 DSH GUI + Chrome）
-pnpm release:check    # 11 项发布门禁
-```
-
-| 门禁 | 数量 |
-| --- | --- |
-| 单元 / DOM 测试 | 353 |
-| 产品级 eval | 17 |
-| 视觉回归（无头 Chrome + 真实鼠标交互） | 157 |
-| 宿主布局探针 | 6 |
-| 发布检查（迁移、导出回环、资产、文档） | 11 |
-
-真书 dogfood 覆盖 523 页 PDF 与 27 章 EPUB 的渲染、目录、翻译、快速导读和导图。
-
-## 项目结构
-
-```text
-docs/              PRD、开发手册、发布说明、验收清单、设计说明
-dsh-reader/        插件本体
-  index.js         Host 路由（store / explain / guide / translate / ask）
-  lib/             store、迁移、提示词、guide/translate 解析、调用死线
-  src/client/      阅读器界面（React，构建为 client.js）
-  test/            单元 / DOM 测试
-  eval/            产品 eval、视觉基线、宿主布局探针
-  scripts/         构建、迁移演练、视觉与发布门禁
-```
-
-## 已知限制
-
-- 划词依赖文本层：扫描版 PDF 和固定版式 EPUB（FXL）暂不支持；
-- PDF 章节恢复使用排版启发式，书签损坏时章节边界可能与原书目录有差异；
-- 快速导读按篇采样，每篇取头尾代表性文本，部分小节可能省略；
-- 「仅译文」模式用于译文阅读；需要划词时请切回段落对照；
-- 段落对照翻译保留代码块原文；PDF 译文按页文本块，图注也会被翻译；
-- 对话面板只展示文字问答；工具调用与推理默认折叠，审批、提问等需要操作的轮次仍需回到完整对话页；
-- `reader_read` 只读最近一次上报的窗口（PDF 当前页前后、文本类书当前滚动位置附近），跨章与全书检索暂不提供；
-- 移动端未适配，阅读区按 DSH 主区域布局。
-
-## 文档
-
-- [设计说明](docs/亮点与技术设计.md)
-- [1.0 需求与决策](docs/PRD-v1.0-阅读工作台.md)
-- [1.0 开发手册](docs/1.0-开发手册.md)
-- [1.0 发布说明](docs/1.0-发布说明.md)
-- [1.0 验收清单](docs/1.0-验收清单.md)
-- [DoD 对照表](docs/1.0-DoD-对照表.md)
-
-## English
-
-DSH Reader is a reading workspace plugin for DeepSeek Harness, built for papers, technical documentation and learning a new field. It keeps reading continuous: select a term to get an in-place explanation, follow up without leaving the page, and keep the result as a reusable concept card anchored to the source text. PDF, EPUB and Markdown reading, structure-aware guides, mind maps and visible-first translation are built around that workflow. Select a passage and Ask AI sends it into the native DSH composer; answers stream into a reading-side chat panel, so you can keep asking without leaving the page. Reading data stays in the workspace `.dsh-reader/` store. Status: 1.0 release candidate (plugin 0.13.0).
-
-## License
-
-[MIT](LICENSE)
+*README 里的动图由 [dsh-reader/demo/](dsh-reader/demo/) 里的 Remotion 工程渲染。*

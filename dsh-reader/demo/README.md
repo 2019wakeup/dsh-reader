@@ -1,12 +1,12 @@
 # dsh-reader · README 演示动图
 
-README 顶部的三个演示 GIF 由这个目录的 [Remotion](https://www.remotion.dev/) 工程生成。三条片子各 8–9 秒，把阅读插件的三条核心动线拆成「一次只讲一个卖点」的小动画：
+仓库根 README 里的三个演示 GIF 由这个目录的 [Remotion](https://www.remotion.dev/) 工程生成。三条片子各 8–9 秒，把阅读插件的三条核心动线拆成「一次只讲一个卖点」的小动画：
 
 | 成片 | 场景 | 内容 | 时长 |
 | --- | --- | --- | --- |
-| `docs/demos/01-select-explain.gif` | `SelectExplain` | 划词 → 工具条 → 解释 → 概念卡 → 悬停复看 | 8s |
-| `docs/demos/02-read-and-ask.gif` | `AskAI` | 选中原文 → 引用进输入框 → 对话页签流式回答 | 8s |
-| `docs/demos/03-guide-mindmap.gif` | `GuideMindmap` | 导读摘要 → 导图 → 节点跳回原文 → 导出 | 9s |
+| `../docs/demos/01-select-explain.gif` | `SelectExplain` | 划词 → 工具条 → 解释 → 概念卡 → 悬停复看 | 8s |
+| `../docs/demos/02-read-and-ask.gif` | `AskAI` | 选中原文 → 引用进输入框 → 对话页签流式回答 | 8s |
+| `../docs/demos/03-guide-mindmap.gif` | `GuideMindmap` | 导读摘要 → 导图 → 节点跳回原文 → 导出 | 9s |
 
 所有成片都是 800×540、15fps、≤1.4MB，首尾淡出到同一底色，在 README 里循环播放不会硬切。
 
