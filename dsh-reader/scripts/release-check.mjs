@@ -53,7 +53,12 @@ await check('eval pipeline', async () => {
 
 await check('visual pipeline', async () => {
   command('visual', 'node eval/visual.mjs')
-  return '163 checks + baselines'
+  return '166 checks + baselines'
+})
+
+await check('docx pipeline', async () => {
+  command('docx', 'node eval/docx.mjs')
+  return '9/9'
 })
 
 await check('motion pipeline', async () => {

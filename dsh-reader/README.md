@@ -127,7 +127,7 @@ node eval/visual.mjs            # 视觉 eval（无头 Chrome，163 项检查 + 
 node eval/motion.mjs            # 动效 eval（无头 Chrome，16 项）
 node eval/layout-host.mjs       # 宿主布局探针（6 项）
 node scripts/build-client.mjs   # 由 src/client/*.js 生成 client.js
-node scripts/release-check.mjs  # 发布门禁（12 项）
+node scripts/release-check.mjs  # 发布门禁（13 项）
 (cd demo && npm run render)     # 重新生成 README 演示 GIF（Remotion，见 demo/README.md）
 ```
 
