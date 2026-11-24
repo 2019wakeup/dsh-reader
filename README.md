@@ -124,13 +124,17 @@
 
 ## 装上试试
 
+需要 DSH `>= 0.2.2-rc.5`（更早的版本缺少对话接口，读书对话会自动隐藏）。
+
 在 DSH 的「插件 → 发现」里添加索引：
 
 ```
 https://raw.githubusercontent.com/2019wakeup/dsh-reader/main/plugin-market.json
 ```
 
-找到「砚读 · DSH 阅读插件」安装；也可以直接 `plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.1`。安装后刷新页面，在任意会话顶部切到「阅读」。工作区自带三份试读素材。
+找到「砚读 · DSH 阅读插件」安装，以后有新版本会直接显示更新按钮。也可以绕过插件市场直接装：`plugin_manager install_bundle @2019wakeup/dsh-reader@0.13.1`。
+
+装完刷新页面，在任意会话顶部切到「阅读」。工作区自带三份试读素材，打开就能用。
 
 更细的安装方式、快捷键、数据结构与限制见 [dsh-reader/README.md](dsh-reader/README.md)。
 
