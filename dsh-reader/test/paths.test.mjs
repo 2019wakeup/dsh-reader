@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveInWorkspace } from '../lib/paths.js'
+import { resolveInWorkspace, toPosix } from '../lib/paths.js'
 
 test('accepts a nested relative path', () => {
   const r = resolveInWorkspace('/w', 'book/ch1.md')
@@ -36,4 +36,10 @@ test('accepts the workspace root itself', () => {
   const r = resolveInWorkspace('/w', '.')
   assert.equal(r.ok, true)
   assert.equal(r.abs, '/w')
+})
+
+test('normalizes win32 separators for the wire format', () => {
+  assert.equal(toPosix('sub\\book.md'), 'sub/book.md')
+  assert.equal(toPosix('sub/book.md'), 'sub/book.md')
+  assert.equal(toPosix(''), '')
 })

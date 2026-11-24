@@ -45,9 +45,9 @@ function markdownImageResolver(sessionId, doc) {
     } catch {
       /* keep the raw path */
     }
-    const parts = String(doc.path).split('/')
+    const parts = normalizeRelPath(doc.path).split('/')
     parts.pop()
-    for (const part of decoded.split('/')) {
+    for (const part of normalizeRelPath(decoded).split('/')) {
       if (!part || part === '.') continue
       if (part === '..') parts.pop()
       else parts.push(part)
@@ -3098,7 +3098,7 @@ export function ReaderView(props) {
   }
 
   const renderLibrary = () => {
-    const parts = dir === '.' ? [] : dir.split('/')
+    const parts = dir === '.' ? [] : normalizeRelPath(dir).split('/')
     const trail = [{ label: '…', path: '.' }]
     let acc = ''
     for (const part of parts) {

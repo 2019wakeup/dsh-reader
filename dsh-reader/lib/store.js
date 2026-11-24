@@ -3,6 +3,7 @@ import path from 'node:path'
 import { migrateV1 } from './migrate.js'
 import { defaultPrefs } from './prefs.js'
 import { MAX_READING_SESSIONS, MAX_SESSION_ID_CHARS, normalizeReaderPosition } from './reader-context.js'
+import { toPosix } from './paths.js'
 
 const DATA_DIR = '.dsh-reader'
 const STORE_FILE = 'store.json'
@@ -69,7 +70,7 @@ function normalizeDocs(raw) {
   for (const [key, doc] of Object.entries(raw)) {
     if (!isRecord(doc)) continue
     docs[key] = {
-      path: typeof doc.path === 'string' ? doc.path : '',
+      path: typeof doc.path === 'string' ? toPosix(doc.path) : '',
       size: Number.isFinite(doc.size) ? doc.size : 0,
       mtime: Number.isFinite(doc.mtime) ? doc.mtime : 0,
       annotations: Array.isArray(doc.annotations)
@@ -310,7 +311,7 @@ export function upsertDoc(store, input) {
   }
   store.docs[docKey] = {
     ...current,
-    path: input.path || current.path,
+    path: toPosix(input.path || current.path),
     size: Number.isFinite(input.size) ? input.size : current.size,
     mtime: Number.isFinite(input.mtime) ? input.mtime : current.mtime,
     annotations: Array.isArray(input.annotations) ? input.annotations : current.annotations,

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { resolveInWorkspace } from './lib/paths.js'
+import { resolveInWorkspace, toPosix } from './lib/paths.js'
 import { createDeadline } from './lib/deadline.js'
 import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLatestBackup } from './lib/store.js'
 import { recordSent } from './lib/sent.js'
@@ -126,10 +126,10 @@ async function listDir(cwd, dir) {
     .map((entry) => ({
       name: entry.name,
       type: entry.isDirectory() ? 'dir' : 'file',
-      path: path.relative(cwd, path.join(target.abs, entry.name)),
+      path: toPosix(path.relative(cwd, path.join(target.abs, entry.name))),
     }))
     .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
-  return json({ cwd, dir: path.relative(cwd, target.abs) || '.', entries: rows })
+  return json({ cwd, dir: toPosix(path.relative(cwd, target.abs)) || '.', entries: rows })
 }
 
 async function readFile(cwd, rel) {

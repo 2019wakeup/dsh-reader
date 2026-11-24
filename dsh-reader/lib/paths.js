@@ -1,6 +1,15 @@
 import path from 'node:path'
 
 /**
+ * Normalize a workspace-relative path to POSIX separators. The client, the
+ * store and every URL parameter use `/`; win32 `path.relative` returns `\`.
+ * @param {string} value
+ */
+export function toPosix(value) {
+  return String(value || '').replace(/\\/g, '/')
+}
+
+/**
  * Resolve a workspace-relative reference without letting it leave the workspace.
  * @param {string} cwd absolute workspace directory
  * @param {string} rel path as typed by the client

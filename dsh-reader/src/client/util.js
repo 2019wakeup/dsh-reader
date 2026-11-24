@@ -11,13 +11,22 @@ export function extOf(name) {
   return m ? '.' + m[1].toLowerCase() : ''
 }
 
+/**
+ * Normalize a workspace-relative path to POSIX separators. Windows hosts can
+ * hand over `sub\\book.md`; every client-side path consumer expects `/`.
+ * @param {string} value
+ */
+export function normalizeRelPath(value) {
+  return String(value || '').replace(/\\/g, '/')
+}
+
 export function basename(file) {
-  const parts = String(file || '').split('/')
+  const parts = normalizeRelPath(file).split('/')
   return parts[parts.length - 1] || file
 }
 
 export function dirname(file) {
-  const parts = String(file || '').split('/')
+  const parts = normalizeRelPath(file).split('/')
   parts.pop()
   return parts.join('/') || '.'
 }
