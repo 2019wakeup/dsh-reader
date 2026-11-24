@@ -5,6 +5,32 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
+/**
+ * Normalize block text before hashing so whitespace-only differences share a
+ * translation cache entry.
+ * @param {string} text
+ */
+function normalizeBlockText(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Stable cache key for one translated block, shared by client and Host.
+ * @param {string} text
+ */
+function blockHash(text) {
+  const value = normalizeBlockText(text)
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `${hash.toString(16).padStart(8, '0')}-${value.length.toString(16)}`
+}
+
+
 function uid() {
   return 'x' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 }
@@ -3552,22 +3578,7 @@ function panelPosition(input) {
 }
 
 
-/** Stable cache key for one translated block, shared by client and Host. */
-function normalizeBlockText(text) {
-  return String(text || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
-function blockHash(text) {
-  const value = normalizeBlockText(text)
-  let hash = 0x811c9dc5
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 0x01000193) >>> 0
-  }
-  return `${hash.toString(16).padStart(8, '0')}-${value.length.toString(16)}`
-}
 
 /**
  * Render a translation-only variant of the reading HTML: block text is

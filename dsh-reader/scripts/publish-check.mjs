@@ -9,9 +9,10 @@
  * Usage: node scripts/publish-check.mjs
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -59,7 +60,7 @@ if (packed === null) {
     problems.push('could not parse npm pack output')
   }
   const present = new Set(files)
-  for (const required of ['index.js', 'client.js', 'lib/reader-context.js', 'cordis.patch.yml', 'docs/DETAIL.md', 'LICENSE', 'icon.svg', 'locale/zh.json', 'locale/en.json']) {
+  for (const required of ['index.js', 'client.js', 'lib/block-hash.js', 'lib/reader-context.js', 'cordis.patch.yml', 'docs/DETAIL.md', 'LICENSE', 'icon.svg', 'locale/zh.json', 'locale/en.json']) {
     need(present.has(required), `packed package is missing ${required}`)
   }
   for (const file of files) {
@@ -68,6 +69,26 @@ if (packed === null) {
     }
   }
   notes.push(`packed files: ${files.length}`)
+
+  // The packed Host entry must import with only the files that ship. Staging
+  // the exact pack list catches a Host import of an unpublished src/ file.
+  const staged = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-reader-pack-'))
+  try {
+    for (const relative of files) {
+      if (!/(\.js|\.mjs|\.json|\.yml)$/.test(relative)) continue
+      const source = path.join(root, relative)
+      if (!fs.existsSync(source)) continue
+      const target = path.join(staged, relative)
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(source, target)
+    }
+    await import(pathToFileURL(path.join(staged, 'index.js')).href)
+    notes.push('packed Host entry imports')
+  } catch (error) {
+    problems.push(`packed Host entry cannot import: ${error.message}`)
+  } finally {
+    fs.rmSync(staged, { recursive: true, force: true })
+  }
 }
 
 // 3. Version availability on the registry.
