@@ -73,10 +73,13 @@
       },
       "versions": [
         {
-          "version": "0.13.1",
-          "publishTimestamp": 1795491598,
+          "version": "0.14.0",
+          "publishTimestamp": 1795514326,
           "source": {
-            "type": "npm"
+            "type": "git",
+            "url": "https://github.com/2019wakeup/dsh-reader.git",
+            "commit": "39eee9068aa415a15f025caf975ec2d6e991ddcc",
+            "path": "dsh-reader"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.5 <0.3.0-0"
