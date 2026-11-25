@@ -1675,6 +1675,20 @@ P0 必须 24h 内 triage；P1 一周；P2 进 backlog。
 - 每两周：语料/判官复盘。
 - 每版：全量门禁 + 人工抽检 + 发布。
 
+### 10.9 分支与合并策略（2026-11-25 定）
+
+0.16 不直接把功能 PR 提到 `main`，采用长期集成分支：
+
+- **集成分支**：`feat/0.16-translation`。PRD、issue 修复、翻译功能都先落这里。
+- **子分支**：`feat/0.16-<slug>` / `fix/0.16-<slug>`，从 `feat/0.16-translation` 切出。
+- **PR 目标**：一律指向 `feat/0.16-translation`，不直接指 `main`；CI 对所有 push/PR 已启用，不需要改触发条件。
+- **门禁**：子 issue 的测试/eval/视觉通过 + 至少 1 位 reviewer；P0 无证据不合并。
+- **发布**：0.16.0 收尾时，从 `feat/0.16-translation` 向 `main` 开一个 release PR；全量门禁 + 人工抽检通过后合并、打 tag。
+- **hotfix**：`main` 上的 0.15.x 修复单独走 `fix/0.15.x-*`；必要时 cherry-pick 到 `feat/0.16-translation`，避免把未完成翻译功能带回 main。
+- **PRD 位置**：`docs/PRD-v0.16-翻译质量闭环.md` 在集成分支上维护；合并 main 后自动成为主分支文档。
+
+这样 `main` 始终可发布，翻译功能在集成分支上并行推进；不需要为 PRD 单独开 docs PR。
+
 ---
 
 ## 11. 排期
