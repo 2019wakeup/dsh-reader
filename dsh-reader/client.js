@@ -940,6 +940,8 @@ const ZH = {
   'label.translateVisible': '翻译可见区域',
   'label.translatingVisible': '正在翻译可见区域…',
   'label.translatePending': '待翻译',
+  'label.translateFailed': '失败',
+  'label.retryFailed': '重试失败',
   'label.guideDepth': '导读深度',
   'guideDepth.quick': '快速（篇级，约 25–30 次调用）',
   'guideDepth.standard': '标准（段 + 篇）',
@@ -1232,6 +1234,8 @@ const EN = {
   'label.translateVisible': 'Translate visible text',
   'label.translatingVisible': 'Translating visible text…',
   'label.translatePending': 'Pending',
+  'label.translateFailed': 'Failed',
+  'label.retryFailed': 'Retry failed',
   'label.guideDepth': 'Guide depth',
   'guideDepth.quick': 'Quick (chapter level, ~25 calls)',
   'guideDepth.standard': 'Standard (sections + parts)',
@@ -4252,6 +4256,25 @@ function isNearViewport(rect, viewport, margin = 200) {
   return rect.bottom > viewport.top - margin && rect.top < viewport.bottom + margin
 }
 
+/**
+ * Split one sent batch into translated and failed segments.
+ *
+ * A missing/blank translation is a failure even when the Host returned 200:
+ * deleting the whole batch would leave a permanent hole in the page.
+ */
+function partitionTranslationBatch(segments, result) {
+  const translations = result && typeof result.translations === 'object' ? result.translations : {}
+  const done = []
+  const failed = []
+  for (const segment of segments || []) {
+    if (!segment || typeof segment.id !== 'string') continue
+    const text = translations[segment.id]
+    if (typeof text === 'string' && text.trim()) done.push(segment)
+    else failed.push(segment)
+  }
+  return { done, failed }
+}
+
 
 /**
  * Clamp a dragged card to the reader surface.
@@ -6202,6 +6225,7 @@ function createPositionReporter(options = {}) {
     },
   }
 }
+
 
 
 
@@ -8400,6 +8424,7 @@ function ReaderView(props) {
     () => ({ ...storeTranslations, ...(translationCache[translationLang] || {}) }),
     [storeTranslations, translationCache, translationLang],
   )
+  const translatedCount = Object.keys(translationMap).length
   // Once translations exist for the current target there is nothing left to
   // warn about, even if the source still looks like the target language.
   const hasTranslations = Object.keys(storeTranslations).length > 0
@@ -8411,8 +8436,10 @@ function ReaderView(props) {
   const translationQueuedRef = React.useRef(new Set())
   const translationRunningRef = React.useRef(false)
   const [translationPending, setTranslationPending] = React.useState(0)
+  const [translationFailed, setTranslationFailed] = React.useState(0)
   const [translationTick, setTranslationTick] = React.useState(0)
   const translationPendingRef = React.useRef(0)
+  const translationFailedRef = React.useRef(new Map())
   // "Already in the target language": no request, no queue. `forceTranslate`
   // is the explicit override the notice offers.
   const effectiveSource = translationFrom === 'auto' ? detectedLanguage : translationFrom
@@ -8480,8 +8507,10 @@ function ReaderView(props) {
   React.useEffect(() => {
     translationQueueRef.current.clear()
     translationQueuedRef.current.clear()
+    translationFailedRef.current.clear()
     translationPendingRef.current = 0
     setTranslationPending(0)
+    setTranslationFailed(0)
   }, [docKey, translationLang, translationFrom, translationMode])
 
   const collectTranslationBlocks = (limit = 1000) => {
@@ -8505,9 +8534,13 @@ function ReaderView(props) {
 
   const mergeTranslations = (lang, result) => {
     const merged = { ...(translationCacheRef.current[lang] || {}) }
-    for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
+    for (const [id, text] of Object.entries(result.translations || {})) {
+      merged[id] = text
+      translationFailedRef.current.delete(id)
+    }
     translationCacheRef.current = { ...translationCacheRef.current, [lang]: merged }
     setTranslationCache(translationCacheRef.current)
+    setTranslationFailed(translationFailedRef.current.size)
     if (result.store) mergeStore(result.store)
   }
 
@@ -8517,21 +8550,46 @@ function ReaderView(props) {
     for (const segment of segments) {
       if (!segment || !segment.id || !segment.text) continue
       if (translationFor(translationMapRef.current, segment.id)) continue
+      if (translationFailedRef.current.has(segment.id)) continue
       if (translationQueuedRef.current.has(segment.id)) continue
       translationQueuedRef.current.add(segment.id)
       translationQueueRef.current.set(segment.id, segment.text)
       added += 1
     }
-    if (added === 0) return
+    if (added === 0) {
+      // A previous request failed and left its batch queued; clicking
+      // "translate visible" must resume it instead of doing nothing.
+      if (translationQueueRef.current.size > 0 && !translationRunningRef.current) void runTranslationQueue()
+      return
+    }
     translationPendingRef.current = translationQueueRef.current.size
     setTranslationPending(translationPendingRef.current)
     void runTranslationQueue()
+  }
+
+  const clearFailedTranslations = () => {
+    if (translationFailedRef.current.size === 0) return
+    translationFailedRef.current.clear()
+    setTranslationFailed(0)
+  }
+
+  const markFailedSegments = (segments) => {
+    for (const segment of segments || []) {
+      if (!segment || !segment.id) continue
+      if (translationFor(translationMapRef.current, segment.id)) {
+        translationFailedRef.current.delete(segment.id)
+        continue
+      }
+      translationFailedRef.current.set(segment.id, segment.text)
+    }
+    setTranslationFailed(translationFailedRef.current.size)
   }
 
   const runTranslationQueue = async () => {
     if (translationRunningRef.current) return
     translationRunningRef.current = true
     setTranslationBusy(true)
+    let current = []
     try {
       while (translationQueueRef.current.size > 0) {
         const lang = translationLangRef.current
@@ -8548,6 +8606,7 @@ function ReaderView(props) {
           translationQueuedRef.current.clear()
           break
         }
+        current = segments
         const result = await api.translate(sessionId, {
           docKey,
           target: lang,
@@ -8560,31 +8619,56 @@ function ReaderView(props) {
           // retrying the same blocks forever.
           translationQueueRef.current.clear()
           translationQueuedRef.current.clear()
+          clearFailedTranslations()
           translationPendingRef.current = 0
           setTranslationPending(0)
           if (result.detected) setDetectedLanguage(result.detected)
           flash(t('label.alreadyTarget'))
+          current = []
           break
         }
         mergeTranslations(lang, result)
-        for (const segment of segments) {
+        // Never delete the whole request batch blindly: a partial reply must
+        // leave the missing blocks retryable instead of creating a hole.
+        const { done, failed } = partitionTranslationBatch(segments, result)
+        for (const segment of done) {
           translationQueueRef.current.delete(segment.id)
           translationQueuedRef.current.delete(segment.id)
         }
+        for (const segment of failed) {
+          translationQueueRef.current.delete(segment.id)
+          translationQueuedRef.current.delete(segment.id)
+        }
+        markFailedSegments(failed)
+        current = []
         translationPendingRef.current = translationQueueRef.current.size
         setTranslationPending(translationPendingRef.current)
         setTranslationTick((tick) => tick + 1)
       }
     } catch (error) {
-      translationQueueRef.current.clear()
-      translationQueuedRef.current.clear()
-      translationPendingRef.current = 0
-      setTranslationPending(0)
+      // Keep the rest of the queue: only the in-flight batch is marked failed.
+      // The user can retry it, and "translate visible" resumes the rest.
+      markFailedSegments(current)
+      for (const segment of current) {
+        translationQueueRef.current.delete(segment.id)
+        translationQueuedRef.current.delete(segment.id)
+      }
+      translationPendingRef.current = translationQueueRef.current.size
+      setTranslationPending(translationPendingRef.current)
       reportError(error)
     } finally {
+      current = []
       translationRunningRef.current = false
       setTranslationBusy(false)
     }
+  }
+
+  const retryFailedTranslations = () => {
+    const entries = [...translationFailedRef.current.entries()]
+    if (entries.length === 0) return
+    translationFailedRef.current.clear()
+    setTranslationFailed(0)
+    enqueueTranslationSegments(entries.map(([id, text]) => ({ id, text })))
   }
 
   const translateVisibleNow = () => {
@@ -8816,8 +8900,17 @@ function ReaderView(props) {
       { className: 'rd-translate-bar' },
       renderLanguageControls(),
       h('span', { className: 'rd-spacer' }),
-      translationBusy || translationPending > 0
-        ? h('span', { className: 'rd-muted rd-translate-status' }, t('label.translatingVisible'))
+      translationBusy || translationPending > 0 || translationFailed > 0 || translatedCount > 0
+        ? h(
+            'span',
+            { className: 'rd-muted rd-translate-status' },
+            `${t('label.translated')} ${translatedCount} · ${t('label.translatePending')} ${translationPending}` +
+              (translationFailed > 0 ? ` · ${t('label.translateFailed')} ${translationFailed}` : '') +
+              (translationBusy ? ` · ${t('label.translating')}` : ''),
+          )
+        : null,
+      translationFailed > 0
+        ? h('button', { className: 'rd-btn ghost', onClick: retryFailedTranslations }, t('label.retryFailed'))
         : null,
       h('button', { className: 'rd-btn ghost', onClick: translateVisibleNow }, t('label.translateVisible')),
       h(

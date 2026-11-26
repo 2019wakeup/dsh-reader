@@ -548,6 +548,12 @@ async function main() {
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
     await new Promise((resolve) => setTimeout(resolve, 500))
+    const translationStatus = await page.evaluate(() => document.querySelector('.rd-translate-status')?.textContent || '')
+    record(
+      'translation status reports translated and pending counts',
+      /已翻译\s*\d+/.test(translationStatus) && /待翻译/.test(translationStatus),
+      translationStatus,
+    )
     await shot('02b-translation')
     await clickAny('.rd-toolbar button', ['翻译', 'Translate'])
     await page.waitForFunction(

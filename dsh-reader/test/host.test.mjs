@@ -919,6 +919,37 @@ test('translates segments in one batch and caches them per document', async (t) 
   assert.equal(calls(), before + 1, 'cached translation makes no model call')
 })
 
+test('a partial translation reports missing ids and persists only successes', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    return JSON.stringify({ translations: { h1: 'T:h1' } })
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp1', path: 'a.md' }),
+  })
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp1',
+      target: 'en',
+      segments: [
+        { id: 'h1', text: '你好' },
+        { id: 'h2', text: '世界' },
+      ],
+    }),
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.generated, 1)
+  assert.equal(body.translations.h1, 'T:h1')
+  assert.deepEqual(body.failed.map((item) => item.id), ['h2'])
+  assert.equal(body.failed[0].code, 'missing')
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(Object.keys(store.docs.fp1.translations.en).length, 1)
+})
+
 test('rejects a translation request with an unknown target', async (t) => {
   const { call } = await setup(t)
   const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {

@@ -1196,6 +1196,7 @@ async function translateRoute(ctx, req, res) {
       : {}
     const model = pluginModel(store, ctx)
     const result = {}
+    const failed = []
     const pending = []
     let cached = 0
     for (const segment of segments) {
@@ -1241,7 +1242,10 @@ async function translateRoute(ctx, req, res) {
       })
       const parsed = parseTranslationReply(reply, group.map((segment) => segment.id))
       for (const segment of group) {
-        if (!parsed[segment.id]) continue
+        if (!parsed[segment.id]) {
+          failed.push({ id: segment.id, code: 'missing', message: 'model omitted this id' })
+          continue
+        }
         result[segment.id] = parsed[segment.id]
         persisted[segment.hash] = parsed[segment.id]
         generated += 1
@@ -1268,7 +1272,7 @@ async function translateRoute(ctx, req, res) {
       })
     }
 
-    send(res, 200, { translations: result, cached, generated, target, detected, ...(stored ? { store: stored } : {}) })
+    send(res, 200, { translations: result, cached, generated, failed, target, detected, ...(stored ? { store: stored } : {}) })
   } catch (error) {
     handleRouteError(res, error)
   }
