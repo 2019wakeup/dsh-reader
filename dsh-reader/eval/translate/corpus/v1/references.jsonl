@@ -1,0 +1,60 @@
+{"id": "en-zh.systems.01", "reference": "一致性意味着每个副本在同一时刻观察到相同的历史。", "split": "holdout"}
+{"id": "en-zh.systems.02", "reference": "CAP 定理指出，分布式系统无法同时保证一致性、可用性和分区容忍性。", "split": "tune"}
+{"id": "en-zh.systems.03", "reference": "缓存把最近使用的数据放在离使用者更近的位置，从而降低延迟。", "split": "tune"}
+{"id": "en-zh.systems.04", "reference": "B 树保持数据有序，并允许在对数时间内完成查找、插入和删除。", "split": "holdout"}
+{"id": "en-zh.systems.05", "reference": "TCP 在不可靠的网络上提供可靠、有序的字节流传输。", "split": "tune"}
+{"id": "en-zh.systems.06", "reference": "TLS 通过加密客户端与服务器之间的连接来保护传输中的数据。", "split": "tune"}
+{"id": "en-zh.systems.07", "reference": "索引能加快读取，但会增加写入开销，因为每次更新都必须维护索引。", "split": "holdout"}
+{"id": "en-zh.systems.08", "reference": "Raft 选举领导者并复制日志，使少数节点故障不会让集群停止工作。", "split": "tune"}
+{"id": "en-zh.systems.09", "reference": "Kubernetes 通过控制循环让期望状态与观测状态保持一致。", "split": "tune"}
+{"id": "en-zh.systems.10", "reference": "垃圾回收会回收那些从程序根节点不再可达的内存。", "split": "holdout"}
+{"id": "en-zh.systems.11", "reference": "编译器可以内联小函数，并在逃逸分析后消除冗余加载。", "split": "tune"}
+{"id": "en-zh.ml.12", "reference": "注意力机制让模型在生成每个输出词时权衡输入的不同部分。", "split": "tune"}
+{"id": "en-zh.ml.13", "reference": "当模型记住训练数据而无法泛化时，就发生了过拟合。", "split": "holdout"}
+{"id": "en-zh.ml.14", "reference": "梯度下降沿降低损失的方向更新参数。", "split": "tune"}
+{"id": "en-zh.ml.15", "reference": "在类别不平衡的数据集上，仅看准确率会产生误导，因此还会报告精确率和召回率。", "split": "tune"}
+{"id": "en-zh.legal.16", "reference": "供应商应按照约定的服务水平交付服务。", "split": "holdout"}
+{"id": "en-zh.legal.17", "reference": "任何一方均可提前三十天书面通知终止本协议。", "split": "tune"}
+{"id": "en-zh.privacy.18", "reference": "当个人数据不再为既定目的所必需时，必须将其删除。", "split": "tune"}
+{"id": "en-zh.medical.19", "reference": "推荐剂量为每日一次 10 毫克，肾功能不全时需要调整剂量。", "split": "holdout"}
+{"id": "en-zh.medical.20", "reference": "如果出现皮疹，患者应停药并就医。", "split": "tune"}
+{"id": "en-zh.finance.21", "reference": "当工资跟不上物价时，通货膨胀会侵蚀购买力。", "split": "tune"}
+{"id": "en-zh.finance.22", "reference": "央行将政策利率上调 25 个基点，以稳定预期。", "split": "holdout"}
+{"id": "en-zh.finance.23", "reference": "供应链中断延长了交付周期，并推高了库存成本。", "split": "tune"}
+{"id": "en-zh.docs.24", "reference": "该端点每分钟最多接受 100 次请求，超过限制时返回 429。", "split": "tune"}
+{"id": "en-zh.docs.25", "reference": "幂等键让客户端可以重试请求，而不会创建重复资源。", "split": "holdout"}
+{"id": "en-zh.docs.26", "reference": "好的代码评审关注正确性、可读性以及这次变更的风险。", "split": "tune"}
+{"id": "en-zh.ops.27", "reference": "可观测性结合日志、指标和追踪来说明运行中系统的行为。", "split": "tune"}
+{"id": "en-zh.ops.28", "reference": "事故复盘应描述影响、时间线、根因以及后续工作。", "split": "holdout"}
+{"id": "en-zh.a11y.29", "reference": "无障碍界面支持键盘导航、可读的对比度和清晰的焦点状态。", "split": "tune"}
+{"id": "en-zh.research.30", "reference": "用户研究应从问题出发，而不是从团队已经偏好的方案出发。", "split": "tune"}
+{"id": "zh-zh.systems.01", "reference": "Consistency requires every replica to see the same data at the same time.", "split": "holdout"}
+{"id": "zh-zh.systems.02", "reference": "A cache hit can significantly reduce the average response time.", "split": "tune"}
+{"id": "zh-zh.systems.03", "reference": "A database index speeds up queries but increases write cost.", "split": "tune"}
+{"id": "zh-zh.ml.04", "reference": "A model's ability to generalize depends on whether the training data is representative.", "split": "holdout"}
+{"id": "zh-zh.legal.05", "reference": "This Agreement takes effect on the date it is signed by both parties.", "split": "tune"}
+{"id": "zh-zh.medical.06", "reference": "If an adverse reaction occurs, stop the drug immediately and contact a doctor.", "split": "tune"}
+{"id": "zh-zh.finance.07", "reference": "Rising interest rates increase corporate financing costs.", "split": "holdout"}
+{"id": "zh-zh.finance.08", "reference": "Supply chain disruptions may cause delivery delays and excess inventory.", "split": "tune"}
+{"id": "zh-zh.docs.09", "reference": "When an API call fails, the client should retry with exponential backoff.", "split": "tune"}
+{"id": "zh-zh.docs.10", "reference": "Code review should prioritize correctness and maintainability.", "split": "holdout"}
+{"id": "zh-zh.a11y.11", "reference": "The interface should support keyboard operation and screen readers.", "split": "tune"}
+{"id": "zh-zh.research.12", "reference": "User interviews should avoid leading questions.", "split": "tune"}
+{"id": "ja-zh.systems.01", "reference": "在分布式系统中，所有副本都必须看到相同的历史。", "split": "holdout"}
+{"id": "ja-zh.systems.02", "reference": "缓存可以缩短响应时间，但可能返回旧数据。", "split": "tune"}
+{"id": "ja-zh.systems.03", "reference": "数据库索引会加快读取，却会拖慢写入。", "split": "tune"}
+{"id": "ja-zh.ml.04", "reference": "为防止过拟合，需要用验证数据确认性能。", "split": "holdout"}
+{"id": "ja-zh.security.05", "reference": "通信经过加密，第三方无法读取内容。", "split": "tune"}
+{"id": "ja-zh.ops.06", "reference": "要提高可用性，减少单点故障很重要。", "split": "tune"}
+{"id": "ja-zh.ops.07", "reference": "结合监控和日志，可以定位故障原因。", "split": "holdout"}
+{"id": "ja-zh.docs.08", "reference": "规格变更请提前告知相关人员。", "split": "tune"}
+{"id": "fr-zh.systems.01", "reference": "一致性保证所有副本看到相同的数据。", "split": "tune"}
+{"id": "fr-zh.systems.02", "reference": "缓存降低延迟，但可能包含过期数据。", "split": "holdout"}
+{"id": "fr-zh.security.03", "reference": "加密保护传输过程中的数据。", "split": "tune"}
+{"id": "fr-zh.legal.04", "reference": "合同自签署之日起生效。", "split": "tune"}
+{"id": "fr-zh.ops.05", "reference": "可用性取决于是否消除单点故障。", "split": "holdout"}
+{"id": "auto-zh.mixed.01", "reference": "分布式系统之所以困难，是因为故障是局部的、异步的。", "split": "tune"}
+{"id": "auto-zh.mixed.02", "reference": "On a cache miss, the request goes back to the database.", "split": "tune"}
+{"id": "auto-zh.mixed.03", "reference": "分布式系统的可用性也取决于故障后的恢复时间。", "split": "holdout"}
+{"id": "auto-zh.mixed.04", "reference": "可追踪性对诊断事故至关重要。", "split": "tune"}
+{"id": "auto-zh.mixed.05", "reference": "一致性可以通过复制和法定人数来实现。", "split": "tune"}

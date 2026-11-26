@@ -1,0 +1,31 @@
+{
+  "corpus": "v1",
+  "license": "self-written technical paragraphs; no third-party full text",
+  "segments": 60,
+  "references": 60,
+  "splits": {
+    "tune": 40,
+    "holdout": 20
+  },
+  "languages": {
+    "en": 30,
+    "zh": 12,
+    "ja": 8,
+    "fr": 5,
+    "auto": 5
+  },
+  "domains": [
+    "a11y",
+    "docs",
+    "finance",
+    "legal",
+    "medical",
+    "mixed",
+    "ml",
+    "ops",
+    "privacy",
+    "research",
+    "security",
+    "systems"
+  ]
+}
