@@ -205,6 +205,71 @@ function parseTranslationReply(reply, ids) {
 }
 
 
+/**
+ * Versioned translation cache keys and eviction.
+ *
+ * A key must change when the prompt, glossary, source or target changes; the
+ * content hash alone cannot express that. Legacy 0.15 keys (plain content
+ * hash) stay readable for display but are reported as `stale`.
+ */
+
+const TRANSLATE_PROMPT_VERSION = 2
+
+function translateCacheKey({
+  target,
+  from = 'auto',
+  promptVersion = TRANSLATE_PROMPT_VERSION,
+  glossaryHash = 'none',
+  contentHash,
+}) {
+  return `v2:${target}:${from}:${promptVersion}:${glossaryHash}:${contentHash}`
+}
+
+function translationMeta({ from = 'auto', model = '', promptVersion = TRANSLATE_PROMPT_VERSION, glossaryHash = 'none', chars = 0 }) {
+  return {
+    at: Date.now(),
+    model: String(model || ''),
+    prompt: promptVersion,
+    glossary: glossaryHash,
+    from,
+    chars: Number(chars) || 0,
+  }
+}
+
+/**
+ * Drop the oldest entries per language, then across the whole document.
+ * Entries without metadata are treated as older than any metadata entry.
+ */
+function evictTranslationCache(doc, { maxPerLanguage = 2000, maxPerDoc = 8000 } = {}) {
+  if (!doc || typeof doc !== 'object') return
+  const translations = doc.translations && typeof doc.translations === 'object' ? doc.translations : {}
+  const meta = doc.translationMeta && typeof doc.translationMeta === 'object' ? doc.translationMeta : {}
+  for (const [lang, map] of Object.entries(translations)) {
+    if (!map || typeof map !== 'object') continue
+    const langMeta = meta[lang] && typeof meta[lang] === 'object' ? meta[lang] : (meta[lang] = {})
+    const keys = Object.keys(map)
+    if (keys.length <= maxPerLanguage) continue
+    keys.sort((left, right) => (langMeta[left]?.at || 0) - (langMeta[right]?.at || 0))
+    for (const key of keys.slice(0, keys.length - maxPerLanguage)) {
+      delete map[key]
+      delete langMeta[key]
+    }
+  }
+  const all = []
+  for (const [lang, map] of Object.entries(translations)) {
+    if (!map || typeof map !== 'object') continue
+    const langMeta = meta[lang] && typeof meta[lang] === 'object' ? meta[lang] : (meta[lang] = {})
+    for (const key of Object.keys(map)) all.push({ lang, key, at: langMeta[key]?.at || 0 })
+  }
+  if (all.length <= maxPerDoc) return
+  all.sort((left, right) => left.at - right.at)
+  for (const entry of all.slice(0, all.length - maxPerDoc)) {
+    delete translations[entry.lang][entry.key]
+    delete meta[entry.lang]?.[entry.key]
+  }
+}
+
+
 function uid() {
   return 'x' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 }
@@ -944,6 +1009,7 @@ const ZH = {
   'label.translatePending': '待翻译',
   'label.translateFailed': '失败',
   'label.retryFailed': '重试失败',
+  'label.staleTranslation': '旧译文，待刷新',
   'label.translateOffline': '网络离线，恢复后重试。',
   'label.translateRateLimited': '请求过多，正在退避重试…',
   'label.translateNoModel': '未配置可用模型，请先在设置里选择模型。',
@@ -1250,6 +1316,7 @@ const EN = {
   'label.translatePending': 'Pending',
   'label.translateFailed': 'Failed',
   'label.retryFailed': 'Retry failed',
+  'label.staleTranslation': 'Old translation; refresh needed',
   'label.translateOffline': 'Offline; retry when the connection returns.',
   'label.translateRateLimited': 'Too many requests; backing off…',
   'label.translateNoModel': 'No model configured. Choose one in Settings first.',
@@ -1446,6 +1513,7 @@ function t(key) {
 }
 
 
+
 const BASE = '/dsh-reader-live'
 
 // The host aborts a stalled explanation at 90s; wait slightly longer so the
@@ -1610,7 +1678,11 @@ const api = {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          promptVersion: TRANSLATE_PROMPT_VERSION,
+          glossaryHash: 'none',
+          ...payload,
+        }),
       },
       { timeoutMs: Number(options.timeoutMs) || 120_000 },
     )
@@ -1678,6 +1750,7 @@ const READER_CSS = `
 .rd-lang-notice .rd-btn{height:22px;padding:0 8px;font-size:11px}
 .rd-translate-status{font-size:11.5px}
 .rd-translate-error{font-size:11.5px;color:var(--dsw-alias-state-error-primary);flex-basis:100%}
+.rd-trans-stale{opacity:.72}
 .rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
 .rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
@@ -1868,6 +1941,7 @@ const READER_CSS = `
 .rd-lang-notice .rd-btn{height:22px;padding:0 8px;font-size:11px}
 .rd-translate-status{font-size:11.5px}
 .rd-translate-error{font-size:11.5px;color:var(--dsw-alias-state-error-primary);flex-basis:100%}
+.rd-trans-stale{opacity:.72}
 .rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
 .rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
@@ -8692,6 +8766,7 @@ function ReaderView(props) {
   const [translationTick, setTranslationTick] = React.useState(0)
   const translationPendingRef = React.useRef(0)
   const translationFailedRef = React.useRef(new Map())
+  const translationStaleRef = React.useRef(new Set())
   const translationPausedRef = React.useRef(false)
   const translationAttemptsRef = React.useRef(new Map())
   const translationRetryTimerRef = React.useRef(null)
@@ -8771,6 +8846,7 @@ function ReaderView(props) {
     translationQueueRef.current.clear()
     translationQueuedRef.current.clear()
     translationFailedRef.current.clear()
+    translationStaleRef.current.clear()
     translationAttemptsRef.current.clear()
     translationPausedRef.current = false
     translationPendingRef.current = 0
@@ -8798,6 +8874,10 @@ function ReaderView(props) {
     for (const [id, text] of Object.entries(result.translations || {})) {
       merged[id] = text
       translationFailedRef.current.delete(id)
+      translationStaleRef.current.delete(id)
+    }
+    for (const id of result.stale || []) {
+      if (typeof id === 'string') translationStaleRef.current.add(id)
     }
     translationCacheRef.current = { ...translationCacheRef.current, [lang]: merged }
     // Update the lookup ref synchronously: a PDF batch checks it immediately
@@ -9387,6 +9467,8 @@ function ReaderView(props) {
       }
       div.dataset.rdHash = block.hash
       div.lang = translationLang
+      div.classList.toggle('rd-trans-stale', translationStaleRef.current.has(block.hash))
+      if (translationStaleRef.current.has(block.hash)) div.title = t('label.staleTranslation')
       keep.add(div)
     }
     for (const node of Array.from(root.querySelectorAll('.rd-trans'))) {

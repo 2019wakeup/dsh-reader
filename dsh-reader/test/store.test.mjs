@@ -132,3 +132,25 @@ test('drops junk failure entries instead of leaking them into the store', async 
   assert.equal(store.debug.errors[0].message.length, 300)
   assert.equal(store.debug.lastError.message.length, 300)
 })
+
+test('round-trips translation metadata and user overrides', async () => {
+  const cwd = await tmpWorkspace()
+  const store = await readStore(cwd)
+  store.docs.fp1 = {
+    path: 'a.md',
+    size: 1,
+    mtime: 1,
+    annotations: [],
+    positions: {},
+    translations: { zh: { 'v2:zh:en:2:none:h1': '译文' } },
+    translationMeta: {
+      zh: { 'v2:zh:en:2:none:h1': { at: 7, model: 'p/m', prompt: 2, glossary: 'none', from: 'en', chars: 2 } },
+    },
+    translationOverrides: { zh: { h1: { text: '用户改译', at: 8 } } },
+  }
+  await writeStore(cwd, store)
+  const again = await readStore(cwd)
+  assert.deepEqual(again.docs.fp1.translations, store.docs.fp1.translations)
+  assert.deepEqual(again.docs.fp1.translationMeta, store.docs.fp1.translationMeta)
+  assert.deepEqual(again.docs.fp1.translationOverrides, store.docs.fp1.translationOverrides)
+})

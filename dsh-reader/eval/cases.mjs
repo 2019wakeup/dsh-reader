@@ -36,6 +36,7 @@ const { parseSectionReply, parseOverviewReply } = await import(pathToFileURL(pat
 const { buildTree, layoutTree, chunkNodeLines, mapGridVars } = await import(pathToFileURL(path.join(root, 'src/client/mindmap.js')).href)
 const { clampCardPosition } = await import(pathToFileURL(path.join(root, 'src/client/card-drag.js')).href)
 const { takeTranslationBatch, isNearViewport } = await import(pathToFileURL(path.join(root, 'src/client/translation-schedule.js')).href)
+const { translateCacheKey, evictTranslationCache } = await import(pathToFileURL(path.join(root, 'lib/translation-cache.js')).href)
 const { buildTranscript, formatLocation, buildQuoteText } = await import(pathToFileURL(path.join(root, 'src/client/chat-transcript.js')).href)
 const { buildReadingReport, buildReaderContextPayload, buildReaderReadPayload } = await import(pathToFileURL(path.join(root, 'lib/reader-context.js')).href)
 const { buildTranslatePrompt, detectLanguage, TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } = await import(
@@ -188,6 +189,24 @@ export const cases = [
       if (count.length !== 2) throw new Error('segment limit not applied')
       if (!isNearViewport({ top: 480, bottom: 540 }, { top: 100, bottom: 500 }, 200)) throw new Error('viewport margin missing')
       return { batch: batch.length, count: count.length }
+    },
+  },
+  {
+    name: 'contract.cache',
+    async run() {
+      const base = { target: 'zh', from: 'en', promptVersion: 2, glossaryHash: 'g1', contentHash: 'h1' }
+      const key = translateCacheKey(base)
+      if (!key.startsWith('v2:zh:en:2:g1:')) throw new Error('cache key shape changed')
+      if (translateCacheKey({ ...base, promptVersion: 3 }) === key) throw new Error('prompt version does not invalidate')
+      if (translateCacheKey({ ...base, glossaryHash: 'g2' }) === key) throw new Error('glossary does not invalidate')
+      const doc = {
+        translations: { zh: { a: 'A', b: 'B', c: 'C' } },
+        translationMeta: { zh: { a: { at: 1 }, b: { at: 3 }, c: { at: 2 } } },
+      }
+      evictTranslationCache(doc, { maxPerLanguage: 2, maxPerDoc: 2 })
+      if (Object.keys(doc.translations.zh).length !== 2) throw new Error('eviction did not cap')
+      if (doc.translations.zh.a) throw new Error('oldest entry survived')
+      return { key: key.slice(0, 20), evicted: 1 }
     },
   },
   {

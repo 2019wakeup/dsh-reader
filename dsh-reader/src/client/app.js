@@ -2223,6 +2223,7 @@ export function ReaderView(props) {
   const [translationTick, setTranslationTick] = React.useState(0)
   const translationPendingRef = React.useRef(0)
   const translationFailedRef = React.useRef(new Map())
+  const translationStaleRef = React.useRef(new Set())
   const translationPausedRef = React.useRef(false)
   const translationAttemptsRef = React.useRef(new Map())
   const translationRetryTimerRef = React.useRef(null)
@@ -2302,6 +2303,7 @@ export function ReaderView(props) {
     translationQueueRef.current.clear()
     translationQueuedRef.current.clear()
     translationFailedRef.current.clear()
+    translationStaleRef.current.clear()
     translationAttemptsRef.current.clear()
     translationPausedRef.current = false
     translationPendingRef.current = 0
@@ -2329,6 +2331,10 @@ export function ReaderView(props) {
     for (const [id, text] of Object.entries(result.translations || {})) {
       merged[id] = text
       translationFailedRef.current.delete(id)
+      translationStaleRef.current.delete(id)
+    }
+    for (const id of result.stale || []) {
+      if (typeof id === 'string') translationStaleRef.current.add(id)
     }
     translationCacheRef.current = { ...translationCacheRef.current, [lang]: merged }
     // Update the lookup ref synchronously: a PDF batch checks it immediately
@@ -2918,6 +2924,8 @@ export function ReaderView(props) {
       }
       div.dataset.rdHash = block.hash
       div.lang = translationLang
+      div.classList.toggle('rd-trans-stale', translationStaleRef.current.has(block.hash))
+      if (translationStaleRef.current.has(block.hash)) div.title = t('label.staleTranslation')
       keep.add(div)
     }
     for (const node of Array.from(root.querySelectorAll('.rd-trans'))) {

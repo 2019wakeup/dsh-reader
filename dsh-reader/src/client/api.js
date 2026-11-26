@@ -1,3 +1,5 @@
+import { TRANSLATE_PROMPT_VERSION } from '../../lib/translation-cache.js'
+
 const BASE = '/dsh-reader-live'
 
 // The host aborts a stalled explanation at 90s; wait slightly longer so the
@@ -162,7 +164,11 @@ export const api = {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          promptVersion: TRANSLATE_PROMPT_VERSION,
+          glossaryHash: 'none',
+          ...payload,
+        }),
       },
       { timeoutMs: Number(options.timeoutMs) || 120_000 },
     )
