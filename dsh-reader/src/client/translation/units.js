@@ -11,7 +11,7 @@ import { blockHash, normalizeBlockText } from '../../../lib/block-hash.js'
 
 const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, figcaption, td, th'
 const BLOCK_CHILD_SELECTOR = 'p, div, ul, ol, blockquote, pre, table, h1, h2, h3, h4, figure, section'
-const PROTECTED_SELECTOR = 'code, kbd, samp, .katex, math, mjx-container, a[href], a[id], a[name], svg'
+const PROTECTED_SELECTOR = 'code, kbd, samp, .katex, math, mjx-container, a[href], a[id], a[name], svg, img, picture'
 
 function hasBlockChild(node) {
   for (const child of node.children || []) {
