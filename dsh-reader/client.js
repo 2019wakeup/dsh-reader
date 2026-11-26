@@ -9294,6 +9294,9 @@ function ReaderView(props) {
       for (const node of Array.from(root.querySelectorAll('.rd-trans'))) node.remove()
       return
     }
+    const scroller = root.closest('.rd-main') || root.parentElement
+    const anchor = root.firstElementChild
+    const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0
     const keep = new Set()
     for (const block of collectTranslationBlocks()) {
       const text = translationFor(translationMap, block.hash)
@@ -9326,6 +9329,14 @@ function ReaderView(props) {
     }
     for (const node of Array.from(root.querySelectorAll('.rd-trans'))) {
       if (!keep.has(node)) node.remove()
+    }
+    if (scroller && anchor) {
+      // Keep the current reading line stable when translations are inserted
+      // above it; only compensate for the actual layout delta.
+      requestAnimationFrame(() => {
+        const delta = anchor.getBoundingClientRect().top - anchorTop
+        if (Math.abs(delta) > 0.5) scroller.scrollTop += delta
+      })
     }
   }, [doc, chapter, translationMode, translationLang, translationMap, layoutTick])
 
