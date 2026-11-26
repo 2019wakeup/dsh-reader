@@ -950,6 +950,34 @@ test('a partial translation reports missing ids and persists only successes', as
   assert.equal(Object.keys(store.docs.fp1.translations.en).length, 1)
 })
 
+test('a selection translation carrying a docKey is cached for the next call', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    return JSON.stringify({ translations: { sel: '选段译文' } })
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-sel', path: 'a.md' }),
+  })
+  const translate = () =>
+    call('/dsh-reader-live/api/translate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({
+        docKey: 'fp-sel',
+        target: 'zh',
+        segments: [{ id: 'sel', text: 'selection text' }],
+      }),
+    })
+  const first = await (await translate()).json()
+  const second = await (await translate()).json()
+  assert.equal(first.translations.sel, '选段译文')
+  assert.equal(first.generated, 1)
+  assert.equal(second.cached, 1)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.ok(Object.keys(store.docs['fp-sel'].translations.zh).length >= 1)
+})
+
 test('rejects a translation request with an unknown target', async (t) => {
   const { call } = await setup(t)
   const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {

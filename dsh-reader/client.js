@@ -949,6 +949,7 @@ const ZH = {
   'label.translateNoModel': '未配置可用模型，请先在设置里选择模型。',
   'label.translateTimeout': '翻译请求超时，请重试。',
   'label.translateStoreLocked': '译文已生成，但保存失败；请稍后重试。',
+  'label.pdfNoTextLayer': '本页没有文本层，无法翻译。',
   'label.translateError': '翻译失败，请重试。',
   'label.retrying': '正在重试…',
   'label.translatePaused': '已暂停',
@@ -1254,6 +1255,7 @@ const EN = {
   'label.translateNoModel': 'No model configured. Choose one in Settings first.',
   'label.translateTimeout': 'The translation request timed out; try again.',
   'label.translateStoreLocked': 'The translation was generated but could not be saved; retry later.',
+  'label.pdfNoTextLayer': 'This page has no text layer, so it cannot be translated.',
   'label.translateError': 'Translation failed; try again.',
   'label.retrying': 'Retrying…',
   'label.translatePaused': 'Paused',
@@ -6865,6 +6867,10 @@ function ReaderView(props) {
   const [pdfTranslating, setPdfTranslating] = React.useState(false)
   const [pdfFailed, setPdfFailed] = React.useState(0)
   const pdfFailedRef = React.useRef(new Map())
+  const pdfPrefetchingRef = React.useRef(false)
+  const pdfPageRef = React.useRef(page)
+  const pdfTranslatingRef = React.useRef(false)
+  const pdfPendingPageRef = React.useRef(null)
   const [selectionTranslation, setSelectionTranslation] = React.useState(null)
   const card = topCard(cards)
   const prefs = store.prefs || {}
@@ -9017,17 +9023,33 @@ function ReaderView(props) {
     }
   }
 
-  const translatePdfPage = async () => {
-    if (!doc || !doc.pdf || pdfTranslating) return
+  React.useEffect(() => {
+    pdfPageRef.current = page
+  }, [page])
+
+  const translatePdfPage = async (targetPage = pdfPageRef.current) => {
+    if (!doc || !doc.pdf) return
+    if (pdfTranslatingRef.current) {
+      pdfPendingPageRef.current = targetPage
+      return
+    }
     if (translationSkipRef.current) {
       flash(t('label.alreadyTarget'))
       return
     }
+    pdfTranslatingRef.current = true
     setPdfTranslating(true)
     setTranslationError('')
+    let completed = true
     try {
-      const blocks = await pdfPageBlocks(doc.pdf, page)
-      setPdfBlocks(blocks)
+      const blocks = await pdfPageBlocks(doc.pdf, targetPage)
+      if (targetPage === pdfPageRef.current) setPdfBlocks(blocks)
+      if (blocks.length === 0) {
+        setPdfFailed(0)
+        setTranslationError(t('label.pdfNoTextLayer'))
+        completed = false
+        return
+      }
       const units = unitsFromPdfBlocks(blocks)
       const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
       for (let index = 0; index < missing.length; index += 8) {
@@ -9046,6 +9068,7 @@ function ReaderView(props) {
             pdfFailedRef.current.clear()
             setPdfFailed(0)
             setTranslationError('')
+            completed = false
             flash(t('label.alreadyTarget'))
             return
           }
@@ -9066,14 +9089,51 @@ function ReaderView(props) {
           }
           setPdfFailed(pdfFailedRef.current.size)
           setTranslationError(translationErrorInfo(error, t).message)
+          completed = false
           break
         }
       }
     } catch (error) {
+      completed = false
       setTranslationError(translationErrorInfo(error, t).message)
       reportError(error)
     } finally {
+      pdfTranslatingRef.current = false
       setPdfTranslating(false)
+      if (completed) void prefetchNextPdfPage(targetPage)
+      const pendingPage = pdfPendingPageRef.current
+      pdfPendingPageRef.current = null
+      if (pendingPage !== null && pendingPage !== targetPage) void translatePdfPage(pendingPage)
+    }
+  }
+
+  const prefetchNextPdfPage = async (targetPage = pdfPageRef.current) => {
+    if (!doc || !doc.pdf || pdfPrefetchingRef.current) return
+    if (targetPage !== pdfPageRef.current) return
+    const nextPage = targetPage + 1
+    if (!Number.isFinite(doc.pdf.numPages) || nextPage > doc.pdf.numPages) return
+    pdfPrefetchingRef.current = true
+    try {
+      const blocks = await pdfPageBlocks(doc.pdf, nextPage)
+      const units = unitsFromPdfBlocks(blocks)
+      const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
+      for (let index = 0; index < missing.length; index += 8) {
+        const group = missing.slice(index, index + 8)
+        const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
+        const result = await api.translate(sessionId, {
+          docKey,
+          target: translationLangRef.current,
+          from: translationFromRef.current,
+          segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
+        })
+        if (result?.skipped) break
+        mergeTranslations(translationLangRef.current, result)
+      }
+    } catch {
+      /* prefetch is best-effort; the page itself will surface errors */
+    } finally {
+      pdfPrefetchingRef.current = false
     }
   }
 
@@ -9086,7 +9146,7 @@ function ReaderView(props) {
 
   React.useEffect(() => {
     if (drawer !== 'translate' || !doc || doc.ext !== '.pdf') return
-    void translatePdfPage()
+    void translatePdfPage(page)
   }, [drawer, page, translationLang, translationFrom])
 
   const translateSelection = async () => {
@@ -9108,6 +9168,7 @@ function ReaderView(props) {
       const unit = unitFromText(text)
       const hash = unit.hash
       const result = await api.translate(sessionId, {
+        docKey,
         target: translationLang,
         from: translationFrom,
         segments: [{ id: hash, text: unit.text }],
@@ -9151,6 +9212,7 @@ function ReaderView(props) {
     setSelectionTranslation({ text, loading: true, translation: '', rect })
     try {
       const result = await api.translate(sessionId, {
+        docKey,
         target: translationLang,
         from: translationFrom,
         segments: [{ id: hash, text: unit.text }],
@@ -10369,7 +10431,7 @@ function ReaderView(props) {
             ? h('div', { className: 'rd-translate-error', role: 'status', style: { marginBottom: '6px' } }, translationError)
             : null,
           pdfBlocks.length === 0
-            ? h('div', { className: 'rd-empty' }, t('label.translating'))
+            ? h('div', { className: 'rd-empty' }, translationError || t('label.translating'))
             : pdfBlocks.map((block) => {
                 const translated = translationFor(translationMap, blockHash(block.text))
                 return h(
