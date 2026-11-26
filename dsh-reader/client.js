@@ -942,6 +942,17 @@ const ZH = {
   'label.translatePending': '待翻译',
   'label.translateFailed': '失败',
   'label.retryFailed': '重试失败',
+  'label.translateOffline': '网络离线，恢复后重试。',
+  'label.translateRateLimited': '请求过多，正在退避重试…',
+  'label.translateNoModel': '未配置可用模型，请先在设置里选择模型。',
+  'label.translateTimeout': '翻译请求超时，请重试。',
+  'label.translateStoreLocked': '译文已生成，但保存失败；请稍后重试。',
+  'label.translateError': '翻译失败，请重试。',
+  'label.retrying': '正在重试…',
+  'label.translatePaused': '已暂停',
+  'label.pauseTranslation': '暂停',
+  'label.resumeTranslation': '继续',
+  'label.cancelTranslation': '取消',
   'label.guideDepth': '导读深度',
   'guideDepth.quick': '快速（篇级，约 25–30 次调用）',
   'guideDepth.standard': '标准（段 + 篇）',
@@ -1236,6 +1247,17 @@ const EN = {
   'label.translatePending': 'Pending',
   'label.translateFailed': 'Failed',
   'label.retryFailed': 'Retry failed',
+  'label.translateOffline': 'Offline; retry when the connection returns.',
+  'label.translateRateLimited': 'Too many requests; backing off…',
+  'label.translateNoModel': 'No model configured. Choose one in Settings first.',
+  'label.translateTimeout': 'The translation request timed out; try again.',
+  'label.translateStoreLocked': 'The translation was generated but could not be saved; retry later.',
+  'label.translateError': 'Translation failed; try again.',
+  'label.retrying': 'Retrying…',
+  'label.translatePaused': 'Paused',
+  'label.pauseTranslation': 'Pause',
+  'label.resumeTranslation': 'Resume',
+  'label.cancelTranslation': 'Cancel',
   'label.guideDepth': 'Guide depth',
   'guideDepth.quick': 'Quick (chapter level, ~25 calls)',
   'guideDepth.standard': 'Standard (sections + parts)',
@@ -1450,7 +1472,12 @@ async function request(path, init, options = {}) {
   if (timeoutMs <= 0) {
     const res = await fetch(BASE + path, init)
     const data = await res.json().catch(() => null)
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    if (!res.ok) {
+      const failure = new Error((data && data.error) || 'HTTP ' + res.status)
+      failure.status = res.status
+      failure.code = data && data.error
+      throw failure
+    }
     return data
   }
   const controller = new AbortController()
@@ -1458,10 +1485,20 @@ async function request(path, init, options = {}) {
   try {
     const res = await fetch(BASE + path, { ...init, signal: controller.signal })
     const data = await res.json().catch(() => null)
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    if (!res.ok) {
+      const failure = new Error((data && data.error) || 'HTTP ' + res.status)
+      failure.status = res.status
+      failure.code = data && data.error
+      throw failure
+    }
     return data
   } catch (error) {
-    if (controller.signal.aborted) throw new Error(timeoutText())
+    if (controller.signal.aborted) {
+      const failure = new Error(timeoutText())
+      failure.code = 'timeout'
+      failure.status = 504
+      throw failure
+    }
     throw error
   } finally {
     clearTimeout(timer)
@@ -1563,12 +1600,16 @@ const api = {
       body: JSON.stringify({ store }),
     })
   },
-  translate(sessionId, payload) {
-    return request(`/api/translate?sessionId=${encodeURIComponent(sessionId || '')}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+  translate(sessionId, payload, options = {}) {
+    return request(
+      `/api/translate?sessionId=${encodeURIComponent(sessionId || '')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      { timeoutMs: Number(options.timeoutMs) || 120_000 },
+    )
   },
   context(sessionId, payload) {
     return request(`/api/context?sessionId=${encodeURIComponent(sessionId || '')}`, {
@@ -1632,6 +1673,7 @@ const READER_CSS = `
 .rd-lang-notice{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);font-size:11.5px}
 .rd-lang-notice .rd-btn{height:22px;padding:0 8px;font-size:11px}
 .rd-translate-status{font-size:11.5px}
+.rd-translate-error{font-size:11.5px;color:var(--dsw-alias-state-error-primary);flex-basis:100%}
 .rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
 .rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
@@ -1821,6 +1863,7 @@ const READER_CSS = `
 .rd-lang-notice{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);font-size:11.5px}
 .rd-lang-notice .rd-btn{height:22px;padding:0 8px;font-size:11px}
 .rd-translate-status{font-size:11.5px}
+.rd-translate-error{font-size:11.5px;color:var(--dsw-alias-state-error-primary);flex-basis:100%}
 .rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
 .rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
@@ -4277,6 +4320,38 @@ function partitionTranslationBatch(segments, result) {
 
 
 /**
+ * Map a Host/network failure to a stable code, a user-facing message and a
+ * retry policy. Kept pure so the client queue and tests agree on the rules.
+ */
+function translationErrorInfo(error, t) {
+  const status = Number(error?.status) || 0
+  const code = String(error?.code || '')
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { code: 'offline', retryable: true, message: t('label.translateOffline') }
+  }
+  if (status === 429 || code === 'rate_limited') {
+    return { code: 'rate_limited', retryable: true, message: t('label.translateRateLimited') }
+  }
+  if (status === 503 || code === 'no_model' || /no model/i.test(String(error?.message || ''))) {
+    return { code: 'no_model', retryable: false, message: t('label.translateNoModel') }
+  }
+  if (status === 504 || code === 'timeout' || error?.name === 'AbortError') {
+    return { code: 'timeout', retryable: true, message: t('label.translateTimeout') }
+  }
+  if (status === 423 || code === 'store_locked') {
+    return { code: 'store_locked', retryable: false, message: t('label.translateStoreLocked') }
+  }
+  return { code: 'network', retryable: true, message: t('label.translateError') }
+}
+
+/** Backoff for the in-flight batch; attempt is 1-based after increment. */
+function translationRetryDelay(code, attempt) {
+  if (code === 'rate_limited') return attempt <= 1 ? 1500 : 4000
+  return attempt <= 1 ? 800 : 2000
+}
+
+
+/**
  * Clamp a dragged card to the reader surface.
  *
  * The card keeps its full rendered height inside the bounds; using the max
@@ -6229,6 +6304,7 @@ function createPositionReporter(options = {}) {
 
 
 
+
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
 function viewStateKey(sessionId) {
@@ -6258,6 +6334,7 @@ function writeSavedViewState(sessionId, value) {
 }
 
 const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
+const MAX_TRANSLATION_FAILURES = 200
 
 /** Chapters exposed by the packaged text formats (EPUB and Word). */
 function chaptersFor(target) {
@@ -6621,6 +6698,8 @@ function ReaderView(props) {
   const [translationBusy, setTranslationBusy] = React.useState(false)
   const [pdfBlocks, setPdfBlocks] = React.useState([])
   const [pdfTranslating, setPdfTranslating] = React.useState(false)
+  const [pdfFailed, setPdfFailed] = React.useState(0)
+  const pdfFailedRef = React.useRef(new Map())
   const [selectionTranslation, setSelectionTranslation] = React.useState(null)
   const card = topCard(cards)
   const prefs = store.prefs || {}
@@ -8437,9 +8516,14 @@ function ReaderView(props) {
   const translationRunningRef = React.useRef(false)
   const [translationPending, setTranslationPending] = React.useState(0)
   const [translationFailed, setTranslationFailed] = React.useState(0)
+  const [translationError, setTranslationError] = React.useState('')
+  const [translationPaused, setTranslationPaused] = React.useState(false)
   const [translationTick, setTranslationTick] = React.useState(0)
   const translationPendingRef = React.useRef(0)
   const translationFailedRef = React.useRef(new Map())
+  const translationPausedRef = React.useRef(false)
+  const translationAttemptsRef = React.useRef(new Map())
+  const translationRetryTimerRef = React.useRef(null)
   // "Already in the target language": no request, no queue. `forceTranslate`
   // is the explicit override the notice offers.
   const effectiveSource = translationFrom === 'auto' ? detectedLanguage : translationFrom
@@ -8457,6 +8541,13 @@ function ReaderView(props) {
   React.useEffect(() => {
     translationCacheRef.current = translationCache
   }, [translationCache])
+
+  React.useEffect(
+    () => () => {
+      clearTimeout(translationRetryTimerRef.current)
+    },
+    [],
+  )
   React.useEffect(() => {
     translationMapRef.current = translationMap
   }, [translationMap])
@@ -8505,13 +8596,23 @@ function ReaderView(props) {
   }, [doc, chapter, page, layoutTick, pdfBlocks, translationMode])
 
   React.useEffect(() => {
+    clearTimeout(translationRetryTimerRef.current)
     translationQueueRef.current.clear()
     translationQueuedRef.current.clear()
     translationFailedRef.current.clear()
+    translationAttemptsRef.current.clear()
+    translationPausedRef.current = false
     translationPendingRef.current = 0
     setTranslationPending(0)
     setTranslationFailed(0)
+    setTranslationError('')
+    setTranslationPaused(false)
   }, [docKey, translationLang, translationFrom, translationMode])
+
+  React.useEffect(() => {
+    pdfFailedRef.current.clear()
+    setPdfFailed(0)
+  }, [docKey, page, translationLang, translationFrom])
 
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
@@ -8582,16 +8683,22 @@ function ReaderView(props) {
       }
       translationFailedRef.current.set(segment.id, segment.text)
     }
+    while (translationFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
+      const oldest = translationFailedRef.current.keys().next().value
+      translationFailedRef.current.delete(oldest)
+    }
     setTranslationFailed(translationFailedRef.current.size)
   }
 
   const runTranslationQueue = async () => {
     if (translationRunningRef.current) return
+    clearTimeout(translationRetryTimerRef.current)
     translationRunningRef.current = true
     setTranslationBusy(true)
     let current = []
     try {
       while (translationQueueRef.current.size > 0) {
+        if (translationPausedRef.current) break
         const lang = translationLangRef.current
         const from = translationFromRef.current
         for (const [id] of translationQueueRef.current) {
@@ -8620,13 +8727,16 @@ function ReaderView(props) {
           translationQueueRef.current.clear()
           translationQueuedRef.current.clear()
           clearFailedTranslations()
+          translationAttemptsRef.current.clear()
           translationPendingRef.current = 0
           setTranslationPending(0)
+          setTranslationError('')
           if (result.detected) setDetectedLanguage(result.detected)
           flash(t('label.alreadyTarget'))
           current = []
           break
         }
+        setTranslationError('')
         mergeTranslations(lang, result)
         // Never delete the whole request batch blindly: a partial reply must
         // leave the missing blocks retryable instead of creating a hole.
@@ -8634,10 +8744,12 @@ function ReaderView(props) {
         for (const segment of done) {
           translationQueueRef.current.delete(segment.id)
           translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
         }
         for (const segment of failed) {
           translationQueueRef.current.delete(segment.id)
           translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
         }
         markFailedSegments(failed)
         current = []
@@ -8646,16 +8758,35 @@ function ReaderView(props) {
         setTranslationTick((tick) => tick + 1)
       }
     } catch (error) {
-      // Keep the rest of the queue: only the in-flight batch is marked failed.
-      // The user can retry it, and "translate visible" resumes the rest.
-      markFailedSegments(current)
-      for (const segment of current) {
-        translationQueueRef.current.delete(segment.id)
-        translationQueuedRef.current.delete(segment.id)
+      const info = translationErrorInfo(error, t)
+      const attempt = current.reduce(
+        (max, segment) => Math.max(max, translationAttemptsRef.current.get(segment.id) || 0),
+        0,
+      )
+      const canRetry = info.retryable && current.length > 0 && attempt < 2 && !translationPausedRef.current
+      if (canRetry) {
+        // Keep the in-flight batch in the queue and retry it after a short
+        // backoff; the rest of the queue stays untouched.
+        for (const segment of current) translationAttemptsRef.current.set(segment.id, attempt + 1)
+        setTranslationError(`${info.message} · ${t('label.retrying')}`)
+        translationPendingRef.current = translationQueueRef.current.size
+        setTranslationPending(translationPendingRef.current)
+        const delay = translationRetryDelay(info.code, attempt + 1)
+        translationRetryTimerRef.current = setTimeout(() => {
+          if (!translationPausedRef.current) void runTranslationQueue()
+        }, delay)
+      } else {
+        markFailedSegments(current)
+        for (const segment of current) {
+          translationQueueRef.current.delete(segment.id)
+          translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
+        }
+        translationPendingRef.current = translationQueueRef.current.size
+        setTranslationPending(translationPendingRef.current)
+        setTranslationError(info.message)
+        reportError(error)
       }
-      translationPendingRef.current = translationQueueRef.current.size
-      setTranslationPending(translationPendingRef.current)
-      reportError(error)
     } finally {
       current = []
       translationRunningRef.current = false
@@ -8663,10 +8794,38 @@ function ReaderView(props) {
     }
   }
 
+  const pauseTranslations = () => {
+    translationPausedRef.current = true
+    setTranslationPaused(true)
+    clearTimeout(translationRetryTimerRef.current)
+  }
+
+  const resumeTranslations = () => {
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    if (translationQueueRef.current.size > 0) void runTranslationQueue()
+  }
+
+  const cancelTranslations = () => {
+    clearTimeout(translationRetryTimerRef.current)
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    translationQueueRef.current.clear()
+    translationQueuedRef.current.clear()
+    translationAttemptsRef.current.clear()
+    translationPendingRef.current = 0
+    setTranslationPending(0)
+    setTranslationError('')
+  }
+
   const retryFailedTranslations = () => {
     const entries = [...translationFailedRef.current.entries()]
     if (entries.length === 0) return
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    setTranslationError('')
     translationFailedRef.current.clear()
+    for (const [id] of entries) translationAttemptsRef.current.delete(id)
     setTranslationFailed(0)
     enqueueTranslationSegments(entries.map(([id, text]) => ({ id, text })))
   }
@@ -8708,6 +8867,7 @@ function ReaderView(props) {
       return
     }
     setPdfTranslating(true)
+    setTranslationError('')
     try {
       const blocks = await pdfPageBlocks(doc.pdf, page)
       setPdfBlocks(blocks)
@@ -8716,26 +8876,56 @@ function ReaderView(props) {
       )
       for (let index = 0; index < missing.length; index += 8) {
         const group = missing.slice(index, index + 8)
-        const segments = group.map((block) => ({ id: blockHash(block.text), text: block.text }))
-        const result = await api.translate(sessionId, {
-          docKey,
-          target: translationLangRef.current,
-          from: translationFromRef.current,
-          segments,
-          ...(forceTranslateRef.current ? { force: true } : {}),
-        })
-        if (result?.skipped) {
-          if (result.detected) setDetectedLanguage(result.detected)
-          flash(t('label.alreadyTarget'))
-          return
+        try {
+          const segments = group.map((block) => ({ id: blockHash(block.text), text: block.text }))
+          const result = await api.translate(sessionId, {
+            docKey,
+            target: translationLangRef.current,
+            from: translationFromRef.current,
+            segments,
+            ...(forceTranslateRef.current ? { force: true } : {}),
+          })
+          if (result?.skipped) {
+            if (result.detected) setDetectedLanguage(result.detected)
+            pdfFailedRef.current.clear()
+            setPdfFailed(0)
+            setTranslationError('')
+            flash(t('label.alreadyTarget'))
+            return
+          }
+          mergeTranslations(translationLangRef.current, result)
+          for (const block of group) {
+            if (translationFor(translationMapRef.current, blockHash(block.text))) {
+              pdfFailedRef.current.delete(block.id)
+            } else {
+              pdfFailedRef.current.set(block.id, block.text)
+            }
+          }
+          setPdfFailed(pdfFailedRef.current.size)
+        } catch (error) {
+          for (const block of group) pdfFailedRef.current.set(block.id, block.text)
+          while (pdfFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
+            const oldest = pdfFailedRef.current.keys().next().value
+            pdfFailedRef.current.delete(oldest)
+          }
+          setPdfFailed(pdfFailedRef.current.size)
+          setTranslationError(translationErrorInfo(error, t).message)
+          break
         }
-        mergeTranslations(translationLangRef.current, result)
       }
     } catch (error) {
+      setTranslationError(translationErrorInfo(error, t).message)
       reportError(error)
     } finally {
       setPdfTranslating(false)
     }
+  }
+
+  const retryPdfFailed = () => {
+    pdfFailedRef.current.clear()
+    setPdfFailed(0)
+    setTranslationError('')
+    void translatePdfPage()
   }
 
   React.useEffect(() => {
@@ -8894,6 +9084,10 @@ function ReaderView(props) {
         : null,
     )
 
+  const progressTotal = translatedCount + translationPending + translationFailed
+  const translationProgress = progressTotal > 0 ? Math.round((translatedCount / progressTotal) * 100) : 0
+  const workPending = translationBusy || translationPending > 0
+
   const renderTranslateBar = () =>
     h(
       'div',
@@ -8903,20 +9097,35 @@ function ReaderView(props) {
       translationBusy || translationPending > 0 || translationFailed > 0 || translatedCount > 0
         ? h(
             'span',
-            { className: 'rd-muted rd-translate-status' },
+            { className: 'rd-muted rd-translate-status', 'aria-live': 'polite' },
             `${t('label.translated')} ${translatedCount} · ${t('label.translatePending')} ${translationPending}` +
               (translationFailed > 0 ? ` · ${t('label.translateFailed')} ${translationFailed}` : '') +
-              (translationBusy ? ` · ${t('label.translating')}` : ''),
+              (translationBusy ? ` · ${t('label.translating')}` : '') +
+              (translationPaused ? ` · ${t('label.translatePaused')}` : ''),
           )
         : null,
+      translationError ? h('span', { className: 'rd-translate-error', role: 'status' }, translationError) : null,
       translationFailed > 0
         ? h('button', { className: 'rd-btn ghost', onClick: retryFailedTranslations }, t('label.retryFailed'))
         : null,
+      workPending
+        ? h(
+            'button',
+            { className: 'rd-btn ghost', onClick: translationPaused ? resumeTranslations : pauseTranslations },
+            translationPaused ? t('label.resumeTranslation') : t('label.pauseTranslation'),
+          )
+        : null,
+      workPending ? h('button', { className: 'rd-btn ghost', onClick: cancelTranslations }, t('label.cancelTranslation')) : null,
       h('button', { className: 'rd-btn ghost', onClick: translateVisibleNow }, t('label.translateVisible')),
       h(
         'button',
         { className: 'rd-btn ghost', onClick: () => setTranslationMode('off') },
         '×',
+      ),
+      h(
+        'div',
+        { className: 'rd-progress', style: { flexBasis: '100%' } },
+        h('div', { className: 'rd-progress-bar', style: { width: `${translationProgress}%` } }),
       ),
     )
 
@@ -9951,12 +10160,21 @@ function ReaderView(props) {
             translationPending > 0
               ? h('span', { className: 'rd-muted', style: { fontSize: '11px' } }, `${t('label.translatePending')} ${translationPending}`)
               : null,
+            pdfFailed > 0
+              ? h('span', { className: 'rd-muted', style: { fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' } }, `${t('label.translateFailed')} ${pdfFailed}`)
+              : null,
+            pdfFailed > 0
+              ? h('button', { className: 'rd-btn ghost', disabled: pdfTranslating, onClick: retryPdfFailed }, t('label.retryFailed'))
+              : null,
             h(
               'button',
               { className: 'rd-btn', disabled: pdfTranslating, onClick: translatePdfPage },
               pdfTranslating ? t('label.translating') : t('action.translatePage'),
             ),
           ),
+          translationError
+            ? h('div', { className: 'rd-translate-error', role: 'status', style: { marginBottom: '6px' } }, translationError)
+            : null,
           pdfBlocks.length === 0
             ? h('div', { className: 'rd-empty' }, t('label.translating'))
             : pdfBlocks.map((block) => {

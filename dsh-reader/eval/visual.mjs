@@ -1683,7 +1683,7 @@ async function main() {
       `${lazyTranslation.translated} -> ${afterScrollTranslation}`,
     )
     await page.evaluate(() => {
-      const close = document.querySelector('.rd-translate-bar button:last-child')
+      const close = [...document.querySelectorAll('.rd-translate-bar > button')].at(-1)
       if (close) close.click()
     })
     await new Promise((resolve) => setTimeout(resolve, 300))
