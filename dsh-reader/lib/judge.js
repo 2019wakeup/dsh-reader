@@ -70,7 +70,13 @@ export function judgePass(score) {
 }
 
 export function aggregateJudge(cases) {
-  const rows = (cases || []).filter((item) => item && item.scores)
+  const rows = (cases || [])
+    .map((item) => {
+      const scores = item && item.scores ? item.scores : item
+      if (!scores || !Number.isFinite(Number(scores.adequacy))) return null
+      return { scores: scores }
+    })
+    .filter(Boolean)
   if (rows.length === 0) {
     return { count: 0, adequacy: 0, fluency: 0, terminology: 0, passRate: 0 }
   }

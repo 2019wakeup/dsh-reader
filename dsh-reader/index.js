@@ -1373,7 +1373,7 @@ async function translateRoute(ctx, req, res) {
       })
     }
 
-    send(res, 200, { translations: result, cached, stale, generated, failed, target, detected, ...(stored ? { store: stored } : {}) })
+    send(res, 200, { translations: result, cached, stale, generated, failed, target, detected, model: `${model.provider}/${model.model}`, ...(stored ? { store: stored } : {}) })
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -1414,7 +1414,20 @@ async function judgeRoute(ctx, req, res) {
           provider: model.provider,
           model: model.model,
         })
-        const parsed = parseJudgeReply(reply)
+        let parsed = parseJudgeReply(reply)
+        if (!parsed) {
+          // One strict retry: judge replies occasionally wrap the JSON in prose.
+          const retry = await complete(ctx, {
+            ...prompt,
+            user: `${prompt.user}\n\nReturn ONLY the JSON object.`,
+            maxTokens: 600,
+            temperature: 0,
+            timeoutMs: 60_000,
+            provider: model.provider,
+            model: model.model,
+          })
+          parsed = parseJudgeReply(retry)
+        }
         if (!parsed) failed.push({ id: item.id, code: 'invalid_reply' })
         else scores.push({ id: item.id, ...parsed })
       } catch (error) {
