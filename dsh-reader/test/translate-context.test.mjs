@@ -32,3 +32,16 @@ test('falls back to book and chapter titles when there is no guide', () => {
   assert.equal(context.chapter, '第一章')
   assert.equal(context.chapterSnapshot, '')
 })
+
+test('caches by document and chapter and invalidates when the guide changes', () => {
+  const doc = { name: 'a.md' }
+  const guide = { summary: '旧摘要', keyPoints: [] }
+  const store = { docs: { fp1: { guide: { sections: [guide] } } }, concepts: {} }
+  const first = buildTranslationContext({ doc, docKey: 'fp1', chapter: 0, store })
+  const same = buildTranslationContext({ doc, docKey: 'fp1', chapter: 0, store })
+  assert.strictEqual(first, same)
+  const changed = { docs: { fp1: { guide: { sections: [{ summary: '新摘要', keyPoints: [] }] } } }, concepts: {} }
+  const next = buildTranslationContext({ doc, docKey: 'fp1', chapter: 0, store: changed })
+  assert.notStrictEqual(first, next)
+  assert.match(next.chapterSnapshot, /新摘要/)
+})
