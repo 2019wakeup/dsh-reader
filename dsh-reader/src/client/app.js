@@ -2597,6 +2597,7 @@ export function ReaderView(props) {
     const scroller = root.closest('.rd-main')
     const viewport = scroller ? scroller.getBoundingClientRect() : null
     const visible = blocks.filter((block) => {
+      if (translationMode !== 'only' && block.role === 'table-cell') return false
       if (!viewport) return true
       return isNearViewport(block.node.getBoundingClientRect(), viewport, 200)
     })
@@ -2966,6 +2967,7 @@ export function ReaderView(props) {
     const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0
     const keep = new Set()
     for (const block of collectTranslationBlocks()) {
+      if (block.role === 'table-cell') continue
       const text = translationFor(translationMap, block.hash)
       if (!text) continue
       let div = null
@@ -3014,7 +3016,9 @@ export function ReaderView(props) {
     const root = contentRef.current
     if (!root) return
     const scroller = root.closest('.rd-main') || root.parentElement
-    const units = collectTranslationBlocks()
+    const units = collectTranslationBlocks().filter(
+      (unit) => translationMode === 'only' || unit.role !== 'table-cell',
+    )
     if (typeof IntersectionObserver !== 'function') {
       enqueueTranslationSegments(units.slice(0, 12).map((unit) => ({ id: unit.hash, text: unit.text })))
       return

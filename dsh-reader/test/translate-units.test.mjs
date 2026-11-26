@@ -102,3 +102,26 @@ test('model output is never interpreted as HTML', () => {
   output.remove()
   host.remove()
 })
+
+test('translates simple table cells while preserving the table structure', () => {
+  const host = mount('<table><tr><td colspan="2">单元格</td><th>表头</th></tr></table>')
+  const units = extractUnits(host)
+  assert.equal(units.filter((unit) => unit.role === 'table-cell').length, 2)
+  const translations = Object.fromEntries(units.map((unit) => [unit.hash, `译:${unit.plainText}`]))
+  const html = buildTranslatedOnlyHtml(host.innerHTML, (hash) => translations[hash] || '')
+  const output = mount(html)
+  assert.match(output.querySelector('td').textContent, /译:单元格/)
+  assert.match(output.querySelector('th').textContent, /译:表头/)
+  assert.equal(output.querySelector('td').getAttribute('colspan'), '2')
+  output.remove()
+  host.remove()
+})
+
+test('a table cell containing a block falls back to translating the inner block', () => {
+  const host = mount('<table><tr><td><p>嵌套单元格</p></td></tr></table>')
+  const units = extractUnits(host)
+  assert.equal(units.length, 1)
+  assert.equal(units[0].node.tagName, 'P')
+  assert.equal(units[0].role, 'body')
+  host.remove()
+})

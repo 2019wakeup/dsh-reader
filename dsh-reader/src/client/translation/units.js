@@ -9,7 +9,7 @@ import { blockHash, normalizeBlockText } from '../../../lib/block-hash.js'
  * original nodes to restore after translation.
  */
 
-const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, figcaption'
+const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, figcaption, td, th'
 const BLOCK_CHILD_SELECTOR = 'p, div, ul, ol, blockquote, pre, table, h1, h2, h3, h4, figure, section'
 const PROTECTED_SELECTOR = 'code, kbd, samp, .katex, math, mjx-container, a[href], a[id], a[name], svg'
 
@@ -26,6 +26,7 @@ function roleFor(node) {
   if (tag === 'li') return 'list'
   if (tag === 'blockquote') return 'quote'
   if (tag === 'figcaption') return 'caption'
+  if (tag === 'td' || tag === 'th') return 'table-cell'
   return 'body'
 }
 
