@@ -1,0 +1,17 @@
+{
+  "corpus": "v1",
+  "promptVersion": 2,
+  "model": "",
+  "aggregate": null,
+  "note": "Update only after human review of a live holdout report; never overwrite from CI.",
+  "thresholds": {
+    "adequacy": 4.3,
+    "fluency": 4.2,
+    "terminology": 4.5,
+    "passRate": 0.95,
+    "winRate": 0.6,
+    "lossRate": 0.15,
+    "humanAgreement": 0.85,
+    "humanKappa": 0.6
+  }
+}

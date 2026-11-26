@@ -32,6 +32,23 @@ async function readJsonl(file) {
   return (await fs.readFile(file, 'utf8')).split('\n').filter(Boolean).map((line) => JSON.parse(line))
 }
 
+function markdownReport(report) {
+  const lines = [`# Translation eval — ${report.mode}`, '', `- at: ${report.at}`, `- corpus: ${report.corpus || 'v1'}`]
+  if (report.mode === 'live') {
+    lines.push(`- split: ${report.split}`, `- translated: ${report.translated}`, `- judged: ${report.judged}`, `- model: ${report.model || ''}`, '')
+    lines.push('| Metric | Value |', '| --- | --- |')
+    for (const key of ['count', 'adequacy', 'fluency', 'terminology', 'passRate']) {
+      lines.push(`| ${key} | ${report.aggregate?.[key] ?? ''} |`)
+    }
+    lines.push('', `Gate: ${report.gate?.pass ? 'PASS' : 'FAIL'}`)
+  } else {
+    lines.push('', '| Check | Result |', '| --- | --- |')
+    for (const result of report.results || []) lines.push(`| ${result.name} | ${result.pass ? 'PASS' : 'FAIL'} |`)
+    lines.push('', `Passed: ${report.passed}/${report.total}`)
+  }
+  return lines.join('\n') + '\n'
+}
+
 async function runOffline() {
   const manifest = await readJson(path.join(corpusDir, 'manifest.json'))
   const segments = await readJsonl(path.join(corpusDir, 'segments.jsonl'))
@@ -78,6 +95,7 @@ async function runOffline() {
     results,
   }
   await fs.writeFile(path.join(here, 'translate', 'last-report.json'), JSON.stringify(report, null, 2))
+  await fs.writeFile(path.join(here, 'translate', 'last-report.md'), markdownReport(report))
   console.log(`\n${report.passed}/${report.total} translation eval checks passed`)
   process.exit(failed.length === 0 ? 0 : 1)
 }
@@ -173,6 +191,7 @@ async function runLive() {
     scores,
   }
   await fs.writeFile(path.join(here, 'translate', 'live-report.json'), JSON.stringify(report, null, 2))
+  await fs.writeFile(path.join(here, 'translate', 'live-report.md'), markdownReport(report))
   console.log(`\nlive ${split}: ${scores.length}/${items.length} judged`)
   console.log(JSON.stringify(aggregate, null, 2))
   if (gateMode && !gate.pass) {

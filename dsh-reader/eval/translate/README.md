@@ -13,3 +13,15 @@ node eval/translate.mjs --offline
 - `last-report.json`: generated report
 
 L2 live eval and the judge land in #18.
+
+## Live (L2)
+
+Requires a DSH instance with a model and `DSH_READER_EVAL=1`:
+
+```bash
+DSH_READER_EVAL=1 DSH_SESSION_ID=... node eval/translate.mjs --live --split=holdout --gate
+```
+
+It writes `live-report.json` / `.md` and does not fake a pass when the judge
+route or model is unavailable. `baseline.json` is updated only after human
+review.
