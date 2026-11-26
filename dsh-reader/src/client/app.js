@@ -2,6 +2,8 @@ import { TRANSLATE_LANGUAGES, TRANSLATE_SOURCES, detectLanguage } from '../../li
 import { partitionTranslationBatch } from './translation-schedule.js'
 import { translationErrorInfo, translationRetryDelay } from './translation-errors.js'
 import { extractUnits, renderUnitFragment, buildTranslatedOnlyHtml, unitFromText, unitsFromPdfBlocks } from './translation/units.js'
+import { buildTranslationContext } from './translation/context.js'
+import { activeGlossary, glossaryHash } from '../../lib/glossary.js'
 
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
@@ -343,6 +345,7 @@ export function ReaderView(props) {
   const [cardSizes, setCardSizes] = React.useState({})
   const cardDragRef = React.useRef(null)
   const [noteDraft, setNoteDraft] = React.useState(null)
+  const [glossaryDraft, setGlossaryDraft] = React.useState({ term: '', translation: '' })
   const [editing, setEditing] = React.useState(null)
   const [toast, setToast] = React.useState(null)
   const [busy, setBusy] = React.useState(false)
@@ -1649,6 +1652,25 @@ export function ReaderView(props) {
     )
   }
 
+  const saveGlossaryTerm = () => {
+    const term = String(glossaryDraft.term || '').trim()
+    const translation = String(glossaryDraft.translation || '').trim()
+    if (!term || !translation) {
+      flash(t('label.glossaryInvalid'))
+      return
+    }
+    applyMutation({ op: 'glossary/upsert', term: { term, translation, scope: 'global' } })
+      .then(() => {
+        setGlossaryDraft({ term: '', translation: '' })
+        flash(t('label.glossarySaved'))
+      })
+      .catch((error) => reportError(error))
+  }
+
+  const removeGlossaryTerm = (id) => {
+    applyMutation({ op: 'glossary/remove', id }).catch((error) => reportError(error))
+  }
+
   const saveConceptEdit = async () => {
     if (!conceptEdit) return
     const result = conceptPatch(conceptEdit.form)
@@ -2233,6 +2255,42 @@ export function ReaderView(props) {
   const sameLanguage = Boolean(!forceTranslate && effectiveSource && effectiveSource === translationLang)
   const translationSkipRef = React.useRef(sameLanguage)
   const forceTranslateRef = React.useRef(false)
+  const translationGlossary = React.useMemo(
+    () => activeGlossary(store.glossary, docKey),
+    [store.glossary, docKey],
+  )
+  const translationContext = React.useMemo(
+    () => buildTranslationContext({ doc, docKey, chapter, store }),
+    [doc, docKey, chapter, store.docs, store.concepts],
+  )
+  const translationGlossaryRef = React.useRef(translationGlossary)
+  const translationContextRef = React.useRef(translationContext)
+  const translationGlossarySignature = React.useMemo(() => glossaryHash(translationGlossary), [translationGlossary])
+  const glossarySignatureRef = React.useRef(translationGlossarySignature)
+  React.useEffect(() => {
+    translationGlossaryRef.current = translationGlossary
+  }, [translationGlossary])
+  React.useEffect(() => {
+    if (glossarySignatureRef.current === translationGlossarySignature) return
+    glossarySignatureRef.current = translationGlossarySignature
+    // A term changed: old translations for this book/language were produced
+    // under a different glossary hash. Clear that cache once, then refresh
+    // the visible blocks so the new term actually takes effect.
+    translationCacheRef.current = { ...translationCacheRef.current, [translationLang]: {} }
+    setTranslationCache(translationCacheRef.current)
+    setTranslationTick((tick) => tick + 1)
+    if (!docKey) return
+    applyMutation({ op: 'translation/clear', docKey, lang: translationLang })
+      .then((result) => {
+        if (result?.store) mergeStore(result.store)
+        setTimeout(translateVisibleNow, 0)
+      })
+      .catch((error) => reportError(error))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translationGlossarySignature])
+  React.useEffect(() => {
+    translationContextRef.current = translationContext
+  }, [translationContext])
   React.useEffect(() => {
     translationSkipRef.current = sameLanguage
   }, [sameLanguage])
@@ -2418,6 +2476,8 @@ export function ReaderView(props) {
           docKey,
           target: lang,
           from,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
           ...(forceTranslateRef.current ? { force: true } : {}),
         })
@@ -2597,6 +2657,8 @@ export function ReaderView(props) {
             docKey,
             target: translationLangRef.current,
             from: translationFromRef.current,
+            glossary: translationGlossaryRef.current,
+            context: translationContextRef.current,
             segments,
             ...(forceTranslateRef.current ? { force: true } : {}),
           })
@@ -2661,6 +2723,8 @@ export function ReaderView(props) {
           docKey,
           target: translationLangRef.current,
           from: translationFromRef.current,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
           ...(forceTranslateRef.current ? { force: true } : {}),
         })
@@ -2708,6 +2772,8 @@ export function ReaderView(props) {
         docKey,
         target: translationLang,
         from: translationFrom,
+        glossary: translationGlossaryRef.current,
+        context: translationContextRef.current,
         segments: [{ id: hash, text: unit.text }],
         ...(forceTranslateRef.current ? { force: true } : {}),
       })
@@ -2752,6 +2818,8 @@ export function ReaderView(props) {
         docKey,
         target: translationLang,
         from: translationFrom,
+        glossary: translationGlossaryRef.current,
+        context: translationContextRef.current,
         segments: [{ id: hash, text: unit.text }],
         force: true,
       })
@@ -4415,6 +4483,44 @@ export function ReaderView(props) {
               onChange: (event) => changePrefs({ translateTo: event.target.value }),
             },
             TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'rd-setting-section', style: { padding: '8px 0', borderBottom: '1px dashed var(--dsw-alias-border-l1)' } },
+          h('div', { className: 'rd-setting-title', style: { fontSize: '12.5px', marginBottom: '6px' } }, t('label.glossary')),
+          (store.glossary?.terms || []).length === 0
+            ? h('div', { className: 'rd-muted', style: { fontSize: '11.5px' } }, t('label.glossaryEmpty'))
+            : (store.glossary?.terms || []).map((term) =>
+                h(
+                  'div',
+                  { key: term.id, className: 'rd-setting-row' },
+                  h('span', null, `${term.term} → ${term.translation}`),
+                  h(
+                    'button',
+                    { className: 'rd-btn ghost', onClick: () => removeGlossaryTerm(term.id) },
+                    '×',
+                  ),
+                ),
+              ),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: '6px 0 0' } },
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTerm'),
+              value: glossaryDraft.term,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, term: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTranslation'),
+              value: glossaryDraft.translation,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, translation: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('button', { className: 'rd-btn', onClick: saveGlossaryTerm }, t('action.add')),
           ),
         ),
         row(

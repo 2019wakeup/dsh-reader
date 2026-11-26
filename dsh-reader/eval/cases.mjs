@@ -37,6 +37,7 @@ const { buildTree, layoutTree, chunkNodeLines, mapGridVars } = await import(path
 const { clampCardPosition } = await import(pathToFileURL(path.join(root, 'src/client/card-drag.js')).href)
 const { takeTranslationBatch, isNearViewport } = await import(pathToFileURL(path.join(root, 'src/client/translation-schedule.js')).href)
 const { translateCacheKey, evictTranslationCache } = await import(pathToFileURL(path.join(root, 'lib/translation-cache.js')).href)
+const { normalizeGlossary, matchGlossary, glossaryHash } = await import(pathToFileURL(path.join(root, 'lib/glossary.js')).href)
 const { buildTranscript, formatLocation, buildQuoteText } = await import(pathToFileURL(path.join(root, 'src/client/chat-transcript.js')).href)
 const { buildReadingReport, buildReaderContextPayload, buildReaderReadPayload } = await import(pathToFileURL(path.join(root, 'lib/reader-context.js')).href)
 const { buildTranslatePrompt, detectLanguage, TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } = await import(
@@ -207,6 +208,21 @@ export const cases = [
       if (Object.keys(doc.translations.zh).length !== 2) throw new Error('eviction did not cap')
       if (doc.translations.zh.a) throw new Error('oldest entry survived')
       return { key: key.slice(0, 20), evicted: 1 }
+    },
+  },
+  {
+    name: 'contract.glossary',
+    async run() {
+      const terms = normalizeGlossary({
+        terms: [
+          { term: 'consistent hashing', translation: '一致性哈希', scope: 'global' },
+          { term: 'CAP', translation: 'CAP 定理', scope: 'global' },
+        ],
+      }).terms
+      const matched = matchGlossary('CAP and consistent hashing', terms)
+      if (matched.length !== 2) throw new Error('glossary match failed')
+      if (glossaryHash(matched) === glossaryHash([])) throw new Error('glossary hash empty')
+      return { matched: matched.length }
     },
   },
   {

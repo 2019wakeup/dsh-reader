@@ -8,6 +8,7 @@ import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLate
 import { recordSent } from './lib/sent.js'
 import { blockHash } from './lib/block-hash.js'
 import { translateCacheKey, translationMeta, evictTranslationCache, TRANSLATE_PROMPT_VERSION } from './lib/translation-cache.js'
+import { activeGlossary, glossaryHash, matchGlossary, normalizeGlossary, normalizeGlossaryTerm } from './lib/glossary.js'
 import {
   buildTranslatePrompt,
   detectLanguage,
@@ -713,6 +714,26 @@ function applyMutation(store, body) {
     addOccurrence(store, body.conceptId, body.occurrence)
     return store
   }
+  if (op === 'glossary/upsert') {
+    const term = normalizeGlossaryTerm(body.term)
+    if (!term) throw httpError(400, 'invalid glossary term')
+    const current = normalizeGlossary(store.glossary)
+    const index = current.terms.findIndex(
+      (item) => item.id === term.id || (item.scope === term.scope && item.term.toLowerCase() === term.term.toLowerCase()),
+    )
+    term.updatedAt = Date.now()
+    if (index >= 0) current.terms[index] = term
+    else current.terms.push(term)
+    store.glossary = normalizeGlossary(current)
+    return store
+  }
+  if (op === 'glossary/remove') {
+    if (typeof body.id !== 'string' || !body.id) throw httpError(400, 'invalid glossary id')
+    const current = normalizeGlossary(store.glossary)
+    current.terms = current.terms.filter((item) => item.id !== body.id)
+    store.glossary = current
+    return store
+  }
   if (op === 'translation/clear') {
     const { docKey, lang, clearOverrides } = body
     if (typeof docKey !== 'string' || !docKey) throw httpError(400, 'invalid docKey')
@@ -1224,7 +1245,10 @@ async function translateRoute(ctx, req, res) {
     const existing = doc?.translations?.[target] || {}
     const overrides = doc?.translationOverrides?.[target] || {}
     const promptVersion = Number.isInteger(body?.promptVersion) ? body.promptVersion : TRANSLATE_PROMPT_VERSION
-    const glossaryHash = typeof body?.glossaryHash === 'string' && body.glossaryHash ? body.glossaryHash.slice(0, 64) : 'none'
+    const terms = Array.isArray(body?.glossary)
+      ? activeGlossary({ terms: body.glossary }, docKey)
+      : activeGlossary(store.glossary, docKey)
+    const context = body?.context && typeof body.context === 'object' ? body.context : {}
     const model = pluginModel(store, ctx)
     const result = {}
     const failed = []
@@ -1233,7 +1257,9 @@ async function translateRoute(ctx, req, res) {
     let cached = 0
     for (const segment of segments) {
       const contentHash = blockHash(segment.text)
-      const cacheKey = translateCacheKey({ target, from, promptVersion, glossaryHash, contentHash })
+      const matchedGlossary = matchGlossary(segment.text, terms)
+      const segmentGlossaryHash = glossaryHash(matchedGlossary)
+      const cacheKey = translateCacheKey({ target, from, promptVersion, glossaryHash: segmentGlossaryHash, contentHash })
       const override = overrides[contentHash]
       const overrideText = typeof override === 'string' ? override : override?.text
       if (overrideText) {
@@ -1254,7 +1280,14 @@ async function translateRoute(ctx, req, res) {
         cached += 1
         continue
       }
-      pending.push({ id: segment.id, cacheKey, contentHash, text: String(segment.text) })
+      pending.push({
+        id: segment.id,
+        cacheKey,
+        contentHash,
+        text: String(segment.text),
+        glossary: matchedGlossary,
+        glossaryHash: segmentGlossaryHash,
+      })
     }
 
     let generated = 0
@@ -1276,9 +1309,20 @@ async function translateRoute(ctx, req, res) {
 
     const effort = pending.length > 0 ? await pickEffort(ctx, model.provider, model.model, 'low') : null
     for (const group of batches) {
+      const groupGlossary = []
+      const seenTerms = new Set()
+      for (const segment of group) {
+        for (const term of segment.glossary || []) {
+          if (seenTerms.has(term.id)) continue
+          seenTerms.add(term.id)
+          groupGlossary.push(term)
+        }
+      }
       const prompt = buildTranslatePrompt({
         target,
         from,
+        glossary: groupGlossary,
+        context,
         segments: group.map((segment) => ({ id: segment.id, text: segment.text })),
       })
       const chars = group.reduce((sum, segment) => sum + segment.text.length, 0)
@@ -1301,7 +1345,7 @@ async function translateRoute(ctx, req, res) {
           from,
           model: `${model.provider}/${model.model}`,
           promptVersion,
-          glossaryHash,
+          glossaryHash: segment.glossaryHash,
           chars: segment.text.length,
         })
         generated += 1
