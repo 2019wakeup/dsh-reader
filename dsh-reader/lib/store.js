@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { migrateV1 } from './migrate.js'
 import { defaultPrefs } from './prefs.js'
+import { normalizeGlossary } from './glossary.js'
 import { MAX_READING_SESSIONS, MAX_SESSION_ID_CHARS, normalizeReaderPosition } from './reader-context.js'
 import { toPosix } from './paths.js'
 import { TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } from './translate.js'
@@ -15,7 +16,7 @@ const BACKUP_KEEP = 5
 let backupSequence = 0
 
 export function emptyStore() {
-  return { version: 2, revision: 0, prefs: defaultPrefs(), concepts: {}, docs: {}, reading: {}, debug: { lastSent: [], lastError: null, errors: [] } }
+  return { version: 2, revision: 0, prefs: defaultPrefs(), glossary: { version: 1, terms: [] }, concepts: {}, docs: {}, reading: {}, debug: { lastSent: [], lastError: null, errors: [] } }
 }
 
 function isRecord(value) {
@@ -216,6 +217,7 @@ function normalizeV2(raw) {
     version: 2,
     revision: Number.isFinite(raw.revision) ? raw.revision : 0,
     prefs: normalizePrefs(raw.prefs),
+    glossary: normalizeGlossary(raw.glossary),
     concepts: isRecord(raw.concepts) ? raw.concepts : base.concepts,
     docs: normalizeDocs(raw.docs),
     reading: normalizeReading(raw.reading),

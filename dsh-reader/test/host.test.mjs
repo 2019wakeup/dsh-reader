@@ -1067,6 +1067,58 @@ test('translation/clear removes the cache for one language but keeps overrides b
   assert.equal(overridden.generated, 0)
 })
 
+test('a stored glossary term is injected into the translation prompt', async (t) => {
+  let seenUser = ''
+  const llmReply = (options) => {
+    seenUser = options.messages[0].content[0].text
+    return '{"translations":{"h1":"CAP 定理很难。"}}'
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      op: 'glossary/upsert',
+      term: { term: 'CAP', translation: 'CAP 定理', scope: 'global' },
+    }),
+  })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-gloss', path: 'a.md' }),
+  })
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp-gloss',
+      target: 'zh',
+      from: 'en',
+      context: { title: '论文', chapter: '引言' },
+      segments: [{ id: 'h1', text: 'CAP is hard.' }],
+    }),
+  })
+  assert.equal(res.status, 200)
+  assert.match(seenUser, /CAP => CAP 定理/)
+  assert.match(seenUser, /chapter: 引言/)
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      op: 'glossary/upsert',
+      term: { term: 'CAP', translation: 'CAP 定理（新版）', scope: 'global' },
+    }),
+  })
+  const again = await (await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp-gloss',
+      target: 'zh',
+      from: 'en',
+      context: { title: '论文', chapter: '引言' },
+      segments: [{ id: 'h1', text: 'CAP is hard.' }],
+    }),
+  })).json()
+  assert.equal(again.generated, 1, 'changed glossary invalidates the cache')
+  assert.match(seenUser, /CAP => CAP 定理（新版）/)
+})
+
 test('rejects a translation request with an unknown target', async (t) => {
   const { call } = await setup(t)
   const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {

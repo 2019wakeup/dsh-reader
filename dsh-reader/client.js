@@ -171,7 +171,7 @@ function looksLikeLanguage(text, language) {
   return detected.confidence >= 0.6 && detected.language === language
 }
 
-function buildTranslatePrompt({ target, from = 'auto', segments }) {
+function buildTranslatePrompt({ target, from = 'auto', segments, glossary = [], context = {} }) {
   const source = from === 'auto' ? '源语言自动判断。' : `源语言：${languageName(from)}。`
   const system = [
     `你是专业翻译。${source}把每个段落准确翻译成${languageName(target)}，保留术语、数字与专有名词。`,
@@ -180,8 +180,26 @@ function buildTranslatePrompt({ target, from = 'auto', segments }) {
     '逐段对应，不要合并或拆分段落。',
     '保留 {{RD:n}} 占位符原样、顺序不变；不要翻译或增删占位符里的内容。',
     '不要给译文加“译文：”之类的前缀。',
+    '术语表给出的译法必须原样使用；上下文只用于消歧，不要翻译上下文。',
   ].join('')
-  const user = segments.map((segment) => `[${segment.id}] ${segment.text}`).join('\n').slice(0, 12000)
+  const parts = []
+  const title = String(context.title || '').trim().slice(0, 160)
+  const chapter = String(context.chapter || '').trim().slice(0, 160)
+  const snapshot = String(context.chapterSnapshot || '').trim().slice(0, 400)
+  if (title || chapter || snapshot) {
+    parts.push(
+      ['<document>', title ? `title: ${title}` : '', chapter ? `chapter: ${chapter}` : '', snapshot ? `context: ${snapshot}` : '', '</document>']
+        .filter(Boolean)
+        .join('\n'),
+    )
+  }
+  const glossaryLines = (glossary || [])
+    .filter((term) => term && term.term && term.translation)
+    .slice(0, 200)
+    .map((term) => `${term.term} => ${term.translation}`)
+  if (glossaryLines.length > 0) parts.push(['<glossary>', ...glossaryLines, '</glossary>'].join('\n'))
+  parts.push(['<segments>', ...segments.map((segment) => `[${segment.id}] ${segment.text}`), '</segments>'].join('\n'))
+  const user = parts.join('\n\n').slice(0, 12000)
   return { system, user }
 }
 
@@ -267,6 +285,111 @@ function evictTranslationCache(doc, { maxPerLanguage = 2000, maxPerDoc = 8000 } 
     delete translations[entry.lang][entry.key]
     delete meta[entry.lang]?.[entry.key]
   }
+}
+
+
+/**
+ * Glossary normalization, matching and a stable version hash.
+ * A translation cache must change when the terms that apply to a segment
+ * change; hashing only the text would keep stale terminology forever.
+ */
+
+const MAX_TERMS = 500
+const MAX_TERM_CHARS = 120
+
+function text(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function normalizeGlossaryTerm(raw, fallbackId = '') {
+  if (!raw || typeof raw !== 'object') return null
+  const term = text(raw.term).slice(0, MAX_TERM_CHARS)
+  const translation = text(raw.translation).slice(0, MAX_TERM_CHARS)
+  if (!term || !translation) return null
+  const scope = typeof raw.scope === 'string' && raw.scope ? raw.scope.slice(0, 200) : 'global'
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id.slice(0, 120) : fallbackId || `g-${hashString(`${scope}:${term}`)}`,
+    term,
+    translation,
+    scope,
+    caseSensitive: raw.caseSensitive === true,
+    note: text(raw.note).slice(0, 240),
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
+  }
+}
+
+function normalizeGlossary(raw) {
+  const list = Array.isArray(raw?.terms) ? raw.terms : Array.isArray(raw) ? raw : []
+  const seen = new Set()
+  const terms = []
+  for (const item of list) {
+    const term = normalizeGlossaryTerm(item)
+    if (!term) continue
+    const key = `${term.scope}\u0000${term.caseSensitive ? '1' : '0'}\u0000${term.term.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    terms.push(term)
+    if (terms.length >= MAX_TERMS) break
+  }
+  return { version: 1, terms }
+}
+
+function activeGlossary(glossary, docKey) {
+  const terms = Array.isArray(glossary?.terms) ? glossary.terms : []
+  return terms.filter((term) => term && (term.scope === 'global' || (docKey && term.scope === docKey)))
+}
+
+function isWordChar(char) {
+  return Boolean(char) && /[\p{L}\p{N}_]/u.test(char)
+}
+
+/** Longest-match terms present in `source`; links/code placeholders are ignored. */
+function matchGlossary(source, terms) {
+  const haystack = String(source || '')
+  const found = []
+  const ordered = (terms || [])
+    .filter((term) => term && term.term && term.translation)
+    .sort((left, right) => right.term.length - left.term.length)
+  for (const term of ordered) {
+    const needle = term.caseSensitive ? term.term : term.term.toLowerCase()
+    const hay = term.caseSensitive ? haystack : haystack.toLowerCase()
+    let from = 0
+    while (from <= hay.length - needle.length) {
+      const index = hay.indexOf(needle, from)
+      if (index < 0) break
+      const before = haystack[index - 1]
+      const after = haystack[index + term.term.length]
+      const latin = /^[A-Za-z\u00c0-\u024f]/.test(term.term)
+      if (!latin || (!isWordChar(before) && !isWordChar(after))) {
+        found.push(term)
+        break
+      }
+      from = index + needle.length
+    }
+  }
+  return found
+}
+
+function hashString(value) {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+function glossaryHash(terms) {
+  if (!terms || terms.length === 0) return 'none'
+  const canonical = [...terms]
+    .map((term) => `${term.term}\u0000${term.translation}\u0000${term.caseSensitive ? 1 : 0}`)
+    .sort()
+    .join('\u0001')
+  return hashString(canonical)
+}
+
+function glossaryPromptLines(terms) {
+  return (terms || []).map((term) => `${term.term} => ${term.translation}`)
 }
 
 
@@ -1010,6 +1133,13 @@ const ZH = {
   'label.translateFailed': '失败',
   'label.retryFailed': '重试失败',
   'label.staleTranslation': '旧译文，待刷新',
+  'label.glossary': '术语表',
+  'label.glossaryEmpty': '还没有术语，添加后翻译会优先使用。',
+  'label.glossaryTerm': '原文术语',
+  'label.glossaryTranslation': '指定译法',
+  'label.glossaryInvalid': '术语和译法都不能为空。',
+  'label.glossarySaved': '术语已保存。',
+  'action.add': '添加',
   'label.translateOffline': '网络离线，恢复后重试。',
   'label.translateRateLimited': '请求过多，正在退避重试…',
   'label.translateNoModel': '未配置可用模型，请先在设置里选择模型。',
@@ -1317,6 +1447,13 @@ const EN = {
   'label.translateFailed': 'Failed',
   'label.retryFailed': 'Retry failed',
   'label.staleTranslation': 'Old translation; refresh needed',
+  'label.glossary': 'Glossary',
+  'label.glossaryEmpty': 'No terms yet; translations will prefer added terms.',
+  'label.glossaryTerm': 'Source term',
+  'label.glossaryTranslation': 'Preferred translation',
+  'label.glossaryInvalid': 'Both the term and its translation are required.',
+  'label.glossarySaved': 'Glossary term saved.',
+  'action.add': 'Add',
   'label.translateOffline': 'Offline; retry when the connection returns.',
   'label.translateRateLimited': 'Too many requests; backing off…',
   'label.translateNoModel': 'No model configured. Choose one in Settings first.',
@@ -4592,6 +4729,39 @@ function unitsFromPdfBlocks(blocks, { chapter = '' } = {}) {
 
 
 /**
+ * Build the per-chapter translation context from data the reader already has:
+ * guide sections and concept terms. No extra model call is made; without a
+ * guide we still provide the book/chapter title.
+ */
+function buildTranslationContext({ doc, docKey, chapter = 0, store = {} }) {
+  if (!doc) return { title: '', chapter: '', chapterSnapshot: '' }
+  const chapters = (doc.epub && doc.epub.chapters) || (doc.docx && doc.docx.chapters) || []
+  const guide = store.docs?.[docKey]?.guide
+  const section = guide?.sections?.[chapter]
+  const chapterTitle = String(
+    (chapters[chapter] && chapters[chapter].title) || section?.title || '',
+  ).trim()
+  const concepts = Object.values(store.concepts || {})
+    .filter((concept) => {
+      const occurrences = Array.isArray(concept?.occurrences) ? concept.occurrences : []
+      return occurrences.some((occurrence) => occurrence && occurrence.docKey === docKey)
+    })
+    .map((concept) => String(concept.term || '').trim())
+    .filter(Boolean)
+    .slice(0, 12)
+  const bits = []
+  if (section?.summary) bits.push(String(section.summary))
+  if (Array.isArray(section?.keyPoints)) bits.push(...section.keyPoints.slice(0, 6).map(String))
+  if (concepts.length > 0) bits.push(`术语：${concepts.join('、')}`)
+  return {
+    title: String(doc.name || ''),
+    chapter: chapterTitle,
+    chapterSnapshot: bits.join('；').slice(0, 400),
+  }
+}
+
+
+/**
  * Clamp a dragged card to the reader surface.
  *
  * The card keeps its full rendered height inside the bounds; using the max
@@ -6546,6 +6716,8 @@ function createPositionReporter(options = {}) {
 
 
 
+
+
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
 function viewStateKey(sessionId) {
@@ -6886,6 +7058,7 @@ function ReaderView(props) {
   const [cardSizes, setCardSizes] = React.useState({})
   const cardDragRef = React.useRef(null)
   const [noteDraft, setNoteDraft] = React.useState(null)
+  const [glossaryDraft, setGlossaryDraft] = React.useState({ term: '', translation: '' })
   const [editing, setEditing] = React.useState(null)
   const [toast, setToast] = React.useState(null)
   const [busy, setBusy] = React.useState(false)
@@ -8192,6 +8365,25 @@ function ReaderView(props) {
     )
   }
 
+  const saveGlossaryTerm = () => {
+    const term = String(glossaryDraft.term || '').trim()
+    const translation = String(glossaryDraft.translation || '').trim()
+    if (!term || !translation) {
+      flash(t('label.glossaryInvalid'))
+      return
+    }
+    applyMutation({ op: 'glossary/upsert', term: { term, translation, scope: 'global' } })
+      .then(() => {
+        setGlossaryDraft({ term: '', translation: '' })
+        flash(t('label.glossarySaved'))
+      })
+      .catch((error) => reportError(error))
+  }
+
+  const removeGlossaryTerm = (id) => {
+    applyMutation({ op: 'glossary/remove', id }).catch((error) => reportError(error))
+  }
+
   const saveConceptEdit = async () => {
     if (!conceptEdit) return
     const result = conceptPatch(conceptEdit.form)
@@ -8776,6 +8968,42 @@ function ReaderView(props) {
   const sameLanguage = Boolean(!forceTranslate && effectiveSource && effectiveSource === translationLang)
   const translationSkipRef = React.useRef(sameLanguage)
   const forceTranslateRef = React.useRef(false)
+  const translationGlossary = React.useMemo(
+    () => activeGlossary(store.glossary, docKey),
+    [store.glossary, docKey],
+  )
+  const translationContext = React.useMemo(
+    () => buildTranslationContext({ doc, docKey, chapter, store }),
+    [doc, docKey, chapter, store.docs, store.concepts],
+  )
+  const translationGlossaryRef = React.useRef(translationGlossary)
+  const translationContextRef = React.useRef(translationContext)
+  const translationGlossarySignature = React.useMemo(() => glossaryHash(translationGlossary), [translationGlossary])
+  const glossarySignatureRef = React.useRef(translationGlossarySignature)
+  React.useEffect(() => {
+    translationGlossaryRef.current = translationGlossary
+  }, [translationGlossary])
+  React.useEffect(() => {
+    if (glossarySignatureRef.current === translationGlossarySignature) return
+    glossarySignatureRef.current = translationGlossarySignature
+    // A term changed: old translations for this book/language were produced
+    // under a different glossary hash. Clear that cache once, then refresh
+    // the visible blocks so the new term actually takes effect.
+    translationCacheRef.current = { ...translationCacheRef.current, [translationLang]: {} }
+    setTranslationCache(translationCacheRef.current)
+    setTranslationTick((tick) => tick + 1)
+    if (!docKey) return
+    applyMutation({ op: 'translation/clear', docKey, lang: translationLang })
+      .then((result) => {
+        if (result?.store) mergeStore(result.store)
+        setTimeout(translateVisibleNow, 0)
+      })
+      .catch((error) => reportError(error))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translationGlossarySignature])
+  React.useEffect(() => {
+    translationContextRef.current = translationContext
+  }, [translationContext])
   React.useEffect(() => {
     translationSkipRef.current = sameLanguage
   }, [sameLanguage])
@@ -8961,6 +9189,8 @@ function ReaderView(props) {
           docKey,
           target: lang,
           from,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
           ...(forceTranslateRef.current ? { force: true } : {}),
         })
@@ -9140,6 +9370,8 @@ function ReaderView(props) {
             docKey,
             target: translationLangRef.current,
             from: translationFromRef.current,
+            glossary: translationGlossaryRef.current,
+            context: translationContextRef.current,
             segments,
             ...(forceTranslateRef.current ? { force: true } : {}),
           })
@@ -9204,6 +9436,8 @@ function ReaderView(props) {
           docKey,
           target: translationLangRef.current,
           from: translationFromRef.current,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
           ...(forceTranslateRef.current ? { force: true } : {}),
         })
@@ -9251,6 +9485,8 @@ function ReaderView(props) {
         docKey,
         target: translationLang,
         from: translationFrom,
+        glossary: translationGlossaryRef.current,
+        context: translationContextRef.current,
         segments: [{ id: hash, text: unit.text }],
         ...(forceTranslateRef.current ? { force: true } : {}),
       })
@@ -9295,6 +9531,8 @@ function ReaderView(props) {
         docKey,
         target: translationLang,
         from: translationFrom,
+        glossary: translationGlossaryRef.current,
+        context: translationContextRef.current,
         segments: [{ id: hash, text: unit.text }],
         force: true,
       })
@@ -10958,6 +11196,44 @@ function ReaderView(props) {
               onChange: (event) => changePrefs({ translateTo: event.target.value }),
             },
             TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'rd-setting-section', style: { padding: '8px 0', borderBottom: '1px dashed var(--dsw-alias-border-l1)' } },
+          h('div', { className: 'rd-setting-title', style: { fontSize: '12.5px', marginBottom: '6px' } }, t('label.glossary')),
+          (store.glossary?.terms || []).length === 0
+            ? h('div', { className: 'rd-muted', style: { fontSize: '11.5px' } }, t('label.glossaryEmpty'))
+            : (store.glossary?.terms || []).map((term) =>
+                h(
+                  'div',
+                  { key: term.id, className: 'rd-setting-row' },
+                  h('span', null, `${term.term} → ${term.translation}`),
+                  h(
+                    'button',
+                    { className: 'rd-btn ghost', onClick: () => removeGlossaryTerm(term.id) },
+                    '×',
+                  ),
+                ),
+              ),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: '6px 0 0' } },
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTerm'),
+              value: glossaryDraft.term,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, term: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTranslation'),
+              value: glossaryDraft.translation,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, translation: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('button', { className: 'rd-btn', onClick: saveGlossaryTerm }, t('action.add')),
           ),
         ),
         row(

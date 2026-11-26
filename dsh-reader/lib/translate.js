@@ -138,7 +138,7 @@ export function looksLikeLanguage(text, language) {
   return detected.confidence >= 0.6 && detected.language === language
 }
 
-export function buildTranslatePrompt({ target, from = 'auto', segments }) {
+export function buildTranslatePrompt({ target, from = 'auto', segments, glossary = [], context = {} }) {
   const source = from === 'auto' ? '源语言自动判断。' : `源语言：${languageName(from)}。`
   const system = [
     `你是专业翻译。${source}把每个段落准确翻译成${languageName(target)}，保留术语、数字与专有名词。`,
@@ -147,8 +147,26 @@ export function buildTranslatePrompt({ target, from = 'auto', segments }) {
     '逐段对应，不要合并或拆分段落。',
     '保留 {{RD:n}} 占位符原样、顺序不变；不要翻译或增删占位符里的内容。',
     '不要给译文加“译文：”之类的前缀。',
+    '术语表给出的译法必须原样使用；上下文只用于消歧，不要翻译上下文。',
   ].join('')
-  const user = segments.map((segment) => `[${segment.id}] ${segment.text}`).join('\n').slice(0, 12000)
+  const parts = []
+  const title = String(context.title || '').trim().slice(0, 160)
+  const chapter = String(context.chapter || '').trim().slice(0, 160)
+  const snapshot = String(context.chapterSnapshot || '').trim().slice(0, 400)
+  if (title || chapter || snapshot) {
+    parts.push(
+      ['<document>', title ? `title: ${title}` : '', chapter ? `chapter: ${chapter}` : '', snapshot ? `context: ${snapshot}` : '', '</document>']
+        .filter(Boolean)
+        .join('\n'),
+    )
+  }
+  const glossaryLines = (glossary || [])
+    .filter((term) => term && term.term && term.translation)
+    .slice(0, 200)
+    .map((term) => `${term.term} => ${term.translation}`)
+  if (glossaryLines.length > 0) parts.push(['<glossary>', ...glossaryLines, '</glossary>'].join('\n'))
+  parts.push(['<segments>', ...segments.map((segment) => `[${segment.id}] ${segment.text}`), '</segments>'].join('\n'))
+  const user = parts.join('\n\n').slice(0, 12000)
   return { system, user }
 }
 
