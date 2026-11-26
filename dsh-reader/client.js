@@ -8612,6 +8612,7 @@ function ReaderView(props) {
   React.useEffect(() => {
     pdfFailedRef.current.clear()
     setPdfFailed(0)
+    setTranslationError('')
   }, [docKey, page, translationLang, translationFrom])
 
   const collectTranslationBlocks = (limit = 1000) => {
@@ -8640,6 +8641,9 @@ function ReaderView(props) {
       translationFailedRef.current.delete(id)
     }
     translationCacheRef.current = { ...translationCacheRef.current, [lang]: merged }
+    // Update the lookup ref synchronously: a PDF batch checks it immediately
+    // after merge, before React has committed the state/effect that updates it.
+    translationMapRef.current = { ...translationMapRef.current, ...(result.translations || {}) }
     setTranslationCache(translationCacheRef.current)
     setTranslationFailed(translationFailedRef.current.size)
     if (result.store) mergeStore(result.store)
