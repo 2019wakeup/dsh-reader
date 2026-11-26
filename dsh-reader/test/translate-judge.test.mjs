@@ -40,6 +40,7 @@ test('aggregate, pass and compare use the same thresholds', () => {
   ]
   const aggregate = aggregateJudge(rows)
   assert.equal(aggregate.count, 2)
+  assert.equal(aggregateJudge([{ adequacy: 4, fluency: 4, terminology: 4, structure: 'pass' }]).count, 1)
   assert.equal(aggregate.adequacy, 4)
   assert.equal(aggregate.passRate, 0.5)
   assert.equal(judgePass(rows[0].scores), true)

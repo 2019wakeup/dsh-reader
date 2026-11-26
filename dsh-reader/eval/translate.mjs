@@ -35,7 +35,7 @@ async function readJsonl(file) {
 function markdownReport(report) {
   const lines = [`# Translation eval — ${report.mode}`, '', `- at: ${report.at}`, `- corpus: ${report.corpus || 'v1'}`]
   if (report.mode === 'live') {
-    lines.push(`- split: ${report.split}`, `- translated: ${report.translated}`, `- judged: ${report.judged}`, `- model: ${report.model || ''}`, '')
+    lines.push(`- split: ${report.split}`, `- translated: ${report.translated}`, `- judged: ${report.judged}`, `- coverage: ${report.coverage ?? ''}`, `- model: ${report.model || ''}`, `- judge: ${report.judgeModel || ''}${report.judgeSameSource ? ' (same source; treat as smoke)' : ''}`, '')
     lines.push('| Metric | Value |', '| --- | --- |')
     for (const key of ['count', 'adequacy', 'fluency', 'terminology', 'passRate']) {
       lines.push(`| ${key} | ${report.aggregate?.[key] ?? ''} |`)
@@ -115,6 +115,7 @@ async function runLive() {
   const cacheDir = path.join(here, 'translate', '.cache', 'live', split)
   await fs.mkdir(cacheDir, { recursive: true })
   const translations = new Map()
+  let translatorModel = ''
 
   for (let index = 0; index < segments.length; index += 4) {
     const batch = segments.slice(index, index + 4)
@@ -144,6 +145,7 @@ async function runLive() {
     })
     if (!res.ok) throw new Error(`translate ${res.status}: ${(await res.text()).slice(0, 200)}`)
     const body = await res.json()
+    if (typeof body.model === 'string' && body.model) translatorModel = body.model
     for (const segment of missing) {
       const translation = body.translations && body.translations[segment.id]
       if (typeof translation === 'string' && translation.trim()) {
@@ -166,26 +168,56 @@ async function runLive() {
 
   const judgeHeaders = { 'content-type': 'application/json' }
   if (process.env.DSH_READER_EVAL_TOKEN) judgeHeaders['x-eval-token'] = process.env.DSH_READER_EVAL_TOKEN
-  const judgeRes = await fetch(`${base}/dsh-reader-live/api/eval/judge?sessionId=${encodeURIComponent(sessionId)}`, {
-    method: 'POST',
-    headers: judgeHeaders,
-    body: JSON.stringify({ items }),
-  })
-  if (!judgeRes.ok) {
-    throw new Error(`judge ${judgeRes.status}: ${(await judgeRes.text()).slice(0, 240)}（设置 DSH_READER_EVAL=1 并重启 DSH 后再跑 --live）`)
+  async function callJudge(batchItems) {
+    const scores = []
+    const failed = []
+    let model = ''
+    for (let offset = 0; offset < batchItems.length; offset += 10) {
+      const chunk = batchItems.slice(offset, offset + 10)
+      const response = await fetch(`${base}/dsh-reader-live/api/eval/judge?sessionId=${encodeURIComponent(sessionId)}`, {
+        method: 'POST',
+        headers: judgeHeaders,
+        body: JSON.stringify({ items: chunk }),
+      })
+      if (!response.ok) {
+        throw new Error(`judge ${response.status}: ${(await response.text()).slice(0, 240)}（设置 DSH_READER_EVAL=1 并重启 DSH 后再跑 --live）`)
+      }
+      const data = await response.json()
+      scores.push(...(data.scores || []))
+      failed.push(...(data.failed || []))
+      if (data.model) model = data.model
+    }
+    return { scores, failed, model }
   }
-  const judged = await judgeRes.json()
-  const scores = judged.scores || []
+
+  let scores = []
+  let judgeFailed = []
+  let judged = { scores: [], failed: [], model: '' }
+  let pending = items
+  for (let attempt = 0; attempt < 3 && pending.length > 0; attempt += 1) {
+    judged = await callJudge(pending)
+    scores.push(...(judged.scores || []))
+    judgeFailed = judged.failed || []
+    const failedIds = new Set(judgeFailed.map((item) => item.id))
+    pending = pending.filter((item) => failedIds.has(item.id))
+    if (pending.length > 0) console.log(`judge retry ${attempt + 1}: ${pending.length} item(s)`)
+  }
   const aggregate = aggregateJudge(scores)
+  const coverage = items.length ? scores.length / items.length : 0
   const gate = judgeGate(aggregate, {}, DEFAULT_THRESHOLDS)
+  if (coverage < 1) gate.failures.push(`judge coverage ${scores.length}/${items.length}`)
+  gate.pass = gate.failures.length === 0
   const report = {
     at: new Date().toISOString(),
     mode: 'live',
     split,
-    model: judged.model || '',
+    model: translatorModel || judged.model || '',
     judgeModel: judged.model || '',
+    judgeSameSource: Boolean(judged.model && (translatorModel || judged.model) === judged.model),
     translated: translations.size,
     judged: scores.length,
+    coverage,
+    judgeFailed,
     aggregate,
     gate,
     scores,
@@ -193,6 +225,7 @@ async function runLive() {
   await fs.writeFile(path.join(here, 'translate', 'live-report.json'), JSON.stringify(report, null, 2))
   await fs.writeFile(path.join(here, 'translate', 'live-report.md'), markdownReport(report))
   console.log(`\nlive ${split}: ${scores.length}/${items.length} judged`)
+  if (report.judgeSameSource) console.log('warning: judge and translator are the same model/source; label this run as smoke, not independent quality proof')
   console.log(JSON.stringify(aggregate, null, 2))
   if (gateMode && !gate.pass) {
     console.error('translation quality gate failed:\n' + gate.failures.join('\n'))
