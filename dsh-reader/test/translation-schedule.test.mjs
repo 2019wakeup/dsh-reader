@@ -51,3 +51,13 @@ test('an empty or malformed reply fails the whole batch', async () => {
   assert.deepEqual(partitionTranslationBatch(segments, null).failed.map((item) => item.id), ['a'])
   assert.deepEqual(partitionTranslationBatch(segments, { translations: {} }).failed.map((item) => item.id), ['a'])
 })
+
+test('PDF batching keeps dense formula pages in smaller units', async () => {
+  const { partitionPdfUnits } = await import('../src/client/translation-schedule.js')
+  const units = Array.from({ length: 10 }, (_, index) => ({ hash: `h${index}`, text: 'x'.repeat(300) }))
+  const batches = partitionPdfUnits(units, { maxSegments: 4, maxChars: 1200 })
+  assert.ok(batches.length >= 3)
+  assert.ok(batches.every((batch) => batch.length <= 4))
+  assert.ok(batches.every((batch) => batch.reduce((sum, unit) => sum + unit.text.length, 0) <= 1200))
+  assert.equal(batches.flat().length, 10)
+})

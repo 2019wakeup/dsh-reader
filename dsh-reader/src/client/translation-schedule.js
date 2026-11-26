@@ -40,3 +40,28 @@ export function partitionTranslationBatch(segments, result) {
   }
   return { done, failed }
 }
+
+/**
+ * PDF pages are denser than reflowable HTML. Four formula-heavy blocks are a
+ * safer unit than eight: a model that drops the first ids of a large batch
+ * leaves the whole page blank.
+ */
+export function partitionPdfUnits(units, options = {}) {
+  const maxSegments = Number.isFinite(options.maxSegments) ? options.maxSegments : 4
+  const maxChars = Number.isFinite(options.maxChars) ? options.maxChars : 1200
+  const batches = []
+  let batch = []
+  let chars = 0
+  for (const unit of units || []) {
+    if (!unit || typeof unit.text !== 'string') continue
+    if (batch.length > 0 && (batch.length >= maxSegments || chars + unit.text.length > maxChars)) {
+      batches.push(batch)
+      batch = []
+      chars = 0
+    }
+    batch.push(unit)
+    chars += unit.text.length
+  }
+  if (batch.length > 0) batches.push(batch)
+  return batches
+}
