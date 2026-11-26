@@ -4525,6 +4525,31 @@ function partitionTranslationBatch(segments, result) {
   return { done, failed }
 }
 
+/**
+ * PDF pages are denser than reflowable HTML. Four formula-heavy blocks are a
+ * safer unit than eight: a model that drops the first ids of a large batch
+ * leaves the whole page blank.
+ */
+function partitionPdfUnits(units, options = {}) {
+  const maxSegments = Number.isFinite(options.maxSegments) ? options.maxSegments : 4
+  const maxChars = Number.isFinite(options.maxChars) ? options.maxChars : 1200
+  const batches = []
+  let batch = []
+  let chars = 0
+  for (const unit of units || []) {
+    if (!unit || typeof unit.text !== 'string') continue
+    if (batch.length > 0 && (batch.length >= maxSegments || chars + unit.text.length > maxChars)) {
+      batches.push(batch)
+      batch = []
+      chars = 0
+    }
+    batch.push(unit)
+    chars += unit.text.length
+  }
+  if (batch.length > 0) batches.push(batch)
+  return batches
+}
+
 
 /**
  * Map a Host/network failure to a stable code, a user-facing message and a
@@ -9404,47 +9429,67 @@ function ReaderView(props) {
       }
       const units = unitsFromPdfBlocks(blocks)
       const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
-      for (let index = 0; index < missing.length; index += 8) {
-        const group = missing.slice(index, index + 8)
-        try {
-          const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
-          const result = await api.translate(sessionId, {
-            docKey,
-            target: translationLangRef.current,
-            from: translationFromRef.current,
-            glossary: translationGlossaryRef.current,
-            context: translationContextRef.current,
-            segments,
-            ...(forceTranslateRef.current ? { force: true } : {}),
-          })
-          if (result?.skipped) {
-            if (result.detected) setDetectedLanguage(result.detected)
-            pdfFailedRef.current.clear()
-            setPdfFailed(0)
-            setTranslationError('')
-            completed = false
-            flash(t('label.alreadyTarget'))
-            return
-          }
-          mergeTranslations(translationLangRef.current, result)
-          for (const unit of group) {
-            if (translationFor(translationMapRef.current, unit.hash)) {
-              pdfFailedRef.current.delete(unit.hash)
-            } else {
-              pdfFailedRef.current.set(unit.hash, unit.text)
+      const requestPdfGroup = async (group) => {
+        const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
+        const result = await api.translate(sessionId, {
+          docKey,
+          target: translationLangRef.current,
+          from: translationFromRef.current,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
+          segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
+        })
+        if (result?.skipped) return { skipped: true, result }
+        mergeTranslations(translationLangRef.current, result)
+        return { skipped: false, result }
+      }
+      // Dense PDF/formula pages are split into 4-block batches. If a batch is
+      // still incomplete, retry each missing block alone before giving up.
+      const groups = partitionPdfUnits(missing)
+      for (const initial of groups) {
+        const pendingGroups = [initial]
+        while (pendingGroups.length > 0) {
+          const group = pendingGroups.shift()
+          try {
+            const outcome = await requestPdfGroup(group)
+            if (outcome.skipped) {
+              if (outcome.result.detected) setDetectedLanguage(outcome.result.detected)
+              pdfFailedRef.current.clear()
+              setPdfFailed(0)
+              setTranslationError('')
+              completed = false
+              flash(t('label.alreadyTarget'))
+              return
             }
+            const failedUnits = group.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
+            if (failedUnits.length > 0 && group.length > 1) {
+              pendingGroups.unshift(...failedUnits.map((unit) => [unit]))
+              continue
+            }
+            for (const unit of group) {
+              if (translationFor(translationMapRef.current, unit.hash)) {
+                pdfFailedRef.current.delete(unit.hash)
+              } else {
+                pdfFailedRef.current.set(unit.hash, unit.text)
+                completed = false
+              }
+            }
+            setPdfFailed(pdfFailedRef.current.size)
+          } catch (error) {
+            if (group.length > 1) {
+              pendingGroups.unshift(...group.map((unit) => [unit]))
+              continue
+            }
+            for (const unit of group) pdfFailedRef.current.set(unit.hash, unit.text)
+            while (pdfFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
+              const oldest = pdfFailedRef.current.keys().next().value
+              pdfFailedRef.current.delete(oldest)
+            }
+            setPdfFailed(pdfFailedRef.current.size)
+            setTranslationError(translationErrorInfo(error, t).message)
+            completed = false
           }
-          setPdfFailed(pdfFailedRef.current.size)
-        } catch (error) {
-          for (const unit of group) pdfFailedRef.current.set(unit.hash, unit.text)
-          while (pdfFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
-            const oldest = pdfFailedRef.current.keys().next().value
-            pdfFailedRef.current.delete(oldest)
-          }
-          setPdfFailed(pdfFailedRef.current.size)
-          setTranslationError(translationErrorInfo(error, t).message)
-          completed = false
-          break
         }
       }
     } catch (error) {
