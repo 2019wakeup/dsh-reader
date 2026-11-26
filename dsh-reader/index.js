@@ -9,6 +9,7 @@ import { recordSent } from './lib/sent.js'
 import { blockHash } from './lib/block-hash.js'
 import { translateCacheKey, translationMeta, evictTranslationCache, TRANSLATE_PROMPT_VERSION } from './lib/translation-cache.js'
 import { activeGlossary, glossaryHash, matchGlossary, normalizeGlossary, normalizeGlossaryTerm } from './lib/glossary.js'
+import { buildJudgePrompt, parseJudgeReply } from './lib/judge.js'
 import {
   buildTranslatePrompt,
   detectLanguage,
@@ -270,7 +271,7 @@ async function pickEffort(ctx, provider, model, preferred) {
 
 async function complete(
   ctx,
-  { system, user, maxTokens = 700, signal: callerSignal, timeoutMs = 0, provider: providerOverride, model: modelOverride, reasoningEffort },
+  { system, user, maxTokens = 700, temperature = 0.2, signal: callerSignal, timeoutMs = 0, provider: providerOverride, model: modelOverride, reasoningEffort },
 ) {
   const selection = ctx.agentDefaultModel?.currentSelection?.()
   const provider = providerOverride || selection?.provider
@@ -287,7 +288,7 @@ async function complete(
       system,
       messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
       maxTokens,
-      temperature: 0.2,
+      temperature,
       signal: deadline.signal,
     })
     for await (const chunk of stream) {
@@ -1378,6 +1379,54 @@ async function translateRoute(ctx, req, res) {
   }
 }
 
+async function judgeRoute(ctx, req, res) {
+  try {
+    if (process.env.DSH_READER_EVAL !== '1') throw httpError(404, 'not found')
+    const expectedToken = process.env.DSH_READER_EVAL_TOKEN || ''
+    if (expectedToken && req.headers['x-eval-token'] !== expectedToken) throw httpError(403, 'invalid eval token')
+    const url = new URL(req.url, 'http://local')
+    const cwd = await workspaceFor(ctx, url.searchParams.get('sessionId'))
+    const body = await readBody(req)
+    const items = Array.isArray(body?.items) ? body.items : []
+    if (items.length === 0 || items.length > 20) throw httpError(400, '1-20 judge items required')
+    const store = await readStore(cwd)
+    const model = pluginModel(store, ctx)
+    const scores = []
+    const failed = []
+    for (const item of items) {
+      if (!item || typeof item.id !== 'string' || typeof item.source !== 'string' || typeof item.candidate !== 'string') {
+        failed.push({ id: item?.id || '', code: 'invalid' })
+        continue
+      }
+      try {
+        const prompt = buildJudgePrompt({
+          source: item.source,
+          reference: typeof item.reference === 'string' ? item.reference : '',
+          candidate: item.candidate,
+          target: typeof item.target === 'string' ? item.target : 'zh',
+          glossary: Array.isArray(item.glossary) ? item.glossary : [],
+        })
+        const reply = await complete(ctx, {
+          ...prompt,
+          maxTokens: 600,
+          temperature: 0,
+          timeoutMs: 60_000,
+          provider: model.provider,
+          model: model.model,
+        })
+        const parsed = parseJudgeReply(reply)
+        if (!parsed) failed.push({ id: item.id, code: 'invalid_reply' })
+        else scores.push({ id: item.id, ...parsed })
+      } catch (error) {
+        failed.push({ id: item.id, code: 'judge_error', message: String(error?.message || error) })
+      }
+    }
+    send(res, 200, { scores, failed, model: `${model.provider}/${model.model}` })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+}
+
 async function modelsRoute(ctx, req, res) {
   try {
     const listProviders = ctx.llm?.listProviders
@@ -1704,6 +1753,7 @@ export function apply(ctx) {
   add({ kind: 'exact', path: `${ROOT}/api/import`, handler: (req, res) => importRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/models`, handler: (req, res) => modelsRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/translate`, handler: (req, res) => translateRoute(ctx, req, res) })
+  add({ kind: 'exact', path: `${ROOT}/api/eval/judge`, handler: (req, res) => judgeRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/backups`, handler: (req, res) => backupsRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/restore`, handler: (req, res) => restoreRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/context`, handler: (req, res) => contextRoute(ctx, req, res) })

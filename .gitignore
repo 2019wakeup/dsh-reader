@@ -12,3 +12,4 @@ dsh-reader/demo/out/
 
 dsh-reader/eval/translate/last-report.json
 dsh-reader/eval/translate/.cache/
+dsh-reader/eval/translate/live-report.json
