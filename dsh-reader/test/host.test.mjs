@@ -1119,6 +1119,47 @@ test('a stored glossary term is injected into the translation prompt', async (t)
   assert.match(seenUser, /CAP => CAP 定理（新版）/)
 })
 
+test('the eval judge route is gated and scores 1-5', async (t) => {
+  const previous = process.env.DSH_READER_EVAL
+  process.env.DSH_READER_EVAL = '1'
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_READER_EVAL
+    else process.env.DSH_READER_EVAL = previous
+  })
+  const llmReply = (options) => {
+    if (options.system.includes('bilingual translation reviewer')) {
+      return '{"adequacy":5,"fluency":4,"terminology":5,"structure":"pass","reason":"ok"}'
+    }
+    return '{"definition":"D"}'
+  }
+  const { call } = await setup(t, { llmReply })
+  const res = await call('/dsh-reader-live/api/eval/judge?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      items: [{ id: 'x', source: 'CAP is hard.', reference: 'CAP 定理很难。', candidate: 'CAP 很难。', target: 'zh' }],
+    }),
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.scores.length, 1)
+  assert.equal(body.scores[0].adequacy, 5)
+  assert.equal(body.scores[0].structure, 'pass')
+})
+
+test('the eval judge route is hidden unless DSH_READER_EVAL=1', async (t) => {
+  const previous = process.env.DSH_READER_EVAL
+  delete process.env.DSH_READER_EVAL
+  t.after(() => {
+    if (previous !== undefined) process.env.DSH_READER_EVAL = previous
+  })
+  const { call } = await setup(t)
+  const res = await call('/dsh-reader-live/api/eval/judge?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ items: [{ id: 'x', source: 'a', candidate: 'b' }] }),
+  })
+  assert.equal(res.status, 404)
+})
+
 test('rejects a translation request with an unknown target', async (t) => {
   const { call } = await setup(t)
   const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
