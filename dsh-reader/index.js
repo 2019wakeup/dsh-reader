@@ -7,6 +7,7 @@ import { createDeadline } from './lib/deadline.js'
 import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLatestBackup } from './lib/store.js'
 import { recordSent } from './lib/sent.js'
 import { blockHash } from './lib/block-hash.js'
+import { translateCacheKey, translationMeta, evictTranslationCache, TRANSLATE_PROMPT_VERSION } from './lib/translation-cache.js'
 import {
   buildTranslatePrompt,
   detectLanguage,
@@ -712,6 +713,34 @@ function applyMutation(store, body) {
     addOccurrence(store, body.conceptId, body.occurrence)
     return store
   }
+  if (op === 'translation/clear') {
+    const { docKey, lang, clearOverrides } = body
+    if (typeof docKey !== 'string' || !docKey) throw httpError(400, 'invalid docKey')
+    const doc = store.docs?.[docKey]
+    if (!doc) return store
+    if (typeof lang === 'string' && lang) {
+      if (doc.translations) delete doc.translations[lang]
+      if (doc.translationMeta) delete doc.translationMeta[lang]
+      if (clearOverrides === true && doc.translationOverrides) delete doc.translationOverrides[lang]
+    } else {
+      doc.translations = {}
+      doc.translationMeta = {}
+      if (clearOverrides === true) doc.translationOverrides = {}
+    }
+    return store
+  }
+  if (op === 'translation/override') {
+    const { docKey, lang, contentHash, text } = body
+    if (typeof docKey !== 'string' || !docKey || typeof lang !== 'string' || typeof contentHash !== 'string') {
+      throw httpError(400, 'invalid translation override')
+    }
+    if (typeof text !== 'string' || !text.trim()) throw httpError(400, 'invalid translation text')
+    const doc = docOf(store, docKey)
+    if (!isRecordObject(doc.translationOverrides)) doc.translationOverrides = {}
+    if (!isRecordObject(doc.translationOverrides[lang])) doc.translationOverrides[lang] = {}
+    doc.translationOverrides[lang][contentHash] = { text: text.trim(), at: Date.now() }
+    return store
+  }
   if (op === 'doc/upsert') {
     const { docKey, path, size, mtime } = body
     if (typeof docKey !== 'string' || !docKey) throw httpError(400, 'invalid docKey')
@@ -1191,26 +1220,46 @@ async function translateRoute(ctx, req, res) {
     }
 
     const store = await readStore(cwd)
-    const existing = docKey && store.docs?.[docKey]?.translations?.[target]
-      ? store.docs[docKey].translations[target]
-      : {}
+    const doc = docKey ? store.docs?.[docKey] : null
+    const existing = doc?.translations?.[target] || {}
+    const overrides = doc?.translationOverrides?.[target] || {}
+    const promptVersion = Number.isInteger(body?.promptVersion) ? body.promptVersion : TRANSLATE_PROMPT_VERSION
+    const glossaryHash = typeof body?.glossaryHash === 'string' && body.glossaryHash ? body.glossaryHash.slice(0, 64) : 'none'
     const model = pluginModel(store, ctx)
     const result = {}
     const failed = []
+    const stale = []
     const pending = []
     let cached = 0
     for (const segment of segments) {
-      const hash = blockHash(segment.text)
-      if (existing[hash]) {
-        result[segment.id] = existing[hash]
+      const contentHash = blockHash(segment.text)
+      const cacheKey = translateCacheKey({ target, from, promptVersion, glossaryHash, contentHash })
+      const override = overrides[contentHash]
+      const overrideText = typeof override === 'string' ? override : override?.text
+      if (overrideText) {
+        result[segment.id] = overrideText
         cached += 1
-      } else {
-        pending.push({ id: segment.id, hash, text: String(segment.text) })
+        continue
       }
+      if (existing[cacheKey]) {
+        result[segment.id] = existing[cacheKey]
+        cached += 1
+        continue
+      }
+      // Legacy 0.15 keys are still displayed, but marked stale so a later
+      // prompt/glossary refresh can replace them without a blank page.
+      if (existing[contentHash]) {
+        result[segment.id] = existing[contentHash]
+        stale.push(segment.id)
+        cached += 1
+        continue
+      }
+      pending.push({ id: segment.id, cacheKey, contentHash, text: String(segment.text) })
     }
 
     let generated = 0
     const persisted = {}
+    const persistedMeta = {}
     const batches = []
     let batch = []
     let batchChars = 0
@@ -1247,7 +1296,14 @@ async function translateRoute(ctx, req, res) {
           continue
         }
         result[segment.id] = parsed[segment.id]
-        persisted[segment.hash] = parsed[segment.id]
+        persisted[segment.cacheKey] = parsed[segment.id]
+        persistedMeta[segment.cacheKey] = translationMeta({
+          from,
+          model: `${model.provider}/${model.model}`,
+          promptVersion,
+          glossaryHash,
+          chars: segment.text.length,
+        })
         generated += 1
       }
     }
@@ -1258,11 +1314,11 @@ async function translateRoute(ctx, req, res) {
         const doc = docOf(current, docKey)
         if (!isRecordObject(doc.translations)) doc.translations = {}
         if (!isRecordObject(doc.translations[target])) doc.translations[target] = {}
+        if (!isRecordObject(doc.translationMeta)) doc.translationMeta = {}
+        if (!isRecordObject(doc.translationMeta[target])) doc.translationMeta[target] = {}
         Object.assign(doc.translations[target], persisted)
-        const keys = Object.keys(doc.translations[target])
-        if (keys.length > 2000) {
-          for (const key of keys.slice(0, keys.length - 2000)) delete doc.translations[target][key]
-        }
+        Object.assign(doc.translationMeta[target], persistedMeta)
+        evictTranslationCache(doc)
         recordSent(current, {
           kind: 'translate',
           preview: `${target} ${String(segments[0].text || '').slice(0, 60)}`,
@@ -1272,7 +1328,7 @@ async function translateRoute(ctx, req, res) {
       })
     }
 
-    send(res, 200, { translations: result, cached, generated, failed, target, detected, ...(stored ? { store: stored } : {}) })
+    send(res, 200, { translations: result, cached, stale, generated, failed, target, detected, ...(stored ? { store: stored } : {}) })
   } catch (error) {
     handleRouteError(res, error)
   }

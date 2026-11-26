@@ -85,6 +85,45 @@ function normalizeTranslations(raw) {
   return out
 }
 
+function normalizeTranslationMeta(raw) {
+  if (!isRecord(raw)) return {}
+  const out = {}
+  for (const [language, entries] of Object.entries(raw)) {
+    if (!isRecord(entries)) continue
+    const map = {}
+    for (const [key, entry] of Object.entries(entries)) {
+      if (typeof key !== 'string' || key.length > 300 || !isRecord(entry)) continue
+      map[key] = {
+        at: Number.isFinite(entry.at) ? entry.at : 0,
+        model: typeof entry.model === 'string' ? entry.model.slice(0, 160) : '',
+        prompt: Number.isFinite(entry.prompt) ? entry.prompt : 0,
+        glossary: typeof entry.glossary === 'string' ? entry.glossary.slice(0, 64) : 'none',
+        from: typeof entry.from === 'string' ? entry.from.slice(0, 16) : 'auto',
+        chars: Number.isFinite(entry.chars) ? entry.chars : 0,
+      }
+    }
+    if (Object.keys(map).length > 0) out[language] = map
+  }
+  return out
+}
+
+function normalizeTranslationOverrides(raw) {
+  if (!isRecord(raw)) return {}
+  const out = {}
+  for (const [language, entries] of Object.entries(raw)) {
+    if (!isRecord(entries)) continue
+    const map = {}
+    for (const [key, entry] of Object.entries(entries)) {
+      if (typeof key !== 'string' || key.length > 300) continue
+      const text = typeof entry === 'string' ? entry : isRecord(entry) ? entry.text : ''
+      if (typeof text !== 'string' || !text.trim()) continue
+      map[key] = { text: text.trim(), at: isRecord(entry) && Number.isFinite(entry.at) ? entry.at : 0 }
+    }
+    if (Object.keys(map).length > 0) out[language] = map
+  }
+  return out
+}
+
 function normalizeDocs(raw) {
   if (!isRecord(raw)) return {}
   const docs = {}
@@ -100,6 +139,12 @@ function normalizeDocs(raw) {
       positions: isRecord(doc.positions) ? doc.positions : {},
       ...(isRecord(doc.translations) && Object.keys(doc.translations).length
         ? { translations: normalizeTranslations(doc.translations) }
+        : {}),
+      ...(isRecord(doc.translationMeta) && Object.keys(doc.translationMeta).length
+        ? { translationMeta: normalizeTranslationMeta(doc.translationMeta) }
+        : {}),
+      ...(isRecord(doc.translationOverrides) && Object.keys(doc.translationOverrides).length
+        ? { translationOverrides: normalizeTranslationOverrides(doc.translationOverrides) }
         : {}),
       ...(isRecord(doc.guide) && Array.isArray(doc.guide.sections)
         ? {

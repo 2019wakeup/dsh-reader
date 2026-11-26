@@ -7,6 +7,7 @@ import { Readable } from 'node:stream'
 import { apply } from '../index.js'
 import { readStore } from '../lib/store.js'
 import { TRANSLATE_LANGUAGES } from '../lib/translate.js'
+import { blockHash } from '../lib/block-hash.js'
 
 const SESSION = { id: 's1', header: { cwd: '' } }
 
@@ -976,6 +977,94 @@ test('a selection translation carrying a docKey is cached for the next call', as
   assert.equal(second.cached, 1)
   const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
   assert.ok(Object.keys(store.docs['fp-sel'].translations.zh).length >= 1)
+})
+
+test('a prompt version change invalidates the cache and records metadata', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    return '{"translations":{"h1":"T:h1"}}'
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-cache', path: 'a.md' }),
+  })
+  const translate = (promptVersion) =>
+    call('/dsh-reader-live/api/translate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({
+        docKey: 'fp-cache',
+        target: 'zh',
+        from: 'en',
+        promptVersion,
+        segments: [{ id: 'h1', text: 'hello world' }],
+      }),
+    })
+  assert.equal((await (await translate(2)).json()).generated, 1)
+  assert.equal((await (await translate(3)).json()).generated, 1, 'new prompt version misses')
+  const cached = await (await translate(3)).json()
+  assert.equal(cached.cached, 1)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  const meta = store.docs['fp-cache'].translationMeta.zh
+  assert.ok(Object.values(meta).some((entry) => entry.prompt === 3))
+  assert.equal(Object.keys(store.docs['fp-cache'].translations.zh).length, 2)
+})
+
+test('a legacy plain-hash translation is returned as stale', async (t) => {
+  const { cwd, call } = await setup(t)
+  await fs.mkdir(path.join(cwd, '.dsh-reader'), { recursive: true })
+  await fs.writeFile(
+    path.join(cwd, '.dsh-reader/store.json'),
+    JSON.stringify({
+      version: 2,
+      prefs: {},
+      concepts: {},
+      docs: { fp1: { path: 'a.md', translations: { zh: { [blockHash('hello world')]: '旧译文' } } } },
+    }),
+  )
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp1',
+      target: 'zh',
+      from: 'en',
+      promptVersion: 2,
+      segments: [{ id: 'h1', text: 'hello world' }],
+    }),
+  })
+  const body = await res.json()
+  assert.equal(body.generated, 0)
+  assert.equal(body.translations.h1, '旧译文')
+  assert.deepEqual(body.stale, ['h1'])
+})
+
+test('translation/clear removes the cache for one language but keeps overrides by default', async (t) => {
+  const llmReply = () => '{"translations":{"h1":"T:h1"}}'
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-clear', path: 'a.md' }),
+  })
+  await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ docKey: 'fp-clear', target: 'zh', from: 'en', segments: [{ id: 'h1', text: 'hello' }] }),
+  })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'translation/override', docKey: 'fp-clear', lang: 'zh', contentHash: blockHash('hello'), text: '用户改译' }),
+  })
+  const cleared = await (await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'translation/clear', docKey: 'fp-clear', lang: 'zh' }),
+  })).json()
+  assert.equal(cleared.store.docs['fp-clear'].translations?.zh, undefined)
+  assert.equal(cleared.store.docs['fp-clear'].translationOverrides.zh[blockHash('hello')].text, '用户改译')
+  const overridden = await (await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ docKey: 'fp-clear', target: 'zh', from: 'en', segments: [{ id: 'h1', text: 'hello' }] }),
+  })).json()
+  assert.equal(overridden.translations.h1, '用户改译')
+  assert.equal(overridden.generated, 0)
 })
 
 test('rejects a translation request with an unknown target', async (t) => {
