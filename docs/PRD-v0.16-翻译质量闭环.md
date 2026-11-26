@@ -323,7 +323,7 @@ PDF page ── pdfPageBlocks()┘                                      │
 | T-02 | 九语言持久化与迁移 | P0 | `normalizeTranslations`、prefs、UI、导出/导入都支持 9 种；旧 store 读取不丢已有 `zh/en/ja`；新增字段不被 `normalizeV2` 丢弃；降级前必须导出（文档写明） |
 | T-03 | 版本化缓存与失效 | P0 | 缓存键含 target/from/promptVersion/glossaryHash/contentHash；prompt 或术语变化 100% 不命中旧键；旧译文可显示但标“待刷新”；支持按文档/语言清空 |
 | T-04 | 批量完整性与失败恢复 | P0 | 返回 id 覆盖请求集；缺失 id 保留队列并重试；坏 JSON 重试/修复；429/超时按策略退避；失败块可单块重试；任何路径不产生永久空洞 |
-| T-05 | 对照/仅译文结构保真 | P0 | 仅译文保留 `<strong>/<em>/<a>/<code>/<math>` 与标题 id；H1–H4、列表、引用都翻译；嵌套块不重复；对照模式原文 DOM 不变 |
+| T-05 | 对照/仅译文结构保真 | P0 | 仅译文保留 `<a>/<code>/<math>` 与标题 id；H1–H4、列表、引用都翻译；嵌套块不重复；对照模式原文 DOM 不变；强调样式（strong/em）留 0.16.2 |
 | T-06 | 代码/公式/链接/数字保护 | P0 | 行内代码、公式、URL、引用标记用占位符保护；数字/单位/日期/主体名确定性校验；占位符丢失时整块回退原文并标失败；绝不把模型输出当 HTML 注入 |
 
 ### 5.2 翻译单元与格式
@@ -1289,7 +1289,7 @@ node eval/translate.mjs --live --split=holdout --update-baseline
 | 文件 | 覆盖 |
 | --- | --- |
 | `test/translate-units.test.mjs`（新） | 嵌套 `li>p` 不重复；H1–H4；表格；代码/公式；重复段落；空块；超长拆分；顺序 |
-| `test/translate-render.test.mjs`（新） | 对照插入位置；仅译文保留 strong/a/code/math/id；占位符缺失回退；滚动补偿；XSS |
+| `test/translate-units.test.mjs`（新） | 叶子块/重复/H1/a/code/math/id；占位符缺失回退；XSS；PDF/划词适配器 |
 | `test/translate-cache.test.mjs`（新） | 键含 target/from/prompt/glossary；legacy 命中标 stale；LRU；容量；clear；override 优先 |
 | `test/translate-prefs.test.mjs`（新） | `translateFrom` 9+auto 持久化；`translateTo` 9；默认 auto→zh；非法值拒绝；往返 |
 | `test/translate-detect.test.mjs`（新） | en/zh/ja/ko/fr/de/es/ru/pt；混合；短文本；同语言；置信度 |
@@ -1330,7 +1330,7 @@ node eval/translate.mjs --live --split=holdout --update-baseline
 
 - 翻译条：语言、交换、进度、失败、暂停、关闭。
 - 对照：标题/列表/引用/表格/代码的插入位置与样式。
-- 仅译文：H1、粗体、链接、行内代码、公式、锚点；搜索命中自动切回对照。
+- 仅译文：H1、链接、行内代码、公式、锚点；搜索命中自动切回对照；强调样式 0.16.2。
 - 划词卡片：加载/成功/失败/术语/复制。
 - PDF 抽屉：当前页、预取、失败、扫描版提示。
 - 窄屏 900px、200% 缩放、深色/米黄、减少动效。
