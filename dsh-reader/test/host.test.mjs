@@ -6,6 +6,8 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { apply } from '../index.js'
 import { readStore } from '../lib/store.js'
+import { TRANSLATE_LANGUAGES } from '../lib/translate.js'
+import { blockHash } from '../lib/block-hash.js'
 
 const SESSION = { id: 's1', header: { cwd: '' } }
 
@@ -918,6 +920,246 @@ test('translates segments in one batch and caches them per document', async (t) 
   assert.equal(calls(), before + 1, 'cached translation makes no model call')
 })
 
+test('a partial translation reports missing ids and persists only successes', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    return JSON.stringify({ translations: { h1: 'T:h1' } })
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp1', path: 'a.md' }),
+  })
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp1',
+      target: 'en',
+      segments: [
+        { id: 'h1', text: '你好' },
+        { id: 'h2', text: '世界' },
+      ],
+    }),
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.generated, 1)
+  assert.equal(body.translations.h1, 'T:h1')
+  assert.deepEqual(body.failed.map((item) => item.id), ['h2'])
+  assert.equal(body.failed[0].code, 'missing')
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(Object.keys(store.docs.fp1.translations.en).length, 1)
+})
+
+test('a selection translation carrying a docKey is cached for the next call', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    return JSON.stringify({ translations: { sel: '选段译文' } })
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-sel', path: 'a.md' }),
+  })
+  const translate = () =>
+    call('/dsh-reader-live/api/translate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({
+        docKey: 'fp-sel',
+        target: 'zh',
+        segments: [{ id: 'sel', text: 'selection text' }],
+      }),
+    })
+  const first = await (await translate()).json()
+  const second = await (await translate()).json()
+  assert.equal(first.translations.sel, '选段译文')
+  assert.equal(first.generated, 1)
+  assert.equal(second.cached, 1)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.ok(Object.keys(store.docs['fp-sel'].translations.zh).length >= 1)
+})
+
+test('a prompt version change invalidates the cache and records metadata', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    return '{"translations":{"h1":"T:h1"}}'
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-cache', path: 'a.md' }),
+  })
+  const translate = (promptVersion) =>
+    call('/dsh-reader-live/api/translate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({
+        docKey: 'fp-cache',
+        target: 'zh',
+        from: 'en',
+        promptVersion,
+        segments: [{ id: 'h1', text: 'hello world' }],
+      }),
+    })
+  assert.equal((await (await translate(2)).json()).generated, 1)
+  assert.equal((await (await translate(3)).json()).generated, 1, 'new prompt version misses')
+  const cached = await (await translate(3)).json()
+  assert.equal(cached.cached, 1)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  const meta = store.docs['fp-cache'].translationMeta.zh
+  assert.ok(Object.values(meta).some((entry) => entry.prompt === 3))
+  assert.equal(Object.keys(store.docs['fp-cache'].translations.zh).length, 2)
+})
+
+test('a legacy plain-hash translation is returned as stale', async (t) => {
+  const { cwd, call } = await setup(t)
+  await fs.mkdir(path.join(cwd, '.dsh-reader'), { recursive: true })
+  await fs.writeFile(
+    path.join(cwd, '.dsh-reader/store.json'),
+    JSON.stringify({
+      version: 2,
+      prefs: {},
+      concepts: {},
+      docs: { fp1: { path: 'a.md', translations: { zh: { [blockHash('hello world')]: '旧译文' } } } },
+    }),
+  )
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp1',
+      target: 'zh',
+      from: 'en',
+      promptVersion: 2,
+      segments: [{ id: 'h1', text: 'hello world' }],
+    }),
+  })
+  const body = await res.json()
+  assert.equal(body.generated, 0)
+  assert.equal(body.translations.h1, '旧译文')
+  assert.deepEqual(body.stale, ['h1'])
+})
+
+test('translation/clear removes the cache for one language but keeps overrides by default', async (t) => {
+  const llmReply = () => '{"translations":{"h1":"T:h1"}}'
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-clear', path: 'a.md' }),
+  })
+  await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ docKey: 'fp-clear', target: 'zh', from: 'en', segments: [{ id: 'h1', text: 'hello' }] }),
+  })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'translation/override', docKey: 'fp-clear', lang: 'zh', contentHash: blockHash('hello'), text: '用户改译' }),
+  })
+  const cleared = await (await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'translation/clear', docKey: 'fp-clear', lang: 'zh' }),
+  })).json()
+  assert.equal(cleared.store.docs['fp-clear'].translations?.zh, undefined)
+  assert.equal(cleared.store.docs['fp-clear'].translationOverrides.zh[blockHash('hello')].text, '用户改译')
+  const overridden = await (await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ docKey: 'fp-clear', target: 'zh', from: 'en', segments: [{ id: 'h1', text: 'hello' }] }),
+  })).json()
+  assert.equal(overridden.translations.h1, '用户改译')
+  assert.equal(overridden.generated, 0)
+})
+
+test('a stored glossary term is injected into the translation prompt', async (t) => {
+  let seenUser = ''
+  const llmReply = (options) => {
+    seenUser = options.messages[0].content[0].text
+    return '{"translations":{"h1":"CAP 定理很难。"}}'
+  }
+  const { call } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      op: 'glossary/upsert',
+      term: { term: 'CAP', translation: 'CAP 定理', scope: 'global' },
+    }),
+  })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp-gloss', path: 'a.md' }),
+  })
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp-gloss',
+      target: 'zh',
+      from: 'en',
+      context: { title: '论文', chapter: '引言' },
+      segments: [{ id: 'h1', text: 'CAP is hard.' }],
+    }),
+  })
+  assert.equal(res.status, 200)
+  assert.match(seenUser, /CAP => CAP 定理/)
+  assert.match(seenUser, /chapter: 引言/)
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      op: 'glossary/upsert',
+      term: { term: 'CAP', translation: 'CAP 定理（新版）', scope: 'global' },
+    }),
+  })
+  const again = await (await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp-gloss',
+      target: 'zh',
+      from: 'en',
+      context: { title: '论文', chapter: '引言' },
+      segments: [{ id: 'h1', text: 'CAP is hard.' }],
+    }),
+  })).json()
+  assert.equal(again.generated, 1, 'changed glossary invalidates the cache')
+  assert.match(seenUser, /CAP => CAP 定理（新版）/)
+})
+
+test('the eval judge route is gated and scores 1-5', async (t) => {
+  const previous = process.env.DSH_READER_EVAL
+  process.env.DSH_READER_EVAL = '1'
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_READER_EVAL
+    else process.env.DSH_READER_EVAL = previous
+  })
+  const llmReply = (options) => {
+    if (options.system.includes('bilingual translation reviewer')) {
+      return '{"adequacy":5,"fluency":4,"terminology":5,"structure":"pass","reason":"ok"}'
+    }
+    return '{"definition":"D"}'
+  }
+  const { call } = await setup(t, { llmReply })
+  const res = await call('/dsh-reader-live/api/eval/judge?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      items: [{ id: 'x', source: 'CAP is hard.', reference: 'CAP 定理很难。', candidate: 'CAP 很难。', target: 'zh' }],
+    }),
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.scores.length, 1)
+  assert.equal(body.scores[0].adequacy, 5)
+  assert.equal(body.scores[0].structure, 'pass')
+})
+
+test('the eval judge route is hidden unless DSH_READER_EVAL=1', async (t) => {
+  const previous = process.env.DSH_READER_EVAL
+  delete process.env.DSH_READER_EVAL
+  t.after(() => {
+    if (previous !== undefined) process.env.DSH_READER_EVAL = previous
+  })
+  const { call } = await setup(t)
+  const res = await call('/dsh-reader-live/api/eval/judge?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ items: [{ id: 'x', source: 'a', candidate: 'b' }] }),
+  })
+  assert.equal(res.status, 404)
+})
+
 test('rejects a translation request with an unknown target', async (t) => {
   const { call } = await setup(t)
   const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
@@ -934,6 +1176,117 @@ test('rejects a translation request with an unknown source', async (t) => {
     body: JSON.stringify({ from: 'xx', target: 'zh', segments: [{ id: 'a', text: 'hi' }] }),
   })
   assert.equal(res.status, 400)
+})
+
+test('prefs/set stores every target language and auto as the source', async (t) => {
+  const { call } = await setup(t)
+  for (const translateTo of TRANSLATE_LANGUAGES) {
+    const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'prefs/set', prefs: { translateTo } }),
+    })
+    assert.equal(res.status, 200, translateTo)
+    const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+    assert.equal(store.prefs.translateTo, translateTo)
+  }
+  const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'prefs/set', prefs: { translateFrom: 'auto' } }),
+  })
+  assert.equal(res.status, 200)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.prefs.translateFrom, 'auto')
+  assert.equal(store.prefs.translateTo, TRANSLATE_LANGUAGES.at(-1))
+})
+
+test('prefs/set marks a chosen source language as explicit', async (t) => {
+  const { call } = await setup(t)
+  const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'prefs/set', prefs: { translateFrom: 'fr' } }),
+  })
+  assert.equal(res.status, 200)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.prefs.translateFrom, 'fr')
+  assert.equal(store.prefs.translateFromExplicit, true)
+})
+
+test('prefs/set rejects a language outside the shared table', async (t) => {
+  const { call } = await setup(t)
+  const bad = [
+    { translateTo: 'xx' },
+    { translateFrom: 'xx' },
+    { translateFrom: 'zh-CN' },
+  ]
+  for (const prefs of bad) {
+    const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'prefs/set', prefs }),
+    })
+    assert.equal(res.status, 400, JSON.stringify(prefs))
+  }
+})
+
+test('a translation already in the target language is skipped without a call', async (t) => {
+  const { call, calls } = await setup(t)
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp1', path: 'a.md' }),
+  })
+  const before = calls()
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ docKey: 'fp1', target: 'zh', segments: [{ id: 'h1', text: '分布式系统的一致性模型要求所有副本看到同一份历史。' }] }),
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.skipped, true)
+  assert.equal(body.detected, 'zh')
+  assert.equal(body.generated, 0)
+  assert.equal(calls(), before, 'no model call for a skip')
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.docs.fp1.translations?.zh, undefined, 'a skip stores nothing')
+})
+
+test('force translates text that already looks like the target', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    const ids = [...options.messages[0].content[0].text.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1])
+    return JSON.stringify({ translations: Object.fromEntries(ids.map((id) => [id, `T:${id}`])) })
+  }
+  const { call, calls } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp1', path: 'a.md' }),
+  })
+  const before = calls()
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp1',
+      target: 'zh',
+      force: true,
+      segments: [{ id: 'h1', text: '分布式系统的一致性模型要求所有副本看到同一份历史。' }],
+    }),
+  })
+  const body = await res.json()
+  assert.equal(body.skipped, undefined)
+  assert.equal(body.generated, 1)
+  assert.equal(body.detected, 'zh')
+  assert.equal(calls(), before + 1)
+})
+
+test('a legacy store from disk surfaces auto through the store route', async (t) => {
+  const { cwd, call } = await setup(t)
+  await fs.mkdir(path.join(cwd, '.dsh-reader'), { recursive: true })
+  await fs.writeFile(
+    path.join(cwd, '.dsh-reader', 'store.json'),
+    JSON.stringify({ version: 2, prefs: { translateFrom: 'en', translateTo: 'de' }, concepts: {}, docs: {} }),
+  )
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.prefs.translateFrom, 'auto')
+  assert.equal(store.prefs.translateFromExplicit, false)
+  assert.equal(store.prefs.translateTo, 'de')
 })
 
 test('keeps at most ten sent entries', async (t) => {

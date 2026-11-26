@@ -53,3 +53,29 @@ test('parses translations and ignores unknown ids', () => {
   assert.deepEqual(parsed, { s1: 'Hello', s2: 'World' })
   assert.deepEqual(parseTranslationReply('not json', ['s1']), {})
 })
+
+test('prompt v2 carries glossary and chapter context', async () => {
+  const { buildTranslatePrompt } = await import('../lib/translate.js')
+  const { system, user } = buildTranslatePrompt({
+    target: 'zh',
+    from: 'en',
+    glossary: [{ term: 'CAP', translation: 'CAP 定理' }],
+    context: { title: '论文', chapter: '引言', chapterSnapshot: '一致性讨论。' },
+    segments: [{ id: 's1', text: 'CAP is hard.' }],
+  })
+  assert.match(system, /术语表/)
+  assert.match(user, /<glossary>/)
+  assert.match(user, /CAP => CAP 定理/)
+  assert.match(user, /chapter: 引言/)
+  assert.match(user, /context: 一致性讨论/)
+})
+
+test('prompt v2 includes the selected sentence context', async () => {
+  const { buildTranslatePrompt } = await import('../lib/translate.js')
+  const { user } = buildTranslatePrompt({
+    target: 'zh',
+    context: { chapterSnapshot: '本章讲缓存。', selectionSentence: '缓存命中可以降低延迟。' },
+    segments: [{ id: 's1', text: 'cache hit' }],
+  })
+  assert.match(user, /当前选中句：缓存命中可以降低延迟/)
+})

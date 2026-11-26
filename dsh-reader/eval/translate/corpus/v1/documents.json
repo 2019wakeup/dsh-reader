@@ -1,0 +1,114 @@
+{
+  "corpus": "v1",
+  "documents": [
+    {
+      "id": "md.long",
+      "format": "md",
+      "path": "../../../../../示例-分布式系统阅读.md",
+      "tags": [
+        "long",
+        "headings",
+        "lists"
+      ]
+    },
+    {
+      "id": "md.syntax",
+      "format": "md",
+      "path": "../../../../../示例-Markdown语法.md",
+      "tags": [
+        "tables",
+        "code",
+        "tasks"
+      ]
+    },
+    {
+      "id": "md.en",
+      "format": "md",
+      "path": "fixtures/en-paper.md",
+      "tags": [
+        "english",
+        "formula",
+        "links"
+      ]
+    },
+    {
+      "id": "epub.systems",
+      "format": "epub",
+      "path": "../../../../../示例-分布式系统.epub",
+      "tags": [
+        "chapters",
+        "toc"
+      ]
+    },
+    {
+      "id": "epub.nav",
+      "format": "epub",
+      "path": "fixtures/nav.epub",
+      "tags": [
+        "nested-toc"
+      ]
+    },
+    {
+      "id": "epub.en",
+      "format": "epub",
+      "path": "fixtures/en-book.epub",
+      "tags": [
+        "english",
+        "footnotes"
+      ]
+    },
+    {
+      "id": "docx.report",
+      "format": "docx",
+      "path": "../../../../../示例-Word文档.docx",
+      "tags": [
+        "headings",
+        "table"
+      ]
+    },
+    {
+      "id": "docx.paper",
+      "format": "docx",
+      "path": "fixtures/paper.docx",
+      "tags": [
+        "formula",
+        "figures"
+      ]
+    },
+    {
+      "id": "docx.contract",
+      "format": "docx",
+      "path": "fixtures/contract.docx",
+      "tags": [
+        "legal",
+        "numbers"
+      ]
+    },
+    {
+      "id": "pdf.demo",
+      "format": "pdf",
+      "path": "../../../../../示例-分布式系统.pdf",
+      "tags": [
+        "bookmarks",
+        "text-layer"
+      ]
+    },
+    {
+      "id": "pdf.two-column",
+      "format": "pdf",
+      "path": "fixtures/two-column.pdf",
+      "tags": [
+        "columns",
+        "headers"
+      ]
+    },
+    {
+      "id": "pdf.scan",
+      "format": "pdf",
+      "path": "fixtures/scan.pdf",
+      "tags": [
+        "no-text-layer"
+      ]
+    }
+  ]
+}

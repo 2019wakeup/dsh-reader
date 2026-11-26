@@ -1,3 +1,5 @@
+import { TRANSLATE_PROMPT_VERSION } from '../../lib/translation-cache.js'
+
 const BASE = '/dsh-reader-live'
 
 // The host aborts a stalled explanation at 90s; wait slightly longer so the
@@ -28,7 +30,12 @@ async function request(path, init, options = {}) {
   if (timeoutMs <= 0) {
     const res = await fetch(BASE + path, init)
     const data = await res.json().catch(() => null)
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    if (!res.ok) {
+      const failure = new Error((data && data.error) || 'HTTP ' + res.status)
+      failure.status = res.status
+      failure.code = data && data.error
+      throw failure
+    }
     return data
   }
   const controller = new AbortController()
@@ -36,10 +43,20 @@ async function request(path, init, options = {}) {
   try {
     const res = await fetch(BASE + path, { ...init, signal: controller.signal })
     const data = await res.json().catch(() => null)
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    if (!res.ok) {
+      const failure = new Error((data && data.error) || 'HTTP ' + res.status)
+      failure.status = res.status
+      failure.code = data && data.error
+      throw failure
+    }
     return data
   } catch (error) {
-    if (controller.signal.aborted) throw new Error(timeoutText())
+    if (controller.signal.aborted) {
+      const failure = new Error(timeoutText())
+      failure.code = 'timeout'
+      failure.status = 504
+      throw failure
+    }
     throw error
   } finally {
     clearTimeout(timer)
@@ -141,12 +158,20 @@ export const api = {
       body: JSON.stringify({ store }),
     })
   },
-  translate(sessionId, payload) {
-    return request(`/api/translate?sessionId=${encodeURIComponent(sessionId || '')}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+  translate(sessionId, payload, options = {}) {
+    return request(
+      `/api/translate?sessionId=${encodeURIComponent(sessionId || '')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          promptVersion: TRANSLATE_PROMPT_VERSION,
+          glossaryHash: 'none',
+          ...payload,
+        }),
+      },
+      { timeoutMs: Number(options.timeoutMs) || 120_000 },
+    )
   },
   context(sessionId, payload) {
     return request(`/api/context?sessionId=${encodeURIComponent(sessionId || '')}`, {

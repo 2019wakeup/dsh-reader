@@ -31,6 +31,372 @@ function blockHash(text) {
 }
 
 
+/**
+ * One language table for the whole plugin.
+ *
+ * Host (`index.js`, `lib/store.js`, `lib/prefs.js`) and client
+ * (`src/client/app.js`) all read it from here, so adding or renaming a
+ * language is a single edit. The client copy arrives through
+ * `scripts/build-client.mjs`, which pastes this file into the bundle.
+ */
+const TRANSLATE_LANGUAGES = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
+const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_LANGUAGES]
+
+const LANGUAGE_NAMES = {
+  auto: '自动检测',
+  zh: '简体中文',
+  en: 'English',
+  ja: '日本語',
+  ko: '한국어',
+  fr: 'Français',
+  de: 'Deutsch',
+  es: 'Español',
+  ru: 'Русский',
+  pt: 'Português',
+}
+
+function languageName(language) {
+  return LANGUAGE_NAMES[language] || language
+}
+
+/* ------------------------------------------------------------------ *
+ * Language detection
+ *
+ * Used for two things only: showing "detected: X" next to the source
+ * selector, and skipping a translation when the source already is the
+ * target. A wrong skip costs the user a silently untranslated page, so
+ * the Latin-script branch stays conservative and answers `auto` unless
+ * the evidence is clear.
+ * ------------------------------------------------------------------ */
+
+const KANA = /[\u3040-\u30ff]/g
+const HAN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g
+const HANGUL = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/g
+const CYRILLIC = /[\u0400-\u04ff]/g
+const LATIN = /[A-Za-z\u00c0-\u024f\u1e00-\u1eff]/g
+// Letters that only one of the Latin-script targets uses in practice.
+const LATIN_MARKS = {
+  fr: /[àâçéèêëîïôûùüÿœæ]/gi,
+  de: /[äöüß]/gi,
+  es: /[ñáíóú¿¡]/gi,
+  pt: /[ãõáâêôç]/gi,
+}
+const LATIN_STOPWORDS = {
+  en: ['the', 'and', 'of', 'to', 'is', 'are', 'for', 'with', 'that', 'not', 'this', 'from'],
+  fr: ['le', 'la', 'les', 'des', 'une', 'est', 'que', 'pour', 'dans', 'avec', 'pas', 'sur'],
+  de: ['der', 'die', 'das', 'und', 'ist', 'nicht', 'ein', 'eine', 'mit', 'für', 'auf', 'sich'],
+  es: ['el', 'los', 'las', 'una', 'es', 'que', 'para', 'con', 'por', 'del', 'como', 'pero'],
+  pt: ['os', 'as', 'um', 'uma', 'que', 'para', 'com', 'não', 'por', 'do', 'da', 'como'],
+}
+
+function countMatches(text, pattern) {
+  return (text.match(pattern) || []).length
+}
+
+function sampleForDetection(text) {
+  return String(text || '')
+    .replace(/\{\{RD:\d+\}\}/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .slice(0, 4000)
+}
+
+function detectLatinLanguage(sample) {
+  const words = sample.toLowerCase().match(/[a-z\u00c0-\u024f\u1e00-\u1eff]{2,}/g) || []
+  // A word or two is not enough signal; short snippets are better reported as
+  // "unknown" than skipped on a guess.
+  if (words.length < 8) return null
+  const scores = {}
+  for (const code of ['en', 'fr', 'de', 'es', 'pt']) {
+    const stopwords = new Set(LATIN_STOPWORDS[code])
+    let hits = 0
+    for (const word of words) if (stopwords.has(word)) hits += 1
+    const marks = LATIN_MARKS[code] ? countMatches(sample, LATIN_MARKS[code]) : 0
+    scores[code] = (hits / words.length) * 100 + Math.min(6, marks) * 1.5
+  }
+  const ranked = Object.entries(scores).sort((left, right) => right[1] - left[1])
+  const [best, bestScore] = ranked[0]
+  const secondScore = ranked[1] ? ranked[1][1] : 0
+  if (bestScore < 8 || bestScore - secondScore < 3) return null
+  // 12 points of margin reads as full confidence; below ~0.6 the caller is
+  // told the language but should not skip a translation on it.
+  return { language: best, confidence: Math.min(1, Number(((bestScore - secondScore) / 12).toFixed(2))) }
+}
+
+/**
+ * @param {string} text
+ * @returns {{ language: string, confidence: number }} `auto` means "no confident answer".
+ */
+function detectLanguage(text) {
+  const sample = sampleForDetection(text)
+  const letters = countMatches(sample, /[\p{L}]/gu)
+  if (letters < 4) return { language: 'auto', confidence: 0 }
+  const kana = countMatches(sample, KANA)
+  const han = countMatches(sample, HAN)
+  const hangul = countMatches(sample, HANGUL)
+  const cyrillic = countMatches(sample, CYRILLIC)
+  const latin = countMatches(sample, LATIN)
+  const cjk = kana + han
+
+  // Decide by the share of letters, not by absolute counts: a Chinese page can
+  // still carry English code samples or an English footnote, and requiring
+  // "han >= 2x latin" made such pages undetectable.
+  const share = (count) => count / letters
+  if (share(kana) >= 0.15) {
+    return { language: 'ja', confidence: 1 }
+  }
+  if (share(han) >= 0.25 && share(kana) < 0.05) {
+    return { language: 'zh', confidence: 1 }
+  }
+  if (share(hangul) >= 0.2) {
+    return { language: 'ko', confidence: 1 }
+  }
+  if (share(cyrillic) >= 0.2) {
+    return { language: 'ru', confidence: 1 }
+  }
+  if (share(latin) >= 0.6) {
+    const latinGuess = detectLatinLanguage(sample)
+    if (latinGuess) return latinGuess
+  }
+  return { language: 'auto', confidence: 0 }
+}
+
+/**
+ * True only when the text is confidently the given language; used to skip a
+ * model call. `auto`/unsupported never match.
+ */
+function looksLikeLanguage(text, language) {
+  if (!language || language === 'auto') return false
+  const detected = detectLanguage(text)
+  return detected.confidence >= 0.6 && detected.language === language
+}
+
+function buildTranslatePrompt({ target, from = 'auto', segments, glossary = [], context = {} }) {
+  const source = from === 'auto' ? '源语言自动判断。' : `源语言：${languageName(from)}。`
+  const system = [
+    `你是专业翻译。${source}把每个段落准确翻译成${languageName(target)}，保留术语、数字与专有名词。`,
+    `如果原文已经是${languageName(target)}，原样返回。`,
+    '只输出一个 JSON 对象：{"translations":{"<id>":"<译文>"}}，不要输出其他文字。',
+    '逐段对应，不要合并或拆分段落。',
+    '保留 {{RD:n}} 占位符原样、顺序不变；不要翻译或增删占位符里的内容。',
+    '不要给译文加“译文：”之类的前缀。',
+    '术语表给出的译法必须原样使用；上下文只用于消歧，不要翻译上下文。',
+  ].join('')
+  const parts = []
+  const title = String(context.title || '').trim().slice(0, 160)
+  const chapter = String(context.chapter || '').trim().slice(0, 160)
+  const selectionSentence = String(context.selectionSentence || '').trim().slice(0, 200)
+  const snapshot = [String(context.chapterSnapshot || '').trim(), selectionSentence ? `当前选中句：${selectionSentence}` : '']
+    .filter(Boolean)
+    .join('；')
+    .slice(0, 400)
+  if (title || chapter || snapshot) {
+    parts.push(
+      ['<document>', title ? `title: ${title}` : '', chapter ? `chapter: ${chapter}` : '', snapshot ? `context: ${snapshot}` : '', '</document>']
+        .filter(Boolean)
+        .join('\n'),
+    )
+  }
+  const glossaryLines = (glossary || [])
+    .filter((term) => term && term.term && term.translation)
+    .slice(0, 200)
+    .map((term) => `${term.term} => ${term.translation}`)
+  if (glossaryLines.length > 0) parts.push(['<glossary>', ...glossaryLines, '</glossary>'].join('\n'))
+  parts.push(['<segments>', ...segments.map((segment) => `[${segment.id}] ${segment.text}`), '</segments>'].join('\n'))
+  const user = parts.join('\n\n').slice(0, 12000)
+  return { system, user }
+}
+
+function parseTranslationReply(reply, ids) {
+  const raw = String(reply || '')
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced ? fenced[1].trim() : raw.slice(Math.max(0, raw.indexOf('{')), raw.lastIndexOf('}') + 1)
+  const out = {}
+  try {
+    const parsed = JSON.parse(candidate)
+    const map = parsed && parsed.translations && typeof parsed.translations === 'object' ? parsed.translations : parsed
+    if (map && typeof map === 'object') {
+      for (const id of ids) {
+        if (typeof map[id] === 'string' && map[id].trim()) out[id] = map[id].trim()
+      }
+    }
+  } catch {
+    /* no usable json */
+  }
+  return out
+}
+
+
+/**
+ * Versioned translation cache keys and eviction.
+ *
+ * A key must change when the prompt, glossary, source or target changes; the
+ * content hash alone cannot express that. Legacy 0.15 keys (plain content
+ * hash) stay readable for display but are reported as `stale`.
+ */
+
+const TRANSLATE_PROMPT_VERSION = 2
+
+function translateCacheKey({
+  target,
+  from = 'auto',
+  promptVersion = TRANSLATE_PROMPT_VERSION,
+  glossaryHash = 'none',
+  contentHash,
+}) {
+  return `v2:${target}:${from}:${promptVersion}:${glossaryHash}:${contentHash}`
+}
+
+function translationMeta({ from = 'auto', model = '', promptVersion = TRANSLATE_PROMPT_VERSION, glossaryHash = 'none', chars = 0 }) {
+  return {
+    at: Date.now(),
+    model: String(model || ''),
+    prompt: promptVersion,
+    glossary: glossaryHash,
+    from,
+    chars: Number(chars) || 0,
+  }
+}
+
+/**
+ * Drop the oldest entries per language, then across the whole document.
+ * Entries without metadata are treated as older than any metadata entry.
+ */
+function evictTranslationCache(doc, { maxPerLanguage = 2000, maxPerDoc = 8000 } = {}) {
+  if (!doc || typeof doc !== 'object') return
+  const translations = doc.translations && typeof doc.translations === 'object' ? doc.translations : {}
+  const meta = doc.translationMeta && typeof doc.translationMeta === 'object' ? doc.translationMeta : {}
+  for (const [lang, map] of Object.entries(translations)) {
+    if (!map || typeof map !== 'object') continue
+    const langMeta = meta[lang] && typeof meta[lang] === 'object' ? meta[lang] : (meta[lang] = {})
+    const keys = Object.keys(map)
+    if (keys.length <= maxPerLanguage) continue
+    keys.sort((left, right) => (langMeta[left]?.at || 0) - (langMeta[right]?.at || 0))
+    for (const key of keys.slice(0, keys.length - maxPerLanguage)) {
+      delete map[key]
+      delete langMeta[key]
+    }
+  }
+  const all = []
+  for (const [lang, map] of Object.entries(translations)) {
+    if (!map || typeof map !== 'object') continue
+    const langMeta = meta[lang] && typeof meta[lang] === 'object' ? meta[lang] : (meta[lang] = {})
+    for (const key of Object.keys(map)) all.push({ lang, key, at: langMeta[key]?.at || 0 })
+  }
+  if (all.length <= maxPerDoc) return
+  all.sort((left, right) => left.at - right.at)
+  for (const entry of all.slice(0, all.length - maxPerDoc)) {
+    delete translations[entry.lang][entry.key]
+    delete meta[entry.lang]?.[entry.key]
+  }
+}
+
+
+/**
+ * Glossary normalization, matching and a stable version hash.
+ * A translation cache must change when the terms that apply to a segment
+ * change; hashing only the text would keep stale terminology forever.
+ */
+
+const MAX_TERMS = 500
+const MAX_TERM_CHARS = 120
+
+function text(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function normalizeGlossaryTerm(raw, fallbackId = '') {
+  if (!raw || typeof raw !== 'object') return null
+  const term = text(raw.term).slice(0, MAX_TERM_CHARS)
+  const translation = text(raw.translation).slice(0, MAX_TERM_CHARS)
+  if (!term || !translation) return null
+  const scope = typeof raw.scope === 'string' && raw.scope ? raw.scope.slice(0, 200) : 'global'
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id.slice(0, 120) : fallbackId || `g-${hashString(`${scope}:${term}`)}`,
+    term,
+    translation,
+    scope,
+    caseSensitive: raw.caseSensitive === true,
+    note: text(raw.note).slice(0, 240),
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
+  }
+}
+
+function normalizeGlossary(raw) {
+  const list = Array.isArray(raw?.terms) ? raw.terms : Array.isArray(raw) ? raw : []
+  const seen = new Set()
+  const terms = []
+  for (const item of list) {
+    const term = normalizeGlossaryTerm(item)
+    if (!term) continue
+    const key = `${term.scope}\u0000${term.caseSensitive ? '1' : '0'}\u0000${term.term.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    terms.push(term)
+    if (terms.length >= MAX_TERMS) break
+  }
+  return { version: 1, terms }
+}
+
+function activeGlossary(glossary, docKey) {
+  const terms = Array.isArray(glossary?.terms) ? glossary.terms : []
+  return terms.filter((term) => term && (term.scope === 'global' || (docKey && term.scope === docKey)))
+}
+
+function isWordChar(char) {
+  return Boolean(char) && /[\p{L}\p{N}_]/u.test(char)
+}
+
+/** Longest-match terms present in `source`; links/code placeholders are ignored. */
+function matchGlossary(source, terms) {
+  const haystack = String(source || '')
+  const found = []
+  const ordered = (terms || [])
+    .filter((term) => term && term.term && term.translation)
+    .sort((left, right) => right.term.length - left.term.length)
+  for (const term of ordered) {
+    const needle = term.caseSensitive ? term.term : term.term.toLowerCase()
+    const hay = term.caseSensitive ? haystack : haystack.toLowerCase()
+    let from = 0
+    while (from <= hay.length - needle.length) {
+      const index = hay.indexOf(needle, from)
+      if (index < 0) break
+      const before = haystack[index - 1]
+      const after = haystack[index + term.term.length]
+      const latin = /^[A-Za-z\u00c0-\u024f]/.test(term.term)
+      if (!latin || (!isWordChar(before) && !isWordChar(after))) {
+        found.push(term)
+        break
+      }
+      from = index + needle.length
+    }
+  }
+  return found
+}
+
+function hashString(value) {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+function glossaryHash(terms) {
+  if (!terms || terms.length === 0) return 'none'
+  const canonical = [...terms]
+    .map((term) => `${term.term}\u0000${term.translation}\u0000${term.caseSensitive ? 1 : 0}`)
+    .sort()
+    .join('\u0001')
+  return hashString(canonical)
+}
+
+function glossaryPromptLines(terms) {
+  return (terms || []).map((term) => `${term.term} => ${term.translation}`)
+}
+
+
 function uid() {
   return 'x' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 }
@@ -641,6 +1007,10 @@ const ZH = {
   'error.fileNotFound': '文件不存在',
   'error.permissionDenied': '没有权限读取该文件',
   'error.fileBusy': '文件被其他程序占用，请关闭后重试',
+  'label.sessionLost': '会话或工作区不可用，请从会话重新打开',
+  'label.docMissing': '文档不存在',
+  'label.tooLarge': '内容过大，请缩小范围后重试',
+  'label.badRequest': '请求无效',
   'label.copied': '已复制',
   'label.copyFailed': '复制失败，请手动选择文本',
   'view.label': '阅读',
@@ -689,11 +1059,6 @@ const ZH = {
   'label.analyzingOutline': '正在分析目录…（页面已可阅读）',
   'label.guideSection': '正在生成章节摘要',
   'label.guidePart': '正在汇总篇章摘要',
-  'label.guideEstimate': 'Generating a guide in batches (stoppable):',
-  'label.guideAnalyzing': 'Analyzing the outline and chapters…',
-  'label.analyzingOutline': 'Analyzing the outline… (reading is already available)',
-  'label.guideSection': 'Summarizing sections',
-  'label.guidePart': 'Summarizing parts',
   'label.guideBusy': '正在生成导读…',
   'label.guideDone': '导读已更新',
   'label.guideReused': '复用章节',
@@ -740,7 +1105,6 @@ const ZH = {
   'action.restore': '恢复备份',
   'action.exportMarks': '导出标注',
   'action.relink': '迁移标注',
-  'action.dismiss': '忽略',
   'action.merge': '合并',
   'action.search': '搜索',
   'action.translate': '翻译',
@@ -760,9 +1124,36 @@ const ZH = {
   'label.translateMarkdownHint': 'Markdown/EPUB 请用工具栏「译」切换段落对照。',
   'label.translateTo': '翻译为',
   'label.translateFrom': '原文语言',
+  'label.detected': '检测到',
+  'label.alreadyTarget': '已是目标语言，无需翻译',
+  'label.forceTranslate': '仍要翻译',
+  'label.swapLanguages': '交换语言方向',
+  'label.swapNeedsSource': '自动检测时可选择源语言后再交换',
   'label.translateVisible': '翻译可见区域',
   'label.translatingVisible': '正在翻译可见区域…',
   'label.translatePending': '待翻译',
+  'label.translateFailed': '失败',
+  'label.retryFailed': '重试失败',
+  'label.staleTranslation': '旧译文，待刷新',
+  'label.glossary': '术语表',
+  'label.glossaryEmpty': '还没有术语，添加后翻译会优先使用。',
+  'label.glossaryTerm': '原文术语',
+  'label.glossaryTranslation': '指定译法',
+  'label.glossaryInvalid': '术语和译法都不能为空。',
+  'label.glossarySaved': '术语已保存。',
+  'action.add': '添加',
+  'label.translateOffline': '网络离线，恢复后重试。',
+  'label.translateRateLimited': '请求过多，正在退避重试…',
+  'label.translateNoModel': '未配置可用模型，请先在设置里选择模型。',
+  'label.translateTimeout': '翻译请求超时，请重试。',
+  'label.translateStoreLocked': '译文已生成，但保存失败；请稍后重试。',
+  'label.pdfNoTextLayer': '本页没有文本层，无法翻译。',
+  'label.translateError': '翻译失败，请重试。',
+  'label.retrying': '正在重试…',
+  'label.translatePaused': '已暂停',
+  'label.pauseTranslation': '暂停',
+  'label.resumeTranslation': '继续',
+  'label.cancelTranslation': '取消',
   'label.guideDepth': '导读深度',
   'guideDepth.quick': '快速（篇级，约 25–30 次调用）',
   'guideDepth.standard': '标准（段 + 篇）',
@@ -770,16 +1161,9 @@ const ZH = {
   'label.translationCached': '缓存',
   'label.pdfTranslateLater': 'PDF 译文抽屉将在下一版支持',
   'lang.auto': '自动检测',
-  'lang.auto': 'Detect',
   'lang.zh': '简体中文',
   'lang.en': 'English',
   'lang.ja': '日本語',
-  'lang.ko': '한국어',
-  'lang.fr': 'Français',
-  'lang.de': 'Deutsch',
-  'lang.es': 'Español',
-  'lang.ru': 'Русский',
-  'lang.pt': 'Português',
   'lang.ko': '한국어',
   'lang.fr': 'Français',
   'lang.de': 'Deutsch',
@@ -928,6 +1312,11 @@ const ZH = {
 }
 
 const EN = {
+  'label.guideEstimate': 'Generating a guide in batches (stoppable):',
+  'label.guideAnalyzing': 'Analyzing the outline and chapters…',
+  'label.analyzingOutline': 'Analyzing the outline… (reading is already available)',
+  'label.guideSection': 'Summarizing sections',
+  'label.guidePart': 'Summarizing parts',
   'error.fileNotFound': 'File not found',
   'error.permissionDenied': 'Permission denied',
   'error.fileBusy': 'The file is in use. Close it and try again.',
@@ -974,16 +1363,6 @@ const EN = {
   'action.regenerateGuide': 'Refresh guide',
   'label.guideEmpty': 'No guide yet. Generate chapter summaries and the book thesis.',
   'label.noTextLayer': 'This document has no extractable text (possibly a scanned PDF)',
-  'label.guideEstimate': '即将批量生成导读（可随时停止）：',
-  'label.guideAnalyzing': '正在分析目录与分章…',
-  'label.analyzingOutline': '正在分析目录…（页面已可阅读）',
-  'label.guideSection': '正在生成章节摘要',
-  'label.guidePart': '正在汇总篇章摘要',
-  'label.guideEstimate': 'Generating a guide in batches (stoppable):',
-  'label.guideAnalyzing': 'Analyzing the outline and chapters…',
-  'label.analyzingOutline': 'Analyzing the outline… (reading is already available)',
-  'label.guideSection': 'Summarizing sections',
-  'label.guidePart': 'Summarizing parts',
   'label.guideBusy': 'Generating guide…',
   'label.guideDone': 'Guide updated',
   'label.guideReused': 'chapters reused',
@@ -1030,7 +1409,6 @@ const EN = {
   'action.restore': 'Restore backup',
   'action.exportMarks': 'Export marks',
   'action.relink': 'Relink marks',
-  'action.dismiss': 'Dismiss',
   'action.merge': 'Merge',
   'action.search': 'Search',
   'action.translate': 'Translate',
@@ -1043,10 +1421,6 @@ const EN = {
   'label.noTranslation': 'No translation yet; try again.',
   'label.selectionTooLongExplain': 'The selection is long; shorten it for an explanation, or use highlight, note or translation.',
   'label.selectionTooLongTranslate': 'The selection exceeds the one-request translation limit; select a shorter range.',
-  'translation.mode.off': '关闭',
-  'translation.mode.dual': '段落对照',
-  'translation.mode.only': '仅译文',
-  'label.translateOnlyNoAnnotate': '仅译文模式下不能划词标注，请切回「段落对照」。',
   'translation.mode.off': 'Off',
   'translation.mode.dual': 'Paragraph alignment',
   'translation.mode.only': 'Translation only',
@@ -1054,26 +1428,46 @@ const EN = {
   'label.translateMarkdownHint': 'Use the toolbar Translate button for paragraph alignment in Markdown/EPUB.',
   'label.translateTo': 'Translate to',
   'label.translateFrom': 'Source language',
+  'label.detected': 'Detected',
+  'label.alreadyTarget': 'Already in the target language',
+  'label.forceTranslate': 'Translate anyway',
+  'label.swapLanguages': 'Swap languages',
+  'label.swapNeedsSource': 'Pick a source language before swapping',
   'label.translateVisible': 'Translate visible text',
   'label.translatingVisible': 'Translating visible text…',
   'label.translatePending': 'Pending',
+  'label.translateFailed': 'Failed',
+  'label.retryFailed': 'Retry failed',
+  'label.staleTranslation': 'Old translation; refresh needed',
+  'label.glossary': 'Glossary',
+  'label.glossaryEmpty': 'No terms yet; translations will prefer added terms.',
+  'label.glossaryTerm': 'Source term',
+  'label.glossaryTranslation': 'Preferred translation',
+  'label.glossaryInvalid': 'Both the term and its translation are required.',
+  'label.glossarySaved': 'Glossary term saved.',
+  'action.add': 'Add',
+  'label.translateOffline': 'Offline; retry when the connection returns.',
+  'label.translateRateLimited': 'Too many requests; backing off…',
+  'label.translateNoModel': 'No model configured. Choose one in Settings first.',
+  'label.translateTimeout': 'The translation request timed out; try again.',
+  'label.translateStoreLocked': 'The translation was generated but could not be saved; retry later.',
+  'label.pdfNoTextLayer': 'This page has no text layer, so it cannot be translated.',
+  'label.translateError': 'Translation failed; try again.',
+  'label.retrying': 'Retrying…',
+  'label.translatePaused': 'Paused',
+  'label.pauseTranslation': 'Pause',
+  'label.resumeTranslation': 'Resume',
+  'label.cancelTranslation': 'Cancel',
   'label.guideDepth': 'Guide depth',
   'guideDepth.quick': 'Quick (chapter level, ~25 calls)',
   'guideDepth.standard': 'Standard (sections + parts)',
   'label.translated': 'Translated',
   'label.translationCached': 'cached',
   'label.pdfTranslateLater': 'PDF translation drawer is coming next',
-  'lang.auto': '自动检测',
   'lang.auto': 'Detect',
   'lang.zh': '简体中文',
   'lang.en': 'English',
   'lang.ja': '日本語',
-  'lang.ko': '한국어',
-  'lang.fr': 'Français',
-  'lang.de': 'Deutsch',
-  'lang.es': 'Español',
-  'lang.ru': 'Русский',
-  'lang.pt': 'Português',
   'lang.ko': '한국어',
   'lang.fr': 'Français',
   'lang.de': 'Deutsch',
@@ -1248,6 +1642,7 @@ function t(key) {
 }
 
 
+
 const BASE = '/dsh-reader-live'
 
 // The host aborts a stalled explanation at 90s; wait slightly longer so the
@@ -1278,7 +1673,12 @@ async function request(path, init, options = {}) {
   if (timeoutMs <= 0) {
     const res = await fetch(BASE + path, init)
     const data = await res.json().catch(() => null)
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    if (!res.ok) {
+      const failure = new Error((data && data.error) || 'HTTP ' + res.status)
+      failure.status = res.status
+      failure.code = data && data.error
+      throw failure
+    }
     return data
   }
   const controller = new AbortController()
@@ -1286,10 +1686,20 @@ async function request(path, init, options = {}) {
   try {
     const res = await fetch(BASE + path, { ...init, signal: controller.signal })
     const data = await res.json().catch(() => null)
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status)
+    if (!res.ok) {
+      const failure = new Error((data && data.error) || 'HTTP ' + res.status)
+      failure.status = res.status
+      failure.code = data && data.error
+      throw failure
+    }
     return data
   } catch (error) {
-    if (controller.signal.aborted) throw new Error(timeoutText())
+    if (controller.signal.aborted) {
+      const failure = new Error(timeoutText())
+      failure.code = 'timeout'
+      failure.status = 504
+      throw failure
+    }
     throw error
   } finally {
     clearTimeout(timer)
@@ -1391,12 +1801,20 @@ const api = {
       body: JSON.stringify({ store }),
     })
   },
-  translate(sessionId, payload) {
-    return request(`/api/translate?sessionId=${encodeURIComponent(sessionId || '')}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+  translate(sessionId, payload, options = {}) {
+    return request(
+      `/api/translate?sessionId=${encodeURIComponent(sessionId || '')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          promptVersion: TRANSLATE_PROMPT_VERSION,
+          glossaryHash: 'none',
+          ...payload,
+        }),
+      },
+      { timeoutMs: Number(options.timeoutMs) || 120_000 },
+    )
   },
   context(sessionId, payload) {
     return request(`/api/context?sessionId=${encodeURIComponent(sessionId || '')}`, {
@@ -1455,8 +1873,13 @@ const READER_CSS = `
 .rd-lang-controls-drawer{margin:4px 0 6px}
 .rd-lang-field{display:flex;align-items:center;gap:5px;color:var(--dsw-alias-label-secondary);font-size:12px}
 .rd-lang-field .rd-select{height:26px;padding:0 6px;font-size:12px}
-.rd-lang-arrow{color:var(--dsw-alias-label-secondary);font-size:12px}
+.rd-lang-swap{height:26px;min-width:26px;padding:0 6px;font-size:13px;line-height:1}
+.rd-lang-detected{color:var(--dsw-alias-brand-primary);font-size:11px;white-space:nowrap}
+.rd-lang-notice{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);font-size:11.5px}
+.rd-lang-notice .rd-btn{height:22px;padding:0 8px;font-size:11px}
 .rd-translate-status{font-size:11.5px}
+.rd-translate-error{font-size:11.5px;color:var(--dsw-alias-state-error-primary);flex-basis:100%}
+.rd-trans-stale{opacity:.72}
 .rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
 .rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
@@ -1641,8 +2064,13 @@ const READER_CSS = `
 .rd-lang-controls-drawer{margin:4px 0 6px}
 .rd-lang-field{display:flex;align-items:center;gap:5px;color:var(--dsw-alias-label-secondary);font-size:12px}
 .rd-lang-field .rd-select{height:26px;padding:0 6px;font-size:12px}
-.rd-lang-arrow{color:var(--dsw-alias-label-secondary);font-size:12px}
+.rd-lang-swap{height:26px;min-width:26px;padding:0 6px;font-size:13px;line-height:1}
+.rd-lang-detected{color:var(--dsw-alias-brand-primary);font-size:11px;white-space:nowrap}
+.rd-lang-notice{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);font-size:11.5px}
+.rd-lang-notice .rd-btn{height:22px;padding:0 8px;font-size:11px}
 .rd-translate-status{font-size:11.5px}
+.rd-translate-error{font-size:11.5px;color:var(--dsw-alias-state-error-primary);flex-basis:100%}
+.rd-trans-stale{opacity:.72}
 .rd-progress{position:relative;flex:0 0 auto;height:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .rd-progress-bar{height:100%;width:0;background:var(--dsw-alias-brand-primary);transition:width .2s ease-out}
 .rd-page-input{width:48px;height:24px;text-align:center;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;padding:0 4px;font-family:inherit}
@@ -4078,6 +4506,269 @@ function isNearViewport(rect, viewport, margin = 200) {
   return rect.bottom > viewport.top - margin && rect.top < viewport.bottom + margin
 }
 
+/**
+ * Split one sent batch into translated and failed segments.
+ *
+ * A missing/blank translation is a failure even when the Host returned 200:
+ * deleting the whole batch would leave a permanent hole in the page.
+ */
+function partitionTranslationBatch(segments, result) {
+  const translations = result && typeof result.translations === 'object' ? result.translations : {}
+  const done = []
+  const failed = []
+  for (const segment of segments || []) {
+    if (!segment || typeof segment.id !== 'string') continue
+    const text = translations[segment.id]
+    if (typeof text === 'string' && text.trim()) done.push(segment)
+    else failed.push(segment)
+  }
+  return { done, failed }
+}
+
+
+/**
+ * Map a Host/network failure to a stable code, a user-facing message and a
+ * retry policy. Kept pure so the client queue and tests agree on the rules.
+ */
+function translationErrorInfo(error, t) {
+  const status = Number(error?.status) || 0
+  const code = String(error?.code || '')
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { code: 'offline', retryable: true, message: t('label.translateOffline') }
+  }
+  if (status === 429 || code === 'rate_limited') {
+    return { code: 'rate_limited', retryable: true, message: t('label.translateRateLimited') }
+  }
+  if (status === 503 || code === 'no_model' || /no model/i.test(String(error?.message || ''))) {
+    return { code: 'no_model', retryable: false, message: t('label.translateNoModel') }
+  }
+  if (status === 504 || code === 'timeout' || error?.name === 'AbortError') {
+    return { code: 'timeout', retryable: true, message: t('label.translateTimeout') }
+  }
+  if (status === 423 || code === 'store_locked') {
+    return { code: 'store_locked', retryable: false, message: t('label.translateStoreLocked') }
+  }
+  return { code: 'network', retryable: true, message: t('label.translateError') }
+}
+
+/** Backoff for the in-flight batch; attempt is 1-based after increment. */
+function translationRetryDelay(code, attempt) {
+  if (code === 'rate_limited') return attempt <= 1 ? 1500 : 4000
+  return attempt <= 1 ? 800 : 2000
+}
+
+
+
+/**
+ * The one block model shared by the HTML renderers.
+ *
+ * `text` is what goes to the model: inline code, formulas, links and anchors
+ * are replaced by `{{RD:n}}` placeholders so the model cannot rewrite them.
+ * `plainText` stays available for detection/statistics; `protected` keeps the
+ * original nodes to restore after translation.
+ */
+
+const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, figcaption, td, th'
+const BLOCK_CHILD_SELECTOR = 'p, div, ul, ol, blockquote, pre, table, h1, h2, h3, h4, figure, section'
+const PROTECTED_SELECTOR = 'code, kbd, samp, .katex, math, mjx-container, a[href], a[id], a[name], svg, img, picture'
+
+function hasBlockChild(node) {
+  for (const child of node.children || []) {
+    if (child.matches && child.matches(BLOCK_CHILD_SELECTOR)) return true
+  }
+  return false
+}
+
+function roleFor(node) {
+  const tag = String(node.tagName || '').toLowerCase()
+  if (/^h[1-4]$/.test(tag)) return 'heading'
+  if (tag === 'li') return 'list'
+  if (tag === 'blockquote') return 'quote'
+  if (tag === 'figcaption') return 'caption'
+  if (tag === 'td' || tag === 'th') return 'table-cell'
+  return 'body'
+}
+
+/**
+ * Flatten a block into prompt text, replacing protected inline nodes with
+ * placeholders. Non-protected wrappers (strong/em/span) contribute their text
+ * and are intentionally flattened for 0.16.0.
+ */
+function unitFor(node, { chapter = '', order = 0 } = {}) {
+  const protectedNodes = []
+  let raw = ''
+  const walk = (parent) => {
+    for (const child of parent.childNodes || []) {
+      if (child.nodeType === 3) {
+        raw += child.nodeValue || ''
+        continue
+      }
+      if (child.nodeType !== 1) continue
+      if (child.matches && child.matches(PROTECTED_SELECTOR)) {
+        const token = `{{RD:${protectedNodes.length}}}`
+        protectedNodes.push({ token, node: child.cloneNode(true) })
+        raw += token
+        continue
+      }
+      walk(child)
+    }
+  }
+  walk(node)
+  const text = normalizeBlockText(raw)
+  const plainText = normalizeBlockText(node.textContent || '')
+  if (text.length < 2) return null
+  const hash = blockHash(text)
+  return {
+    key: `${chapter}:${order}:${hash}`,
+    hash,
+    contentHash: hash,
+    text,
+    plainText,
+    node,
+    role: roleFor(node),
+    chapter,
+    order,
+    protected: protectedNodes,
+  }
+}
+
+/** Extract leaf blocks in reading order; containers with block children are skipped. */
+function extractUnits(root, { chapter = '', limit = 1000 } = {}) {
+  if (!root || typeof root.querySelectorAll !== 'function') return []
+  const units = []
+  for (const node of root.querySelectorAll(BLOCK_SELECTOR)) {
+    if (units.length >= limit) break
+    if (node.closest && node.closest('.rd-trans, .rd-card')) continue
+    if (hasBlockChild(node)) continue
+    const unit = unitFor(node, { chapter, order: units.length })
+    if (unit) units.push(unit)
+  }
+  return units
+}
+
+/**
+ * Restore placeholders from a translated block. Returns null when the model
+ * dropped/duplicated a placeholder; the caller keeps the source block instead
+ * of rendering a broken half-translation.
+ */
+function renderUnitFragment(unit, translation) {
+  if (!unit || typeof translation !== 'string') return null
+  const tokens = unit.protected || []
+  const document = unit.node.ownerDocument
+  if (!document) return null
+  const fragment = document.createDocumentFragment()
+  const pattern = /\{\{RD:(\d+)\}\}/g
+  const used = new Set()
+  let last = 0
+  let match
+  while ((match = pattern.exec(translation)) !== null) {
+    const index = Number(match[1])
+    if (!Number.isInteger(index) || !tokens[index] || used.has(index)) return null
+    used.add(index)
+    if (match.index > last) fragment.appendChild(document.createTextNode(translation.slice(last, match.index)))
+    fragment.appendChild(tokens[index].node.cloneNode(true))
+    last = match.index + match[0].length
+  }
+  if (used.size !== tokens.length) return null
+  if (last < translation.length) fragment.appendChild(document.createTextNode(translation.slice(last)))
+  return fragment
+}
+
+/** Replace a block's children with the translated fragment; preserve the block attrs/id. */
+function applyUnitTranslation(unit, translation) {
+  const fragment = renderUnitFragment(unit, translation)
+  if (!fragment) return false
+  unit.node.replaceChildren(fragment)
+  return true
+}
+
+/** Build the translation-only HTML for a chapter while preserving block structure. */
+function buildTranslatedOnlyHtml(html, resolve) {
+  if (typeof document === 'undefined') return String(html || '')
+  const container = document.createElement('div')
+  container.innerHTML = String(html || '')
+  for (const unit of extractUnits(container, { limit: 20000 })) {
+    const translated = resolve ? resolve(unit.hash) : ''
+    if (translated) applyUnitTranslation(unit, translated)
+  }
+  return container.innerHTML
+}
+
+/** A single plain-text unit (selection translation / callers without a DOM block). */
+function unitFromText(text, { role = 'selection', chapter = '', order = 0 } = {}) {
+  const value = normalizeBlockText(text)
+  if (!value) return null
+  const hash = blockHash(value)
+  return {
+    key: `${chapter}:${order}:${hash}`,
+    hash,
+    contentHash: hash,
+    text: value,
+    plainText: value,
+    node: null,
+    role,
+    chapter,
+    order,
+    protected: [],
+  }
+}
+
+/** PDF page blocks use the same unit shape without DOM references. */
+function unitsFromPdfBlocks(blocks, { chapter = '' } = {}) {
+  return (blocks || [])
+    .map((block, order) => unitFromText(block.text, { role: 'body', chapter, order }))
+    .filter(Boolean)
+}
+
+
+/**
+ * Build the per-chapter translation context from data the reader already has:
+ * guide sections and concept terms. No extra model call is made; without a
+ * guide we still provide the book/chapter title.
+ */
+const contextCache = new Map()
+
+function buildTranslationContext({ doc, docKey, chapter = 0, store = {}, beforeText = '', afterText = '' }) {
+  if (!doc) return { title: '', chapter: '', chapterSnapshot: '' }
+  const chapters = (doc.epub && doc.epub.chapters) || (doc.docx && doc.docx.chapters) || []
+  const guide = store.docs?.[docKey]?.guide
+  const section = guide?.sections?.[chapter]
+  const chapterTitle = String(
+    (chapters[chapter] && chapters[chapter].title) || section?.title || '',
+  ).trim()
+  const concepts = Object.values(store.concepts || {})
+    .filter((concept) => {
+      const occurrences = Array.isArray(concept?.occurrences) ? concept.occurrences : []
+      return occurrences.some((occurrence) => occurrence && occurrence.docKey === docKey)
+    })
+    .map((concept) => String(concept.term || '').trim())
+    .filter(Boolean)
+    .slice(0, 12)
+  const bits = []
+  if (section?.summary) bits.push(String(section.summary))
+  if (Array.isArray(section?.keyPoints)) bits.push(...section.keyPoints.slice(0, 6).map(String))
+  if (concepts.length > 0) bits.push(`术语：${concepts.join('、')}`)
+  const snapshot = bits.join('；').slice(0, 400)
+  const fingerprint = JSON.stringify({
+    title: String(doc.name || ''),
+    chapter: chapterTitle,
+    snapshot,
+    before: String(beforeText || '').slice(0, 200),
+    after: String(afterText || '').slice(0, 200),
+  })
+  const key = `${docKey || doc.path || ''}\u0000${chapter}\u0000${fingerprint}`
+  const cached = contextCache.get(key)
+  if (cached) return cached
+  const value = {
+    title: String(doc.name || ''),
+    chapter: chapterTitle,
+    chapterSnapshot: snapshot,
+  }
+  contextCache.set(key, value)
+  if (contextCache.size > 120) contextCache.delete(contextCache.keys().next().value)
+  return value
+}
+
 
 /**
  * Clamp a dragged card to the reader surface.
@@ -6030,6 +6721,12 @@ function createPositionReporter(options = {}) {
 }
 
 
+
+
+
+
+
+
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
 function viewStateKey(sessionId) {
@@ -6059,8 +6756,7 @@ function writeSavedViewState(sessionId, value) {
 }
 
 const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
-const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
-const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
+const MAX_TRANSLATION_FAILURES = 200
 
 /** Chapters exposed by the packaged text formats (EPUB and Word). */
 function chaptersFor(target) {
@@ -6295,7 +6991,7 @@ function PdfPane(props) {
   )
 }
 
-const READER_VERSION = '0.15.1'
+const READER_VERSION = '0.16.0'
 
 class ReaderBoundary extends React.Component {
   constructor(props) {
@@ -6371,6 +7067,7 @@ function ReaderView(props) {
   const [cardSizes, setCardSizes] = React.useState({})
   const cardDragRef = React.useRef(null)
   const [noteDraft, setNoteDraft] = React.useState(null)
+  const [glossaryDraft, setGlossaryDraft] = React.useState({ term: '', translation: '' })
   const [editing, setEditing] = React.useState(null)
   const [toast, setToast] = React.useState(null)
   const [busy, setBusy] = React.useState(false)
@@ -6424,6 +7121,12 @@ function ReaderView(props) {
   const [translationBusy, setTranslationBusy] = React.useState(false)
   const [pdfBlocks, setPdfBlocks] = React.useState([])
   const [pdfTranslating, setPdfTranslating] = React.useState(false)
+  const [pdfFailed, setPdfFailed] = React.useState(0)
+  const pdfFailedRef = React.useRef(new Map())
+  const pdfPrefetchingRef = React.useRef(false)
+  const pdfPageRef = React.useRef(page)
+  const pdfTranslatingRef = React.useRef(false)
+  const pdfPendingPageRef = React.useRef(null)
   const [selectionTranslation, setSelectionTranslation] = React.useState(null)
   const card = topCard(cards)
   const prefs = store.prefs || {}
@@ -7671,6 +8374,25 @@ function ReaderView(props) {
     )
   }
 
+  const saveGlossaryTerm = () => {
+    const term = String(glossaryDraft.term || '').trim()
+    const translation = String(glossaryDraft.translation || '').trim()
+    if (!term || !translation) {
+      flash(t('label.glossaryInvalid'))
+      return
+    }
+    applyMutation({ op: 'glossary/upsert', term: { term, translation, scope: 'global' } })
+      .then(() => {
+        setGlossaryDraft({ term: '', translation: '' })
+        flash(t('label.glossarySaved'))
+      })
+      .catch((error) => reportError(error))
+  }
+
+  const removeGlossaryTerm = (id) => {
+    applyMutation({ op: 'glossary/remove', id }).catch((error) => reportError(error))
+  }
+
   const saveConceptEdit = async () => {
     if (!conceptEdit) return
     const result = conceptPatch(conceptEdit.form)
@@ -8124,6 +8846,24 @@ function ReaderView(props) {
     reveal()
   }
 
+  const selectionSentence = (range, selected) => {
+    const element = range?.startContainer?.parentElement
+    const block = element?.closest?.('p, li, blockquote, td, th, h1, h2, h3, h4')
+    const full = String(block?.textContent || '').replace(/\s+/g, ' ').trim()
+    if (!full) return ''
+    const index = full.indexOf(selected)
+    if (index < 0) return full.slice(0, 200)
+    const before = full.slice(0, index)
+    const after = full.slice(index + selected.length)
+    const start = Math.max(before.lastIndexOf('。'), before.lastIndexOf('！'), before.lastIndexOf('？'), before.lastIndexOf('. ')) + 1
+    const ends = ['。', '！', '？', '. ', '\n'].map((mark) => {
+      const at = after.indexOf(mark)
+      return at >= 0 ? at + mark.length : -1
+    }).filter((at) => at > 0)
+    const end = index + selected.length + (ends.length ? Math.min(...ends) : after.length)
+    return full.slice(start, end).trim().slice(0, 200)
+  }
+
   const renderSelectionTranslation = () => {
     if (!selectionTranslation) return null
     const style = placePanel(selectionTranslation.rect, 220)
@@ -8149,11 +8889,38 @@ function ReaderView(props) {
         { style: { marginTop: '6px', fontSize: '13.5px', lineHeight: 1.6 } },
         selectionTranslation.loading
           ? t('label.translating')
-          : selectionTranslation.translation || t('label.noTranslation'),
+          : selectionTranslation.skipped
+            ? t('label.alreadyTarget')
+            : selectionTranslation.translation || t('label.noTranslation'),
       ),
       h(
         'div',
         { className: 'rd-actions' },
+        selectionTranslation.skipped
+          ? h(
+              'button',
+              {
+                className: 'rd-btn ghost',
+                'data-action': 'force-selection-translation',
+                onClick: forceSelectionTranslation,
+              },
+              t('label.forceTranslate'),
+            )
+          : null,
+        selectionTranslation.translation
+          ? h(
+              'button',
+              {
+                className: 'rd-btn ghost',
+                'data-action': 'copy-selection-translation',
+                onClick: () => copyText(selectionTranslation.translation),
+              },
+              t('action.copy'),
+            )
+          : null,
+        !selectionTranslation.loading && !selectionTranslation.skipped && !selectionTranslation.translation
+          ? h('button', { className: 'rd-btn ghost', onClick: forceSelectionTranslation }, t('action.retry'))
+          : null,
         h('button', { className: 'rd-btn ghost', onClick: () => setSelectionTranslation(null) }, t('action.close')),
       ),
     )
@@ -8203,7 +8970,9 @@ function ReaderView(props) {
   }
 
   const translationLang = prefs.translateTo || 'zh'
-  const translationFrom = prefs.translateFrom || 'en'
+  const translationFrom = prefs.translateFrom || 'auto'
+  const [detectedLanguage, setDetectedLanguage] = React.useState(null)
+  const [forceTranslate, setForceTranslate] = React.useState(false)
   const storeTranslations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.translations?.[translationLang] || {} : {}),
     [store.docs, docKey, translationLang],
@@ -8212,6 +8981,10 @@ function ReaderView(props) {
     () => ({ ...storeTranslations, ...(translationCache[translationLang] || {}) }),
     [storeTranslations, translationCache, translationLang],
   )
+  const translatedCount = Object.keys(translationMap).length
+  // Once translations exist for the current target there is nothing left to
+  // warn about, even if the source still looks like the target language.
+  const hasTranslations = Object.keys(storeTranslations).length > 0
   const translationCacheRef = React.useRef(translationCache)
   const translationMapRef = React.useRef(translationMap)
   const translationLangRef = React.useRef(translationLang)
@@ -8220,12 +8993,76 @@ function ReaderView(props) {
   const translationQueuedRef = React.useRef(new Set())
   const translationRunningRef = React.useRef(false)
   const [translationPending, setTranslationPending] = React.useState(0)
+  const [translationFailed, setTranslationFailed] = React.useState(0)
+  const [translationError, setTranslationError] = React.useState('')
+  const [translationPaused, setTranslationPaused] = React.useState(false)
   const [translationTick, setTranslationTick] = React.useState(0)
   const translationPendingRef = React.useRef(0)
+  const translationFailedRef = React.useRef(new Map())
+  const translationStaleRef = React.useRef(new Set())
+  const translationPausedRef = React.useRef(false)
+  const translationAttemptsRef = React.useRef(new Map())
+  const translationRetryTimerRef = React.useRef(null)
+  // "Already in the target language": no request, no queue. `forceTranslate`
+  // is the explicit override the notice offers.
+  const effectiveSource = translationFrom === 'auto' ? detectedLanguage : translationFrom
+  const sameLanguage = Boolean(!forceTranslate && effectiveSource && effectiveSource === translationLang)
+  const translationSkipRef = React.useRef(sameLanguage)
+  const forceTranslateRef = React.useRef(false)
+  const translationGlossary = React.useMemo(
+    () => activeGlossary(store.glossary, docKey),
+    [store.glossary, docKey],
+  )
+  const translationContext = React.useMemo(
+    () => buildTranslationContext({ doc, docKey, chapter, store }),
+    [doc, docKey, chapter, store.docs, store.concepts],
+  )
+  const translationGlossaryRef = React.useRef(translationGlossary)
+  const translationContextRef = React.useRef(translationContext)
+  const translationGlossarySignature = React.useMemo(() => glossaryHash(translationGlossary), [translationGlossary])
+  const glossarySignatureRef = React.useRef(translationGlossarySignature)
+  React.useEffect(() => {
+    translationGlossaryRef.current = translationGlossary
+  }, [translationGlossary])
+  React.useEffect(() => {
+    if (glossarySignatureRef.current === translationGlossarySignature) return
+    glossarySignatureRef.current = translationGlossarySignature
+    // A term changed: old translations for this book/language were produced
+    // under a different glossary hash. Clear that cache once, then refresh
+    // the visible blocks so the new term actually takes effect.
+    translationCacheRef.current = { ...translationCacheRef.current, [translationLang]: {} }
+    setTranslationCache(translationCacheRef.current)
+    setTranslationTick((tick) => tick + 1)
+    if (!docKey) return
+    applyMutation({ op: 'translation/clear', docKey, lang: translationLang })
+      .then((result) => {
+        if (result?.store) mergeStore(result.store)
+        setTimeout(translateVisibleNow, 0)
+      })
+      .catch((error) => reportError(error))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translationGlossarySignature])
+  React.useEffect(() => {
+    translationContextRef.current = translationContext
+  }, [translationContext])
+  React.useEffect(() => {
+    translationSkipRef.current = sameLanguage
+  }, [sameLanguage])
+  React.useEffect(() => {
+    forceTranslateRef.current = false
+    setForceTranslate(false)
+  }, [docKey, translationLang, translationFrom])
 
   React.useEffect(() => {
     translationCacheRef.current = translationCache
   }, [translationCache])
+
+  React.useEffect(
+    () => () => {
+      clearTimeout(translationRetryTimerRef.current)
+    },
+    [],
+  )
   React.useEffect(() => {
     translationMapRef.current = translationMap
   }, [translationMap])
@@ -8235,61 +9072,145 @@ function ReaderView(props) {
   }, [translationLang, translationFrom])
 
   React.useEffect(() => {
+    if (!doc) {
+      setDetectedLanguage(null)
+      return
+    }
+    let cancelled = false
+    let attempts = 0
+    // The first paint can happen before the prose nodes exist, so an empty
+    // sample is retried a few frames instead of silently giving up.
+    const detect = () => {
+      if (cancelled) return
+      let sample = ''
+      if (doc.ext === '.pdf') {
+        sample = (pdfBlocks || []).map((block) => block.text).join('\n').slice(0, 2000)
+      } else if (contentRef.current) {
+        const parts = []
+        for (const node of contentRef.current.querySelectorAll('p, li, blockquote, h2, h3, h4')) {
+          if (node.closest('.rd-trans, .rd-card')) continue
+          parts.push(node.textContent || '')
+          if (parts.length >= 40) break
+        }
+        sample = parts.join('\n').slice(0, 2000)
+      }
+      if (!sample.trim() && attempts < 4) {
+        attempts += 1
+        requestAnimationFrame(detect)
+        return
+      }
+      const detection = detectLanguage(sample)
+      // Only show / act on a confident answer; a weak guess would just confuse
+      // the source selector and could hide a page behind an "already target" note.
+      setDetectedLanguage(detection.language === 'auto' || detection.confidence < 0.6 ? null : detection.language)
+    }
+    detect()
+    return () => {
+      cancelled = true
+    }
+  }, [doc, chapter, page, layoutTick, pdfBlocks, translationMode])
+
+  React.useEffect(() => {
+    clearTimeout(translationRetryTimerRef.current)
     translationQueueRef.current.clear()
     translationQueuedRef.current.clear()
+    translationFailedRef.current.clear()
+    translationStaleRef.current.clear()
+    translationAttemptsRef.current.clear()
+    translationPausedRef.current = false
     translationPendingRef.current = 0
     setTranslationPending(0)
+    setTranslationFailed(0)
+    setTranslationError('')
+    setTranslationPaused(false)
   }, [docKey, translationLang, translationFrom, translationMode])
+
+  React.useEffect(() => {
+    pdfFailedRef.current.clear()
+    setPdfFailed(0)
+    setTranslationError('')
+  }, [docKey, page, translationLang, translationFrom])
 
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
-    const blocks = []
-    const seen = new Set()
-    for (const node of nodes) {
-      if (node.closest('.rd-trans, .rd-card')) continue
-      const text = normalizeBlockText(node.textContent)
-      if (text.length < 2) continue
-      const hash = blockHash(text)
-      if (seen.has(hash)) continue
-      seen.add(hash)
-      blocks.push({ node, text, hash })
-      if (blocks.length >= limit) break
-    }
-    return blocks
+    const chapterTitle = (chaptersFor(doc)[chapter] || {}).title || ''
+    return extractUnits(root, { chapter: chapterTitle, limit })
   }
 
   const mergeTranslations = (lang, result) => {
     const merged = { ...(translationCacheRef.current[lang] || {}) }
-    for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
+    for (const [id, text] of Object.entries(result.translations || {})) {
+      merged[id] = text
+      translationFailedRef.current.delete(id)
+      translationStaleRef.current.delete(id)
+    }
+    for (const id of result.stale || []) {
+      if (typeof id === 'string') translationStaleRef.current.add(id)
+    }
     translationCacheRef.current = { ...translationCacheRef.current, [lang]: merged }
+    // Update the lookup ref synchronously: a PDF batch checks it immediately
+    // after merge, before React has committed the state/effect that updates it.
+    translationMapRef.current = { ...translationMapRef.current, ...(result.translations || {}) }
     setTranslationCache(translationCacheRef.current)
+    setTranslationFailed(translationFailedRef.current.size)
     if (result.store) mergeStore(result.store)
   }
 
   const enqueueTranslationSegments = (segments) => {
+    if (translationSkipRef.current) return
     let added = 0
     for (const segment of segments) {
       if (!segment || !segment.id || !segment.text) continue
       if (translationFor(translationMapRef.current, segment.id)) continue
+      if (translationFailedRef.current.has(segment.id)) continue
       if (translationQueuedRef.current.has(segment.id)) continue
       translationQueuedRef.current.add(segment.id)
       translationQueueRef.current.set(segment.id, segment.text)
       added += 1
     }
-    if (added === 0) return
+    if (added === 0) {
+      // A previous request failed and left its batch queued; clicking
+      // "translate visible" must resume it instead of doing nothing.
+      if (translationQueueRef.current.size > 0 && !translationRunningRef.current) void runTranslationQueue()
+      return
+    }
     translationPendingRef.current = translationQueueRef.current.size
     setTranslationPending(translationPendingRef.current)
     void runTranslationQueue()
   }
 
+  const clearFailedTranslations = () => {
+    if (translationFailedRef.current.size === 0) return
+    translationFailedRef.current.clear()
+    setTranslationFailed(0)
+  }
+
+  const markFailedSegments = (segments) => {
+    for (const segment of segments || []) {
+      if (!segment || !segment.id) continue
+      if (translationFor(translationMapRef.current, segment.id)) {
+        translationFailedRef.current.delete(segment.id)
+        continue
+      }
+      translationFailedRef.current.set(segment.id, segment.text)
+    }
+    while (translationFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
+      const oldest = translationFailedRef.current.keys().next().value
+      translationFailedRef.current.delete(oldest)
+    }
+    setTranslationFailed(translationFailedRef.current.size)
+  }
+
   const runTranslationQueue = async () => {
     if (translationRunningRef.current) return
+    clearTimeout(translationRetryTimerRef.current)
     translationRunningRef.current = true
     setTranslationBusy(true)
+    let current = []
     try {
       while (translationQueueRef.current.size > 0) {
+        if (translationPausedRef.current) break
         const lang = translationLangRef.current
         const from = translationFromRef.current
         for (const [id] of translationQueueRef.current) {
@@ -8304,31 +9225,123 @@ function ReaderView(props) {
           translationQueuedRef.current.clear()
           break
         }
+        current = segments
         const result = await api.translate(sessionId, {
           docKey,
           target: lang,
           from,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
         })
+        if (result?.skipped) {
+          // The host detected the source already is the target: stop instead of
+          // retrying the same blocks forever.
+          translationQueueRef.current.clear()
+          translationQueuedRef.current.clear()
+          clearFailedTranslations()
+          translationAttemptsRef.current.clear()
+          translationPendingRef.current = 0
+          setTranslationPending(0)
+          setTranslationError('')
+          if (result.detected) setDetectedLanguage(result.detected)
+          flash(t('label.alreadyTarget'))
+          current = []
+          break
+        }
+        setTranslationError('')
         mergeTranslations(lang, result)
-        for (const segment of segments) {
+        // Never delete the whole request batch blindly: a partial reply must
+        // leave the missing blocks retryable instead of creating a hole.
+        const { done, failed } = partitionTranslationBatch(segments, result)
+        for (const segment of done) {
           translationQueueRef.current.delete(segment.id)
           translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
         }
+        for (const segment of failed) {
+          translationQueueRef.current.delete(segment.id)
+          translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
+        }
+        markFailedSegments(failed)
+        current = []
         translationPendingRef.current = translationQueueRef.current.size
         setTranslationPending(translationPendingRef.current)
         setTranslationTick((tick) => tick + 1)
       }
     } catch (error) {
-      translationQueueRef.current.clear()
-      translationQueuedRef.current.clear()
-      translationPendingRef.current = 0
-      setTranslationPending(0)
-      reportError(error)
+      const info = translationErrorInfo(error, t)
+      const attempt = current.reduce(
+        (max, segment) => Math.max(max, translationAttemptsRef.current.get(segment.id) || 0),
+        0,
+      )
+      const canRetry = info.retryable && current.length > 0 && attempt < 2 && !translationPausedRef.current
+      if (canRetry) {
+        // Keep the in-flight batch in the queue and retry it after a short
+        // backoff; the rest of the queue stays untouched.
+        for (const segment of current) translationAttemptsRef.current.set(segment.id, attempt + 1)
+        setTranslationError(`${info.message} · ${t('label.retrying')}`)
+        translationPendingRef.current = translationQueueRef.current.size
+        setTranslationPending(translationPendingRef.current)
+        const delay = translationRetryDelay(info.code, attempt + 1)
+        translationRetryTimerRef.current = setTimeout(() => {
+          if (!translationPausedRef.current) void runTranslationQueue()
+        }, delay)
+      } else {
+        markFailedSegments(current)
+        for (const segment of current) {
+          translationQueueRef.current.delete(segment.id)
+          translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
+        }
+        translationPendingRef.current = translationQueueRef.current.size
+        setTranslationPending(translationPendingRef.current)
+        setTranslationError(info.message)
+        reportError(error)
+      }
     } finally {
+      current = []
       translationRunningRef.current = false
       setTranslationBusy(false)
     }
+  }
+
+  const pauseTranslations = () => {
+    translationPausedRef.current = true
+    setTranslationPaused(true)
+    clearTimeout(translationRetryTimerRef.current)
+  }
+
+  const resumeTranslations = () => {
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    if (translationQueueRef.current.size > 0) void runTranslationQueue()
+  }
+
+  const cancelTranslations = () => {
+    clearTimeout(translationRetryTimerRef.current)
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    translationQueueRef.current.clear()
+    translationQueuedRef.current.clear()
+    translationAttemptsRef.current.clear()
+    translationPendingRef.current = 0
+    setTranslationPending(0)
+    setTranslationError('')
+  }
+
+  const retryFailedTranslations = () => {
+    const entries = [...translationFailedRef.current.entries()]
+    if (entries.length === 0) return
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    setTranslationError('')
+    translationFailedRef.current.clear()
+    for (const [id] of entries) translationAttemptsRef.current.delete(id)
+    setTranslationFailed(0)
+    enqueueTranslationSegments(entries.map(([id, text]) => ({ id, text })))
   }
 
   const translateVisibleNow = () => {
@@ -8338,6 +9351,7 @@ function ReaderView(props) {
     const scroller = root.closest('.rd-main')
     const viewport = scroller ? scroller.getBoundingClientRect() : null
     const visible = blocks.filter((block) => {
+      if (translationMode !== 'only' && block.role === 'table-cell') return false
       if (!viewport) return true
       return isNearViewport(block.node.getBoundingClientRect(), viewport, 200)
     })
@@ -8361,36 +9375,134 @@ function ReaderView(props) {
     }
   }
 
-  const translatePdfPage = async () => {
-    if (!doc || !doc.pdf || pdfTranslating) return
+  React.useEffect(() => {
+    pdfPageRef.current = page
+  }, [page])
+
+  const translatePdfPage = async (targetPage = pdfPageRef.current) => {
+    if (!doc || !doc.pdf) return
+    if (pdfTranslatingRef.current) {
+      pdfPendingPageRef.current = targetPage
+      return
+    }
+    if (translationSkipRef.current) {
+      flash(t('label.alreadyTarget'))
+      return
+    }
+    pdfTranslatingRef.current = true
     setPdfTranslating(true)
+    setTranslationError('')
+    let completed = true
     try {
-      const blocks = await pdfPageBlocks(doc.pdf, page)
-      setPdfBlocks(blocks)
-      const missing = blocks.filter(
-        (block) => !translationFor(translationMapRef.current, blockHash(block.text)),
-      )
+      const blocks = await pdfPageBlocks(doc.pdf, targetPage)
+      if (targetPage === pdfPageRef.current) setPdfBlocks(blocks)
+      if (blocks.length === 0) {
+        setPdfFailed(0)
+        setTranslationError(t('label.pdfNoTextLayer'))
+        completed = false
+        return
+      }
+      const units = unitsFromPdfBlocks(blocks)
+      const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
       for (let index = 0; index < missing.length; index += 8) {
         const group = missing.slice(index, index + 8)
-        const segments = group.map((block) => ({ id: blockHash(block.text), text: block.text }))
+        try {
+          const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
+          const result = await api.translate(sessionId, {
+            docKey,
+            target: translationLangRef.current,
+            from: translationFromRef.current,
+            glossary: translationGlossaryRef.current,
+            context: translationContextRef.current,
+            segments,
+            ...(forceTranslateRef.current ? { force: true } : {}),
+          })
+          if (result?.skipped) {
+            if (result.detected) setDetectedLanguage(result.detected)
+            pdfFailedRef.current.clear()
+            setPdfFailed(0)
+            setTranslationError('')
+            completed = false
+            flash(t('label.alreadyTarget'))
+            return
+          }
+          mergeTranslations(translationLangRef.current, result)
+          for (const unit of group) {
+            if (translationFor(translationMapRef.current, unit.hash)) {
+              pdfFailedRef.current.delete(unit.hash)
+            } else {
+              pdfFailedRef.current.set(unit.hash, unit.text)
+            }
+          }
+          setPdfFailed(pdfFailedRef.current.size)
+        } catch (error) {
+          for (const unit of group) pdfFailedRef.current.set(unit.hash, unit.text)
+          while (pdfFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
+            const oldest = pdfFailedRef.current.keys().next().value
+            pdfFailedRef.current.delete(oldest)
+          }
+          setPdfFailed(pdfFailedRef.current.size)
+          setTranslationError(translationErrorInfo(error, t).message)
+          completed = false
+          break
+        }
+      }
+    } catch (error) {
+      completed = false
+      setTranslationError(translationErrorInfo(error, t).message)
+      reportError(error)
+    } finally {
+      pdfTranslatingRef.current = false
+      setPdfTranslating(false)
+      if (completed) void prefetchNextPdfPage(targetPage)
+      const pendingPage = pdfPendingPageRef.current
+      pdfPendingPageRef.current = null
+      if (pendingPage !== null && pendingPage !== targetPage) void translatePdfPage(pendingPage)
+    }
+  }
+
+  const prefetchNextPdfPage = async (targetPage = pdfPageRef.current) => {
+    if (!doc || !doc.pdf || pdfPrefetchingRef.current) return
+    if (targetPage !== pdfPageRef.current) return
+    const nextPage = targetPage + 1
+    if (!Number.isFinite(doc.pdf.numPages) || nextPage > doc.pdf.numPages) return
+    pdfPrefetchingRef.current = true
+    try {
+      const blocks = await pdfPageBlocks(doc.pdf, nextPage)
+      const units = unitsFromPdfBlocks(blocks)
+      const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
+      for (let index = 0; index < missing.length; index += 8) {
+        const group = missing.slice(index, index + 8)
+        const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
         const result = await api.translate(sessionId, {
           docKey,
           target: translationLangRef.current,
           from: translationFromRef.current,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
         })
+        if (result?.skipped) break
         mergeTranslations(translationLangRef.current, result)
       }
-    } catch (error) {
-      reportError(error)
+    } catch {
+      /* prefetch is best-effort; the page itself will surface errors */
     } finally {
-      setPdfTranslating(false)
+      pdfPrefetchingRef.current = false
     }
+  }
+
+  const retryPdfFailed = () => {
+    pdfFailedRef.current.clear()
+    setPdfFailed(0)
+    setTranslationError('')
+    void translatePdfPage()
   }
 
   React.useEffect(() => {
     if (drawer !== 'translate' || !doc || doc.ext !== '.pdf') return
-    void translatePdfPage()
+    void translatePdfPage(page)
   }, [drawer, page, translationLang, translationFrom])
 
   const translateSelection = async () => {
@@ -8402,14 +9514,71 @@ function ReaderView(props) {
       return
     }
     const rect = menu.range.getBoundingClientRect()
+    const sentence = selectionSentence(menu.range, text)
     setMenu(null)
-    setSelectionTranslation({ text, loading: true, translation: '', rect })
+    if (sameLanguage) {
+      setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true, sentence })
+      return
+    }
+    setSelectionTranslation({ text, loading: true, translation: '', rect, sentence })
     try {
-      const hash = blockHash(text)
+      const unit = unitFromText(text)
+      const hash = unit.hash
       const result = await api.translate(sessionId, {
+        docKey,
         target: translationLang,
         from: translationFrom,
-        segments: [{ id: hash, text }],
+        glossary: translationGlossaryRef.current,
+        context: { ...translationContextRef.current, selectionSentence: sentence },
+        segments: [{ id: hash, text: unit.text }],
+        ...(forceTranslateRef.current ? { force: true } : {}),
+      })
+      if (result?.skipped) {
+        if (result.detected) setDetectedLanguage(result.detected)
+        setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true })
+        return
+      }
+      setSelectionTranslation({
+        text,
+        loading: false,
+        translation: (result.translations || {})[hash] || '',
+        rect,
+        sentence,
+      })
+    } catch (error) {
+      reportError(error)
+      setSelectionTranslation({ text, loading: false, translation: '', rect })
+    }
+  }
+
+  const forceTranslation = () => {
+    // The notice is derived from state, but the queue closure must see the new
+    // flag immediately, so both the ref and the state are updated.
+    forceTranslateRef.current = true
+    translationSkipRef.current = false
+    setForceTranslate(true)
+    if (doc?.pdf) {
+      translatePdfPage()
+      return
+    }
+    translateVisibleNow()
+  }
+
+  const forceSelectionTranslation = async () => {
+    if (!selectionTranslation || selectionTranslation.loading) return
+    const { text, rect } = selectionTranslation
+    const unit = unitFromText(text)
+    const hash = unit.hash
+    setSelectionTranslation({ text, loading: true, translation: '', rect, sentence: selectionTranslation.sentence || '' })
+    try {
+      const result = await api.translate(sessionId, {
+        docKey,
+        target: translationLang,
+        from: translationFrom,
+        glossary: translationGlossaryRef.current,
+        context: { ...translationContextRef.current, selectionSentence: selectionTranslation.sentence || '' },
+        segments: [{ id: hash, text: unit.text }],
+        force: true,
       })
       setSelectionTranslation({
         text,
@@ -8421,6 +9590,16 @@ function ReaderView(props) {
       reportError(error)
       setSelectionTranslation({ text, loading: false, translation: '', rect })
     }
+  }
+
+  const swapLanguages = () => {
+    // Swapping `auto` downstream would mean "auto into nothing"; ask for a real
+    // source first, which also keeps the pair honest in the store.
+    if (translationFrom === 'auto') {
+      flash(t('label.swapNeedsSource'))
+      return
+    }
+    changePrefs({ translateFrom: translationLang, translateTo: translationFrom })
   }
 
   const renderLanguageControls = (className = '') =>
@@ -8440,8 +9619,25 @@ function ReaderView(props) {
           },
           TRANSLATE_SOURCES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
         ),
+        translationFrom === 'auto' && detectedLanguage
+          ? h(
+              'span',
+              { className: 'rd-lang-detected', title: t('label.detected') },
+              `${t('label.detected')} ${t(`lang.${detectedLanguage}`)}`,
+            )
+          : null,
       ),
-      h('span', { className: 'rd-lang-arrow' }, '→'),
+      h(
+        'button',
+        {
+          type: 'button',
+          className: 'rd-btn ghost rd-lang-swap',
+          title: t('label.swapLanguages'),
+          'aria-label': t('label.swapLanguages'),
+          onClick: swapLanguages,
+        },
+        '⇄',
+      ),
       h(
         'label',
         { className: 'rd-lang-field' },
@@ -8453,10 +9649,26 @@ function ReaderView(props) {
             value: translationLang,
             onChange: (event) => changePrefs({ translateTo: event.target.value }),
           },
-          TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
         ),
       ),
+      sameLanguage && !hasTranslations
+        ? h(
+            'span',
+            { className: 'rd-lang-notice' },
+            h('span', { className: 'rd-muted' }, t('label.alreadyTarget')),
+            h(
+              'button',
+              { type: 'button', className: 'rd-btn ghost', onClick: forceTranslation },
+              t('label.forceTranslate'),
+            ),
+          )
+        : null,
     )
+
+  const progressTotal = translatedCount + translationPending + translationFailed
+  const translationProgress = progressTotal > 0 ? Math.round((translatedCount / progressTotal) * 100) : 0
+  const workPending = translationBusy || translationPending > 0
 
   const renderTranslateBar = () =>
     h(
@@ -8464,30 +9676,94 @@ function ReaderView(props) {
       { className: 'rd-translate-bar' },
       renderLanguageControls(),
       h('span', { className: 'rd-spacer' }),
-      translationBusy || translationPending > 0
-        ? h('span', { className: 'rd-muted rd-translate-status' }, t('label.translatingVisible'))
+      translationBusy || translationPending > 0 || translationFailed > 0 || translatedCount > 0
+        ? h(
+            'span',
+            { className: 'rd-muted rd-translate-status', 'aria-live': 'polite' },
+            `${t('label.translated')} ${translatedCount} · ${t('label.translatePending')} ${translationPending}` +
+              (translationFailed > 0 ? ` · ${t('label.translateFailed')} ${translationFailed}` : '') +
+              (translationBusy ? ` · ${t('label.translating')}` : '') +
+              (translationPaused ? ` · ${t('label.translatePaused')}` : ''),
+          )
         : null,
+      translationError ? h('span', { className: 'rd-translate-error', role: 'status' }, translationError) : null,
+      translationFailed > 0
+        ? h('button', { className: 'rd-btn ghost', onClick: retryFailedTranslations }, t('label.retryFailed'))
+        : null,
+      workPending
+        ? h(
+            'button',
+            { className: 'rd-btn ghost', onClick: translationPaused ? resumeTranslations : pauseTranslations },
+            translationPaused ? t('label.resumeTranslation') : t('label.pauseTranslation'),
+          )
+        : null,
+      workPending ? h('button', { className: 'rd-btn ghost', onClick: cancelTranslations }, t('label.cancelTranslation')) : null,
       h('button', { className: 'rd-btn ghost', onClick: translateVisibleNow }, t('label.translateVisible')),
       h(
         'button',
         { className: 'rd-btn ghost', onClick: () => setTranslationMode('off') },
         '×',
       ),
+      h(
+        'div',
+        { className: 'rd-progress', style: { flexBasis: '100%' } },
+        h('div', { className: 'rd-progress-bar', style: { width: `${translationProgress}%` } }),
+      ),
     )
 
   React.useEffect(() => {
     const root = contentRef.current
     if (!root || !doc || doc.ext === '.pdf') return
-    for (const node of Array.from(root.querySelectorAll('.rd-trans, .rd-trans-pending'))) node.remove()
-    if (translationMode === 'off') return
-    if (translationMode === 'only') return
+    if (translationMode === 'off' || translationMode === 'only') {
+      for (const node of Array.from(root.querySelectorAll('.rd-trans'))) node.remove()
+      return
+    }
+    const scroller = root.closest('.rd-main') || root.parentElement
+    const anchor = root.firstElementChild
+    const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0
+    const keep = new Set()
     for (const block of collectTranslationBlocks()) {
+      if (block.role === 'table-cell') continue
       const text = translationFor(translationMap, block.hash)
       if (!text) continue
-      const div = document.createElement('div')
-      div.className = 'rd-trans'
-      div.textContent = text
-      block.node.appendChild(div)
+      let div = null
+      for (const child of block.node.children || []) {
+        if (child.classList && child.classList.contains('rd-trans')) {
+          div = child
+          break
+        }
+      }
+      if (div && div.dataset.rdHash !== block.hash) {
+        div.remove()
+        div = null
+      }
+      if (!div) {
+        div = document.createElement('div')
+        div.className = 'rd-trans'
+        block.node.appendChild(div)
+      }
+      if (div._rdText !== text) {
+        const fragment = renderUnitFragment(block, text)
+        if (fragment) div.replaceChildren(fragment)
+        else div.textContent = text.replace(/\{\{RD:\d+\}\}/g, '')
+        div._rdText = text
+      }
+      div.dataset.rdHash = block.hash
+      div.lang = translationLang
+      div.classList.toggle('rd-trans-stale', translationStaleRef.current.has(block.hash))
+      if (translationStaleRef.current.has(block.hash)) div.title = t('label.staleTranslation')
+      keep.add(div)
+    }
+    for (const node of Array.from(root.querySelectorAll('.rd-trans'))) {
+      if (!keep.has(node)) node.remove()
+    }
+    if (scroller && anchor) {
+      // Keep the current reading line stable when translations are inserted
+      // above it; only compensate for the actual layout delta.
+      requestAnimationFrame(() => {
+        const delta = anchor.getBoundingClientRect().top - anchorTop
+        if (Math.abs(delta) > 0.5) scroller.scrollTop += delta
+      })
     }
   }, [doc, chapter, translationMode, translationLang, translationMap, layoutTick])
 
@@ -8496,28 +9772,28 @@ function ReaderView(props) {
     const root = contentRef.current
     if (!root) return
     const scroller = root.closest('.rd-main') || root.parentElement
+    const units = collectTranslationBlocks().filter(
+      (unit) => translationMode === 'only' || unit.role !== 'table-cell',
+    )
     if (typeof IntersectionObserver !== 'function') {
-      const blocks = collectTranslationBlocks(12)
-      enqueueTranslationSegments(blocks.map((block) => ({ id: block.hash, text: block.text })))
+      enqueueTranslationSegments(units.slice(0, 12).map((unit) => ({ id: unit.hash, text: unit.text })))
       return
     }
+    const byNode = new Map(units.map((unit) => [unit.node, unit]))
     const observer = new IntersectionObserver(
       (entries) => {
         const segments = []
         for (const entry of entries) {
           if (!entry.isIntersecting) continue
-          const text = normalizeBlockText(entry.target.textContent)
-          if (text.length < 2) continue
-          segments.push({ id: blockHash(text), text })
+          const unit = byNode.get(entry.target)
+          if (!unit) continue
+          segments.push({ id: unit.hash, text: unit.text })
         }
         enqueueTranslationSegments(segments)
       },
       { root: scroller, rootMargin: '240px 0px', threshold: 0.01 },
     )
-    for (const node of root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')) {
-      if (node.closest('.rd-trans, .rd-trans-pending, .rd-card')) continue
-      observer.observe(node)
-    }
+    for (const unit of units) observer.observe(unit.node)
     return () => observer.disconnect()
   }, [doc, chapter, translationMode, translationLang, translationFrom, layoutTick, translationTick])
 
@@ -9280,7 +10556,7 @@ function ReaderView(props) {
 
   const translatedOnlyHtml = React.useMemo(() => {
     if (!doc || doc.ext === '.pdf' || translationMode !== 'only') return ''
-    return buildTranslatedHtml(renderedHtml, (text) => translationFor(translationMap, blockHash(text)))
+    return buildTranslatedOnlyHtml(renderedHtml, (hash) => translationFor(translationMap, hash))
   }, [doc, chapter, renderedHtml, translationMode, translationMap])
 
   const renderContent = () => {
@@ -9506,14 +10782,23 @@ function ReaderView(props) {
             translationPending > 0
               ? h('span', { className: 'rd-muted', style: { fontSize: '11px' } }, `${t('label.translatePending')} ${translationPending}`)
               : null,
+            pdfFailed > 0
+              ? h('span', { className: 'rd-muted', style: { fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' } }, `${t('label.translateFailed')} ${pdfFailed}`)
+              : null,
+            pdfFailed > 0
+              ? h('button', { className: 'rd-btn ghost', disabled: pdfTranslating, onClick: retryPdfFailed }, t('label.retryFailed'))
+              : null,
             h(
               'button',
               { className: 'rd-btn', disabled: pdfTranslating, onClick: translatePdfPage },
               pdfTranslating ? t('label.translating') : t('action.translatePage'),
             ),
           ),
+          translationError
+            ? h('div', { className: 'rd-translate-error', role: 'status', style: { marginBottom: '6px' } }, translationError)
+            : null,
           pdfBlocks.length === 0
-            ? h('div', { className: 'rd-empty' }, t('label.translating'))
+            ? h('div', { className: 'rd-empty' }, translationError || t('label.translating'))
             : pdfBlocks.map((block) => {
                 const translated = translationFor(translationMap, blockHash(block.text))
                 return h(
@@ -9957,7 +11242,45 @@ function ReaderView(props) {
               value: translationLang,
               onChange: (event) => changePrefs({ translateTo: event.target.value }),
             },
-            TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+            TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'rd-setting-section', style: { padding: '8px 0', borderBottom: '1px dashed var(--dsw-alias-border-l1)' } },
+          h('div', { className: 'rd-setting-title', style: { fontSize: '12.5px', marginBottom: '6px' } }, t('label.glossary')),
+          (store.glossary?.terms || []).length === 0
+            ? h('div', { className: 'rd-muted', style: { fontSize: '11.5px' } }, t('label.glossaryEmpty'))
+            : (store.glossary?.terms || []).map((term) =>
+                h(
+                  'div',
+                  { key: term.id, className: 'rd-setting-row' },
+                  h('span', null, `${term.term} → ${term.translation}`),
+                  h(
+                    'button',
+                    { className: 'rd-btn ghost', onClick: () => removeGlossaryTerm(term.id) },
+                    '×',
+                  ),
+                ),
+              ),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: '6px 0 0' } },
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTerm'),
+              value: glossaryDraft.term,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, term: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTranslation'),
+              value: glossaryDraft.translation,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, translation: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('button', { className: 'rd-btn', onClick: saveGlossaryTerm }, t('action.add')),
           ),
         ),
         row(

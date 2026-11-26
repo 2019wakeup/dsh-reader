@@ -2,8 +2,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { migrateV1 } from './migrate.js'
 import { defaultPrefs } from './prefs.js'
+import { normalizeGlossary } from './glossary.js'
 import { MAX_READING_SESSIONS, MAX_SESSION_ID_CHARS, normalizeReaderPosition } from './reader-context.js'
 import { toPosix } from './paths.js'
+import { TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } from './translate.js'
 import { writeFileAtomic } from './atomic-write.js'
 
 const DATA_DIR = '.dsh-reader'
@@ -14,7 +16,7 @@ const BACKUP_KEEP = 5
 let backupSequence = 0
 
 export function emptyStore() {
-  return { version: 2, revision: 0, prefs: defaultPrefs(), concepts: {}, docs: {}, reading: {}, debug: { lastSent: [], lastError: null, errors: [] } }
+  return { version: 2, revision: 0, prefs: defaultPrefs(), glossary: { version: 1, terms: [] }, concepts: {}, docs: {}, reading: {}, debug: { lastSent: [], lastError: null, errors: [] } }
 }
 
 function isRecord(value) {
@@ -43,24 +45,82 @@ function normalizePrefs(raw) {
     drawerWidth: number(raw.drawerWidth, base.drawerWidth, 240, 1100),
     mapWidth: number(raw.mapWidth, base.mapWidth, 320, 1200),
     chatWidth: number(raw.chatWidth, base.chatWidth, 320, 720),
-    translateFrom: ['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt'].includes(raw.translateFrom)
-      ? raw.translateFrom
-      : base.translateFrom,
-    translateTo: ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt'].includes(raw.translateTo) ? raw.translateTo : base.translateTo,
+    translateFrom: normalizeTranslateFrom(raw, base),
+    translateFromExplicit: normalizeTranslateFromExplicit(raw, base),
+    translateTo: TRANSLATE_LANGUAGES.includes(raw.translateTo) ? raw.translateTo : base.translateTo,
     guideDepth: ['quick', 'standard'].includes(raw.guideDepth) ? raw.guideDepth : base.guideDepth,
     motion: ['system', 'full', 'off'].includes(raw.motion) ? raw.motion : base.motion,
   }
 }
 
+/**
+ * 0.15 shipped `translateFrom: 'en'` as the default and `applyPrefs` had no
+ * branch for it, so every store ever written holds `en` whether or not the
+ * reader chose it. Without the explicit marker, treat `en` as "never set" and
+ * fall back to detection; a value the user really picked carries the marker.
+ */
+function normalizeTranslateFrom(raw, base) {
+  if (!TRANSLATE_SOURCES.includes(raw.translateFrom)) return base.translateFrom
+  if (raw.translateFromExplicit === true) return raw.translateFrom
+  return raw.translateFrom === 'en' ? 'auto' : raw.translateFrom
+}
+
+function normalizeTranslateFromExplicit(raw, base) {
+  if (raw.translateFromExplicit === true && TRANSLATE_SOURCES.includes(raw.translateFrom)) return true
+  if (!TRANSLATE_SOURCES.includes(raw.translateFrom)) return base.translateFromExplicit
+  // A legacy `en` is indistinguishable from the old default; `auto` needs no
+  // marker. Any other value proves the reader picked it.
+  return raw.translateFrom !== 'en' && raw.translateFrom !== 'auto'
+}
+
 function normalizeTranslations(raw) {
   const out = {}
-  for (const language of ['zh', 'en', 'ja']) {
+  for (const language of TRANSLATE_LANGUAGES) {
     const map = raw[language]
     if (!isRecord(map)) continue
     const entries = Object.entries(map)
       .filter(([, value]) => typeof value === 'string' && value.trim())
       .slice(-2000)
     if (entries.length > 0) out[language] = Object.fromEntries(entries)
+  }
+  return out
+}
+
+function normalizeTranslationMeta(raw) {
+  if (!isRecord(raw)) return {}
+  const out = {}
+  for (const [language, entries] of Object.entries(raw)) {
+    if (!isRecord(entries)) continue
+    const map = {}
+    for (const [key, entry] of Object.entries(entries)) {
+      if (typeof key !== 'string' || key.length > 300 || !isRecord(entry)) continue
+      map[key] = {
+        at: Number.isFinite(entry.at) ? entry.at : 0,
+        model: typeof entry.model === 'string' ? entry.model.slice(0, 160) : '',
+        prompt: Number.isFinite(entry.prompt) ? entry.prompt : 0,
+        glossary: typeof entry.glossary === 'string' ? entry.glossary.slice(0, 64) : 'none',
+        from: typeof entry.from === 'string' ? entry.from.slice(0, 16) : 'auto',
+        chars: Number.isFinite(entry.chars) ? entry.chars : 0,
+      }
+    }
+    if (Object.keys(map).length > 0) out[language] = map
+  }
+  return out
+}
+
+function normalizeTranslationOverrides(raw) {
+  if (!isRecord(raw)) return {}
+  const out = {}
+  for (const [language, entries] of Object.entries(raw)) {
+    if (!isRecord(entries)) continue
+    const map = {}
+    for (const [key, entry] of Object.entries(entries)) {
+      if (typeof key !== 'string' || key.length > 300) continue
+      const text = typeof entry === 'string' ? entry : isRecord(entry) ? entry.text : ''
+      if (typeof text !== 'string' || !text.trim()) continue
+      map[key] = { text: text.trim(), at: isRecord(entry) && Number.isFinite(entry.at) ? entry.at : 0 }
+    }
+    if (Object.keys(map).length > 0) out[language] = map
   }
   return out
 }
@@ -80,6 +140,12 @@ function normalizeDocs(raw) {
       positions: isRecord(doc.positions) ? doc.positions : {},
       ...(isRecord(doc.translations) && Object.keys(doc.translations).length
         ? { translations: normalizeTranslations(doc.translations) }
+        : {}),
+      ...(isRecord(doc.translationMeta) && Object.keys(doc.translationMeta).length
+        ? { translationMeta: normalizeTranslationMeta(doc.translationMeta) }
+        : {}),
+      ...(isRecord(doc.translationOverrides) && Object.keys(doc.translationOverrides).length
+        ? { translationOverrides: normalizeTranslationOverrides(doc.translationOverrides) }
         : {}),
       ...(isRecord(doc.guide) && Array.isArray(doc.guide.sections)
         ? {
@@ -151,6 +217,7 @@ function normalizeV2(raw) {
     version: 2,
     revision: Number.isFinite(raw.revision) ? raw.revision : 0,
     prefs: normalizePrefs(raw.prefs),
+    glossary: normalizeGlossary(raw.glossary),
     concepts: isRecord(raw.concepts) ? raw.concepts : base.concepts,
     docs: normalizeDocs(raw.docs),
     reading: normalizeReading(raw.reading),

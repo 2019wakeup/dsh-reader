@@ -1,0 +1,39 @@
+name: Translation quality eval
+
+# L2 live eval needs a DSH instance with a configured model and
+# DSH_READER_EVAL=1. Keep it on a trusted self-hosted runner; fork PRs never
+# receive these secrets.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * 0'
+
+jobs:
+  live:
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: dsh-reader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dsh-reader/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Live holdout eval
+        env:
+          DSH_WEB_URL: ${{ secrets.DSH_WEB_URL }}
+          DSH_SESSION_ID: ${{ secrets.DSH_SESSION_ID }}
+          DSH_READER_EVAL: '1'
+          DSH_READER_EVAL_TOKEN: ${{ secrets.DSH_READER_EVAL_TOKEN }}
+        run: node eval/translate.mjs --live --split=holdout --gate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: translation-live-report
+          path: dsh-reader/eval/translate/live-report.json

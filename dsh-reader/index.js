@@ -7,7 +7,16 @@ import { createDeadline } from './lib/deadline.js'
 import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLatestBackup } from './lib/store.js'
 import { recordSent } from './lib/sent.js'
 import { blockHash } from './lib/block-hash.js'
-import { buildTranslatePrompt, parseTranslationReply, TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } from './lib/translate.js'
+import { translateCacheKey, translationMeta, evictTranslationCache, TRANSLATE_PROMPT_VERSION } from './lib/translation-cache.js'
+import { activeGlossary, glossaryHash, matchGlossary, normalizeGlossary, normalizeGlossaryTerm } from './lib/glossary.js'
+import { buildJudgePrompt, parseJudgeReply } from './lib/judge.js'
+import {
+  buildTranslatePrompt,
+  detectLanguage,
+  parseTranslationReply,
+  TRANSLATE_LANGUAGES,
+  TRANSLATE_SOURCES,
+} from './lib/translate.js'
 import { docFingerprint } from './lib/fingerprint.js'
 import { buildExplainPrompt, buildQuickExplainPrompt, parseExplanation, buildContextPrompt, parseContextNote, buildAskPrompt } from './lib/explain.js'
 import { sectionHash, buildSectionPrompt, buildOverviewPrompt, buildPartPrompt, parseSectionReply, parseOverviewReply, parsePartReply } from './lib/guide.js'
@@ -262,7 +271,7 @@ async function pickEffort(ctx, provider, model, preferred) {
 
 async function complete(
   ctx,
-  { system, user, maxTokens = 700, signal: callerSignal, timeoutMs = 0, provider: providerOverride, model: modelOverride, reasoningEffort },
+  { system, user, maxTokens = 700, temperature = 0.2, signal: callerSignal, timeoutMs = 0, provider: providerOverride, model: modelOverride, reasoningEffort },
 ) {
   const selection = ctx.agentDefaultModel?.currentSelection?.()
   const provider = providerOverride || selection?.provider
@@ -279,7 +288,7 @@ async function complete(
       system,
       messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
       maxTokens,
-      temperature: 0.2,
+      temperature,
       signal: deadline.signal,
     })
     for await (const chunk of stream) {
@@ -598,8 +607,16 @@ function applyPrefs(store, patch) {
     if (!['quick', 'standard'].includes(patch.guideDepth)) throw httpError(400, 'invalid guideDepth')
     next.guideDepth = patch.guideDepth
   }
+  if ('translateFrom' in patch) {
+    if (!TRANSLATE_SOURCES.includes(patch.translateFrom)) throw httpError(400, 'invalid translateFrom')
+    next.translateFrom = patch.translateFrom
+    // Remember that this was a deliberate choice; without it an `en` value is
+    // indistinguishable from the old hard-coded default and gets migrated back
+    // to `auto` on the next read.
+    next.translateFromExplicit = true
+  }
   if ('translateTo' in patch) {
-    if (!['zh', 'en', 'ja'].includes(patch.translateTo)) throw httpError(400, 'invalid translateTo')
+    if (!TRANSLATE_LANGUAGES.includes(patch.translateTo)) throw httpError(400, 'invalid translateTo')
     next.translateTo = patch.translateTo
   }
   if ('pageKeys' in patch) {
@@ -696,6 +713,54 @@ function applyMutation(store, body) {
   if (op === 'occurrence/add') {
     if (typeof body.conceptId !== 'string') throw httpError(400, 'invalid concept')
     addOccurrence(store, body.conceptId, body.occurrence)
+    return store
+  }
+  if (op === 'glossary/upsert') {
+    const term = normalizeGlossaryTerm(body.term)
+    if (!term) throw httpError(400, 'invalid glossary term')
+    const current = normalizeGlossary(store.glossary)
+    const index = current.terms.findIndex(
+      (item) => item.id === term.id || (item.scope === term.scope && item.term.toLowerCase() === term.term.toLowerCase()),
+    )
+    term.updatedAt = Date.now()
+    if (index >= 0) current.terms[index] = term
+    else current.terms.push(term)
+    store.glossary = normalizeGlossary(current)
+    return store
+  }
+  if (op === 'glossary/remove') {
+    if (typeof body.id !== 'string' || !body.id) throw httpError(400, 'invalid glossary id')
+    const current = normalizeGlossary(store.glossary)
+    current.terms = current.terms.filter((item) => item.id !== body.id)
+    store.glossary = current
+    return store
+  }
+  if (op === 'translation/clear') {
+    const { docKey, lang, clearOverrides } = body
+    if (typeof docKey !== 'string' || !docKey) throw httpError(400, 'invalid docKey')
+    const doc = store.docs?.[docKey]
+    if (!doc) return store
+    if (typeof lang === 'string' && lang) {
+      if (doc.translations) delete doc.translations[lang]
+      if (doc.translationMeta) delete doc.translationMeta[lang]
+      if (clearOverrides === true && doc.translationOverrides) delete doc.translationOverrides[lang]
+    } else {
+      doc.translations = {}
+      doc.translationMeta = {}
+      if (clearOverrides === true) doc.translationOverrides = {}
+    }
+    return store
+  }
+  if (op === 'translation/override') {
+    const { docKey, lang, contentHash, text } = body
+    if (typeof docKey !== 'string' || !docKey || typeof lang !== 'string' || typeof contentHash !== 'string') {
+      throw httpError(400, 'invalid translation override')
+    }
+    if (typeof text !== 'string' || !text.trim()) throw httpError(400, 'invalid translation text')
+    const doc = docOf(store, docKey)
+    if (!isRecordObject(doc.translationOverrides)) doc.translationOverrides = {}
+    if (!isRecordObject(doc.translationOverrides[lang])) doc.translationOverrides[lang] = {}
+    doc.translationOverrides[lang][contentHash] = { text: text.trim(), at: Date.now() }
     return store
   }
   if (op === 'doc/upsert') {
@@ -1163,26 +1228,72 @@ async function translateRoute(ctx, req, res) {
     }
     if (total > 20000) throw httpError(400, 'translation request too large')
 
+    // Detect once per batch for two purposes: tell the reader what the source
+    // looks like, and skip the model call when it is already the target
+    // language. `force` is the reader overriding that skip.
+    const sample = segments.map((segment) => String(segment.text || '')).join('\n').slice(0, 4000)
+    const detection = from === 'auto' ? detectLanguage(sample) : { language: from, confidence: 1 }
+    const detected = detection.language === 'auto' ? null : detection.language
+    // A weak guess must not hide a page: only skip on a confident match.
+    const confident = detection.confidence >= 0.6
+    if (body?.force !== true && detected && detected === target && confident) {
+      send(res, 200, { translations: {}, cached: 0, generated: 0, target, detected, skipped: true })
+      return
+    }
+
     const store = await readStore(cwd)
-    const existing = docKey && store.docs?.[docKey]?.translations?.[target]
-      ? store.docs[docKey].translations[target]
-      : {}
+    const doc = docKey ? store.docs?.[docKey] : null
+    const existing = doc?.translations?.[target] || {}
+    const overrides = doc?.translationOverrides?.[target] || {}
+    const promptVersion = Number.isInteger(body?.promptVersion) ? body.promptVersion : TRANSLATE_PROMPT_VERSION
+    const terms = Array.isArray(body?.glossary)
+      ? activeGlossary({ terms: body.glossary }, docKey)
+      : activeGlossary(store.glossary, docKey)
+    const context = body?.context && typeof body.context === 'object' ? body.context : {}
     const model = pluginModel(store, ctx)
     const result = {}
+    const failed = []
+    const stale = []
     const pending = []
     let cached = 0
     for (const segment of segments) {
-      const hash = blockHash(segment.text)
-      if (existing[hash]) {
-        result[segment.id] = existing[hash]
+      const contentHash = blockHash(segment.text)
+      const matchedGlossary = matchGlossary(segment.text, terms)
+      const segmentGlossaryHash = glossaryHash(matchedGlossary)
+      const cacheKey = translateCacheKey({ target, from, promptVersion, glossaryHash: segmentGlossaryHash, contentHash })
+      const override = overrides[contentHash]
+      const overrideText = typeof override === 'string' ? override : override?.text
+      if (overrideText) {
+        result[segment.id] = overrideText
         cached += 1
-      } else {
-        pending.push({ id: segment.id, hash, text: String(segment.text) })
+        continue
       }
+      if (existing[cacheKey]) {
+        result[segment.id] = existing[cacheKey]
+        cached += 1
+        continue
+      }
+      // Legacy 0.15 keys are still displayed, but marked stale so a later
+      // prompt/glossary refresh can replace them without a blank page.
+      if (existing[contentHash]) {
+        result[segment.id] = existing[contentHash]
+        stale.push(segment.id)
+        cached += 1
+        continue
+      }
+      pending.push({
+        id: segment.id,
+        cacheKey,
+        contentHash,
+        text: String(segment.text),
+        glossary: matchedGlossary,
+        glossaryHash: segmentGlossaryHash,
+      })
     }
 
     let generated = 0
     const persisted = {}
+    const persistedMeta = {}
     const batches = []
     let batch = []
     let batchChars = 0
@@ -1199,9 +1310,20 @@ async function translateRoute(ctx, req, res) {
 
     const effort = pending.length > 0 ? await pickEffort(ctx, model.provider, model.model, 'low') : null
     for (const group of batches) {
+      const groupGlossary = []
+      const seenTerms = new Set()
+      for (const segment of group) {
+        for (const term of segment.glossary || []) {
+          if (seenTerms.has(term.id)) continue
+          seenTerms.add(term.id)
+          groupGlossary.push(term)
+        }
+      }
       const prompt = buildTranslatePrompt({
         target,
         from,
+        glossary: groupGlossary,
+        context,
         segments: group.map((segment) => ({ id: segment.id, text: segment.text })),
       })
       const chars = group.reduce((sum, segment) => sum + segment.text.length, 0)
@@ -1214,9 +1336,19 @@ async function translateRoute(ctx, req, res) {
       })
       const parsed = parseTranslationReply(reply, group.map((segment) => segment.id))
       for (const segment of group) {
-        if (!parsed[segment.id]) continue
+        if (!parsed[segment.id]) {
+          failed.push({ id: segment.id, code: 'missing', message: 'model omitted this id' })
+          continue
+        }
         result[segment.id] = parsed[segment.id]
-        persisted[segment.hash] = parsed[segment.id]
+        persisted[segment.cacheKey] = parsed[segment.id]
+        persistedMeta[segment.cacheKey] = translationMeta({
+          from,
+          model: `${model.provider}/${model.model}`,
+          promptVersion,
+          glossaryHash: segment.glossaryHash,
+          chars: segment.text.length,
+        })
         generated += 1
       }
     }
@@ -1227,11 +1359,11 @@ async function translateRoute(ctx, req, res) {
         const doc = docOf(current, docKey)
         if (!isRecordObject(doc.translations)) doc.translations = {}
         if (!isRecordObject(doc.translations[target])) doc.translations[target] = {}
+        if (!isRecordObject(doc.translationMeta)) doc.translationMeta = {}
+        if (!isRecordObject(doc.translationMeta[target])) doc.translationMeta[target] = {}
         Object.assign(doc.translations[target], persisted)
-        const keys = Object.keys(doc.translations[target])
-        if (keys.length > 2000) {
-          for (const key of keys.slice(0, keys.length - 2000)) delete doc.translations[target][key]
-        }
+        Object.assign(doc.translationMeta[target], persistedMeta)
+        evictTranslationCache(doc)
         recordSent(current, {
           kind: 'translate',
           preview: `${target} ${String(segments[0].text || '').slice(0, 60)}`,
@@ -1241,7 +1373,68 @@ async function translateRoute(ctx, req, res) {
       })
     }
 
-    send(res, 200, { translations: result, cached, generated, target, ...(stored ? { store: stored } : {}) })
+    send(res, 200, { translations: result, cached, stale, generated, failed, target, detected, model: `${model.provider}/${model.model}`, ...(stored ? { store: stored } : {}) })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+}
+
+async function judgeRoute(ctx, req, res) {
+  try {
+    if (process.env.DSH_READER_EVAL !== '1') throw httpError(404, 'not found')
+    const expectedToken = process.env.DSH_READER_EVAL_TOKEN || ''
+    if (expectedToken && req.headers['x-eval-token'] !== expectedToken) throw httpError(403, 'invalid eval token')
+    const url = new URL(req.url, 'http://local')
+    const cwd = await workspaceFor(ctx, url.searchParams.get('sessionId'))
+    const body = await readBody(req)
+    const items = Array.isArray(body?.items) ? body.items : []
+    if (items.length === 0 || items.length > 20) throw httpError(400, '1-20 judge items required')
+    const store = await readStore(cwd)
+    const model = pluginModel(store, ctx)
+    const scores = []
+    const failed = []
+    for (const item of items) {
+      if (!item || typeof item.id !== 'string' || typeof item.source !== 'string' || typeof item.candidate !== 'string') {
+        failed.push({ id: item?.id || '', code: 'invalid' })
+        continue
+      }
+      try {
+        const prompt = buildJudgePrompt({
+          source: item.source,
+          reference: typeof item.reference === 'string' ? item.reference : '',
+          candidate: item.candidate,
+          target: typeof item.target === 'string' ? item.target : 'zh',
+          glossary: Array.isArray(item.glossary) ? item.glossary : [],
+        })
+        const reply = await complete(ctx, {
+          ...prompt,
+          maxTokens: 600,
+          temperature: 0,
+          timeoutMs: 60_000,
+          provider: model.provider,
+          model: model.model,
+        })
+        let parsed = parseJudgeReply(reply)
+        if (!parsed) {
+          // One strict retry: judge replies occasionally wrap the JSON in prose.
+          const retry = await complete(ctx, {
+            ...prompt,
+            user: `${prompt.user}\n\nReturn ONLY the JSON object.`,
+            maxTokens: 600,
+            temperature: 0,
+            timeoutMs: 60_000,
+            provider: model.provider,
+            model: model.model,
+          })
+          parsed = parseJudgeReply(retry)
+        }
+        if (!parsed) failed.push({ id: item.id, code: 'invalid_reply' })
+        else scores.push({ id: item.id, ...parsed })
+      } catch (error) {
+        failed.push({ id: item.id, code: 'judge_error', message: String(error?.message || error) })
+      }
+    }
+    send(res, 200, { scores, failed, model: `${model.provider}/${model.model}` })
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -1573,6 +1766,7 @@ export function apply(ctx) {
   add({ kind: 'exact', path: `${ROOT}/api/import`, handler: (req, res) => importRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/models`, handler: (req, res) => modelsRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/translate`, handler: (req, res) => translateRoute(ctx, req, res) })
+  add({ kind: 'exact', path: `${ROOT}/api/eval/judge`, handler: (req, res) => judgeRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/backups`, handler: (req, res) => backupsRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/restore`, handler: (req, res) => restoreRoute(ctx, req, res) })
   add({ kind: 'exact', path: `${ROOT}/api/context`, handler: (req, res) => contextRoute(ctx, req, res) })

@@ -1,3 +1,10 @@
+import { TRANSLATE_LANGUAGES, TRANSLATE_SOURCES, detectLanguage } from '../../lib/translate.js'
+import { partitionTranslationBatch } from './translation-schedule.js'
+import { translationErrorInfo, translationRetryDelay } from './translation-errors.js'
+import { extractUnits, renderUnitFragment, buildTranslatedOnlyHtml, unitFromText, unitsFromPdfBlocks } from './translation/units.js'
+import { buildTranslationContext } from './translation/context.js'
+import { activeGlossary, glossaryHash } from '../../lib/glossary.js'
+
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
 function viewStateKey(sessionId) {
@@ -27,8 +34,7 @@ function writeSavedViewState(sessionId, value) {
 }
 
 const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
-const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
-const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
+const MAX_TRANSLATION_FAILURES = 200
 
 /** Chapters exposed by the packaged text formats (EPUB and Word). */
 function chaptersFor(target) {
@@ -339,6 +345,7 @@ export function ReaderView(props) {
   const [cardSizes, setCardSizes] = React.useState({})
   const cardDragRef = React.useRef(null)
   const [noteDraft, setNoteDraft] = React.useState(null)
+  const [glossaryDraft, setGlossaryDraft] = React.useState({ term: '', translation: '' })
   const [editing, setEditing] = React.useState(null)
   const [toast, setToast] = React.useState(null)
   const [busy, setBusy] = React.useState(false)
@@ -392,6 +399,12 @@ export function ReaderView(props) {
   const [translationBusy, setTranslationBusy] = React.useState(false)
   const [pdfBlocks, setPdfBlocks] = React.useState([])
   const [pdfTranslating, setPdfTranslating] = React.useState(false)
+  const [pdfFailed, setPdfFailed] = React.useState(0)
+  const pdfFailedRef = React.useRef(new Map())
+  const pdfPrefetchingRef = React.useRef(false)
+  const pdfPageRef = React.useRef(page)
+  const pdfTranslatingRef = React.useRef(false)
+  const pdfPendingPageRef = React.useRef(null)
   const [selectionTranslation, setSelectionTranslation] = React.useState(null)
   const card = topCard(cards)
   const prefs = store.prefs || {}
@@ -1639,6 +1652,25 @@ export function ReaderView(props) {
     )
   }
 
+  const saveGlossaryTerm = () => {
+    const term = String(glossaryDraft.term || '').trim()
+    const translation = String(glossaryDraft.translation || '').trim()
+    if (!term || !translation) {
+      flash(t('label.glossaryInvalid'))
+      return
+    }
+    applyMutation({ op: 'glossary/upsert', term: { term, translation, scope: 'global' } })
+      .then(() => {
+        setGlossaryDraft({ term: '', translation: '' })
+        flash(t('label.glossarySaved'))
+      })
+      .catch((error) => reportError(error))
+  }
+
+  const removeGlossaryTerm = (id) => {
+    applyMutation({ op: 'glossary/remove', id }).catch((error) => reportError(error))
+  }
+
   const saveConceptEdit = async () => {
     if (!conceptEdit) return
     const result = conceptPatch(conceptEdit.form)
@@ -2092,6 +2124,24 @@ export function ReaderView(props) {
     reveal()
   }
 
+  const selectionSentence = (range, selected) => {
+    const element = range?.startContainer?.parentElement
+    const block = element?.closest?.('p, li, blockquote, td, th, h1, h2, h3, h4')
+    const full = String(block?.textContent || '').replace(/\s+/g, ' ').trim()
+    if (!full) return ''
+    const index = full.indexOf(selected)
+    if (index < 0) return full.slice(0, 200)
+    const before = full.slice(0, index)
+    const after = full.slice(index + selected.length)
+    const start = Math.max(before.lastIndexOf('。'), before.lastIndexOf('！'), before.lastIndexOf('？'), before.lastIndexOf('. ')) + 1
+    const ends = ['。', '！', '？', '. ', '\n'].map((mark) => {
+      const at = after.indexOf(mark)
+      return at >= 0 ? at + mark.length : -1
+    }).filter((at) => at > 0)
+    const end = index + selected.length + (ends.length ? Math.min(...ends) : after.length)
+    return full.slice(start, end).trim().slice(0, 200)
+  }
+
   const renderSelectionTranslation = () => {
     if (!selectionTranslation) return null
     const style = placePanel(selectionTranslation.rect, 220)
@@ -2117,11 +2167,38 @@ export function ReaderView(props) {
         { style: { marginTop: '6px', fontSize: '13.5px', lineHeight: 1.6 } },
         selectionTranslation.loading
           ? t('label.translating')
-          : selectionTranslation.translation || t('label.noTranslation'),
+          : selectionTranslation.skipped
+            ? t('label.alreadyTarget')
+            : selectionTranslation.translation || t('label.noTranslation'),
       ),
       h(
         'div',
         { className: 'rd-actions' },
+        selectionTranslation.skipped
+          ? h(
+              'button',
+              {
+                className: 'rd-btn ghost',
+                'data-action': 'force-selection-translation',
+                onClick: forceSelectionTranslation,
+              },
+              t('label.forceTranslate'),
+            )
+          : null,
+        selectionTranslation.translation
+          ? h(
+              'button',
+              {
+                className: 'rd-btn ghost',
+                'data-action': 'copy-selection-translation',
+                onClick: () => copyText(selectionTranslation.translation),
+              },
+              t('action.copy'),
+            )
+          : null,
+        !selectionTranslation.loading && !selectionTranslation.skipped && !selectionTranslation.translation
+          ? h('button', { className: 'rd-btn ghost', onClick: forceSelectionTranslation }, t('action.retry'))
+          : null,
         h('button', { className: 'rd-btn ghost', onClick: () => setSelectionTranslation(null) }, t('action.close')),
       ),
     )
@@ -2171,7 +2248,9 @@ export function ReaderView(props) {
   }
 
   const translationLang = prefs.translateTo || 'zh'
-  const translationFrom = prefs.translateFrom || 'en'
+  const translationFrom = prefs.translateFrom || 'auto'
+  const [detectedLanguage, setDetectedLanguage] = React.useState(null)
+  const [forceTranslate, setForceTranslate] = React.useState(false)
   const storeTranslations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.translations?.[translationLang] || {} : {}),
     [store.docs, docKey, translationLang],
@@ -2180,6 +2259,10 @@ export function ReaderView(props) {
     () => ({ ...storeTranslations, ...(translationCache[translationLang] || {}) }),
     [storeTranslations, translationCache, translationLang],
   )
+  const translatedCount = Object.keys(translationMap).length
+  // Once translations exist for the current target there is nothing left to
+  // warn about, even if the source still looks like the target language.
+  const hasTranslations = Object.keys(storeTranslations).length > 0
   const translationCacheRef = React.useRef(translationCache)
   const translationMapRef = React.useRef(translationMap)
   const translationLangRef = React.useRef(translationLang)
@@ -2188,12 +2271,76 @@ export function ReaderView(props) {
   const translationQueuedRef = React.useRef(new Set())
   const translationRunningRef = React.useRef(false)
   const [translationPending, setTranslationPending] = React.useState(0)
+  const [translationFailed, setTranslationFailed] = React.useState(0)
+  const [translationError, setTranslationError] = React.useState('')
+  const [translationPaused, setTranslationPaused] = React.useState(false)
   const [translationTick, setTranslationTick] = React.useState(0)
   const translationPendingRef = React.useRef(0)
+  const translationFailedRef = React.useRef(new Map())
+  const translationStaleRef = React.useRef(new Set())
+  const translationPausedRef = React.useRef(false)
+  const translationAttemptsRef = React.useRef(new Map())
+  const translationRetryTimerRef = React.useRef(null)
+  // "Already in the target language": no request, no queue. `forceTranslate`
+  // is the explicit override the notice offers.
+  const effectiveSource = translationFrom === 'auto' ? detectedLanguage : translationFrom
+  const sameLanguage = Boolean(!forceTranslate && effectiveSource && effectiveSource === translationLang)
+  const translationSkipRef = React.useRef(sameLanguage)
+  const forceTranslateRef = React.useRef(false)
+  const translationGlossary = React.useMemo(
+    () => activeGlossary(store.glossary, docKey),
+    [store.glossary, docKey],
+  )
+  const translationContext = React.useMemo(
+    () => buildTranslationContext({ doc, docKey, chapter, store }),
+    [doc, docKey, chapter, store.docs, store.concepts],
+  )
+  const translationGlossaryRef = React.useRef(translationGlossary)
+  const translationContextRef = React.useRef(translationContext)
+  const translationGlossarySignature = React.useMemo(() => glossaryHash(translationGlossary), [translationGlossary])
+  const glossarySignatureRef = React.useRef(translationGlossarySignature)
+  React.useEffect(() => {
+    translationGlossaryRef.current = translationGlossary
+  }, [translationGlossary])
+  React.useEffect(() => {
+    if (glossarySignatureRef.current === translationGlossarySignature) return
+    glossarySignatureRef.current = translationGlossarySignature
+    // A term changed: old translations for this book/language were produced
+    // under a different glossary hash. Clear that cache once, then refresh
+    // the visible blocks so the new term actually takes effect.
+    translationCacheRef.current = { ...translationCacheRef.current, [translationLang]: {} }
+    setTranslationCache(translationCacheRef.current)
+    setTranslationTick((tick) => tick + 1)
+    if (!docKey) return
+    applyMutation({ op: 'translation/clear', docKey, lang: translationLang })
+      .then((result) => {
+        if (result?.store) mergeStore(result.store)
+        setTimeout(translateVisibleNow, 0)
+      })
+      .catch((error) => reportError(error))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translationGlossarySignature])
+  React.useEffect(() => {
+    translationContextRef.current = translationContext
+  }, [translationContext])
+  React.useEffect(() => {
+    translationSkipRef.current = sameLanguage
+  }, [sameLanguage])
+  React.useEffect(() => {
+    forceTranslateRef.current = false
+    setForceTranslate(false)
+  }, [docKey, translationLang, translationFrom])
 
   React.useEffect(() => {
     translationCacheRef.current = translationCache
   }, [translationCache])
+
+  React.useEffect(
+    () => () => {
+      clearTimeout(translationRetryTimerRef.current)
+    },
+    [],
+  )
   React.useEffect(() => {
     translationMapRef.current = translationMap
   }, [translationMap])
@@ -2203,61 +2350,145 @@ export function ReaderView(props) {
   }, [translationLang, translationFrom])
 
   React.useEffect(() => {
+    if (!doc) {
+      setDetectedLanguage(null)
+      return
+    }
+    let cancelled = false
+    let attempts = 0
+    // The first paint can happen before the prose nodes exist, so an empty
+    // sample is retried a few frames instead of silently giving up.
+    const detect = () => {
+      if (cancelled) return
+      let sample = ''
+      if (doc.ext === '.pdf') {
+        sample = (pdfBlocks || []).map((block) => block.text).join('\n').slice(0, 2000)
+      } else if (contentRef.current) {
+        const parts = []
+        for (const node of contentRef.current.querySelectorAll('p, li, blockquote, h2, h3, h4')) {
+          if (node.closest('.rd-trans, .rd-card')) continue
+          parts.push(node.textContent || '')
+          if (parts.length >= 40) break
+        }
+        sample = parts.join('\n').slice(0, 2000)
+      }
+      if (!sample.trim() && attempts < 4) {
+        attempts += 1
+        requestAnimationFrame(detect)
+        return
+      }
+      const detection = detectLanguage(sample)
+      // Only show / act on a confident answer; a weak guess would just confuse
+      // the source selector and could hide a page behind an "already target" note.
+      setDetectedLanguage(detection.language === 'auto' || detection.confidence < 0.6 ? null : detection.language)
+    }
+    detect()
+    return () => {
+      cancelled = true
+    }
+  }, [doc, chapter, page, layoutTick, pdfBlocks, translationMode])
+
+  React.useEffect(() => {
+    clearTimeout(translationRetryTimerRef.current)
     translationQueueRef.current.clear()
     translationQueuedRef.current.clear()
+    translationFailedRef.current.clear()
+    translationStaleRef.current.clear()
+    translationAttemptsRef.current.clear()
+    translationPausedRef.current = false
     translationPendingRef.current = 0
     setTranslationPending(0)
+    setTranslationFailed(0)
+    setTranslationError('')
+    setTranslationPaused(false)
   }, [docKey, translationLang, translationFrom, translationMode])
+
+  React.useEffect(() => {
+    pdfFailedRef.current.clear()
+    setPdfFailed(0)
+    setTranslationError('')
+  }, [docKey, page, translationLang, translationFrom])
 
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
-    const blocks = []
-    const seen = new Set()
-    for (const node of nodes) {
-      if (node.closest('.rd-trans, .rd-card')) continue
-      const text = normalizeBlockText(node.textContent)
-      if (text.length < 2) continue
-      const hash = blockHash(text)
-      if (seen.has(hash)) continue
-      seen.add(hash)
-      blocks.push({ node, text, hash })
-      if (blocks.length >= limit) break
-    }
-    return blocks
+    const chapterTitle = (chaptersFor(doc)[chapter] || {}).title || ''
+    return extractUnits(root, { chapter: chapterTitle, limit })
   }
 
   const mergeTranslations = (lang, result) => {
     const merged = { ...(translationCacheRef.current[lang] || {}) }
-    for (const [id, text] of Object.entries(result.translations || {})) merged[id] = text
+    for (const [id, text] of Object.entries(result.translations || {})) {
+      merged[id] = text
+      translationFailedRef.current.delete(id)
+      translationStaleRef.current.delete(id)
+    }
+    for (const id of result.stale || []) {
+      if (typeof id === 'string') translationStaleRef.current.add(id)
+    }
     translationCacheRef.current = { ...translationCacheRef.current, [lang]: merged }
+    // Update the lookup ref synchronously: a PDF batch checks it immediately
+    // after merge, before React has committed the state/effect that updates it.
+    translationMapRef.current = { ...translationMapRef.current, ...(result.translations || {}) }
     setTranslationCache(translationCacheRef.current)
+    setTranslationFailed(translationFailedRef.current.size)
     if (result.store) mergeStore(result.store)
   }
 
   const enqueueTranslationSegments = (segments) => {
+    if (translationSkipRef.current) return
     let added = 0
     for (const segment of segments) {
       if (!segment || !segment.id || !segment.text) continue
       if (translationFor(translationMapRef.current, segment.id)) continue
+      if (translationFailedRef.current.has(segment.id)) continue
       if (translationQueuedRef.current.has(segment.id)) continue
       translationQueuedRef.current.add(segment.id)
       translationQueueRef.current.set(segment.id, segment.text)
       added += 1
     }
-    if (added === 0) return
+    if (added === 0) {
+      // A previous request failed and left its batch queued; clicking
+      // "translate visible" must resume it instead of doing nothing.
+      if (translationQueueRef.current.size > 0 && !translationRunningRef.current) void runTranslationQueue()
+      return
+    }
     translationPendingRef.current = translationQueueRef.current.size
     setTranslationPending(translationPendingRef.current)
     void runTranslationQueue()
   }
 
+  const clearFailedTranslations = () => {
+    if (translationFailedRef.current.size === 0) return
+    translationFailedRef.current.clear()
+    setTranslationFailed(0)
+  }
+
+  const markFailedSegments = (segments) => {
+    for (const segment of segments || []) {
+      if (!segment || !segment.id) continue
+      if (translationFor(translationMapRef.current, segment.id)) {
+        translationFailedRef.current.delete(segment.id)
+        continue
+      }
+      translationFailedRef.current.set(segment.id, segment.text)
+    }
+    while (translationFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
+      const oldest = translationFailedRef.current.keys().next().value
+      translationFailedRef.current.delete(oldest)
+    }
+    setTranslationFailed(translationFailedRef.current.size)
+  }
+
   const runTranslationQueue = async () => {
     if (translationRunningRef.current) return
+    clearTimeout(translationRetryTimerRef.current)
     translationRunningRef.current = true
     setTranslationBusy(true)
+    let current = []
     try {
       while (translationQueueRef.current.size > 0) {
+        if (translationPausedRef.current) break
         const lang = translationLangRef.current
         const from = translationFromRef.current
         for (const [id] of translationQueueRef.current) {
@@ -2272,31 +2503,123 @@ export function ReaderView(props) {
           translationQueuedRef.current.clear()
           break
         }
+        current = segments
         const result = await api.translate(sessionId, {
           docKey,
           target: lang,
           from,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
         })
+        if (result?.skipped) {
+          // The host detected the source already is the target: stop instead of
+          // retrying the same blocks forever.
+          translationQueueRef.current.clear()
+          translationQueuedRef.current.clear()
+          clearFailedTranslations()
+          translationAttemptsRef.current.clear()
+          translationPendingRef.current = 0
+          setTranslationPending(0)
+          setTranslationError('')
+          if (result.detected) setDetectedLanguage(result.detected)
+          flash(t('label.alreadyTarget'))
+          current = []
+          break
+        }
+        setTranslationError('')
         mergeTranslations(lang, result)
-        for (const segment of segments) {
+        // Never delete the whole request batch blindly: a partial reply must
+        // leave the missing blocks retryable instead of creating a hole.
+        const { done, failed } = partitionTranslationBatch(segments, result)
+        for (const segment of done) {
           translationQueueRef.current.delete(segment.id)
           translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
         }
+        for (const segment of failed) {
+          translationQueueRef.current.delete(segment.id)
+          translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
+        }
+        markFailedSegments(failed)
+        current = []
         translationPendingRef.current = translationQueueRef.current.size
         setTranslationPending(translationPendingRef.current)
         setTranslationTick((tick) => tick + 1)
       }
     } catch (error) {
-      translationQueueRef.current.clear()
-      translationQueuedRef.current.clear()
-      translationPendingRef.current = 0
-      setTranslationPending(0)
-      reportError(error)
+      const info = translationErrorInfo(error, t)
+      const attempt = current.reduce(
+        (max, segment) => Math.max(max, translationAttemptsRef.current.get(segment.id) || 0),
+        0,
+      )
+      const canRetry = info.retryable && current.length > 0 && attempt < 2 && !translationPausedRef.current
+      if (canRetry) {
+        // Keep the in-flight batch in the queue and retry it after a short
+        // backoff; the rest of the queue stays untouched.
+        for (const segment of current) translationAttemptsRef.current.set(segment.id, attempt + 1)
+        setTranslationError(`${info.message} · ${t('label.retrying')}`)
+        translationPendingRef.current = translationQueueRef.current.size
+        setTranslationPending(translationPendingRef.current)
+        const delay = translationRetryDelay(info.code, attempt + 1)
+        translationRetryTimerRef.current = setTimeout(() => {
+          if (!translationPausedRef.current) void runTranslationQueue()
+        }, delay)
+      } else {
+        markFailedSegments(current)
+        for (const segment of current) {
+          translationQueueRef.current.delete(segment.id)
+          translationQueuedRef.current.delete(segment.id)
+          translationAttemptsRef.current.delete(segment.id)
+        }
+        translationPendingRef.current = translationQueueRef.current.size
+        setTranslationPending(translationPendingRef.current)
+        setTranslationError(info.message)
+        reportError(error)
+      }
     } finally {
+      current = []
       translationRunningRef.current = false
       setTranslationBusy(false)
     }
+  }
+
+  const pauseTranslations = () => {
+    translationPausedRef.current = true
+    setTranslationPaused(true)
+    clearTimeout(translationRetryTimerRef.current)
+  }
+
+  const resumeTranslations = () => {
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    if (translationQueueRef.current.size > 0) void runTranslationQueue()
+  }
+
+  const cancelTranslations = () => {
+    clearTimeout(translationRetryTimerRef.current)
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    translationQueueRef.current.clear()
+    translationQueuedRef.current.clear()
+    translationAttemptsRef.current.clear()
+    translationPendingRef.current = 0
+    setTranslationPending(0)
+    setTranslationError('')
+  }
+
+  const retryFailedTranslations = () => {
+    const entries = [...translationFailedRef.current.entries()]
+    if (entries.length === 0) return
+    translationPausedRef.current = false
+    setTranslationPaused(false)
+    setTranslationError('')
+    translationFailedRef.current.clear()
+    for (const [id] of entries) translationAttemptsRef.current.delete(id)
+    setTranslationFailed(0)
+    enqueueTranslationSegments(entries.map(([id, text]) => ({ id, text })))
   }
 
   const translateVisibleNow = () => {
@@ -2306,6 +2629,7 @@ export function ReaderView(props) {
     const scroller = root.closest('.rd-main')
     const viewport = scroller ? scroller.getBoundingClientRect() : null
     const visible = blocks.filter((block) => {
+      if (translationMode !== 'only' && block.role === 'table-cell') return false
       if (!viewport) return true
       return isNearViewport(block.node.getBoundingClientRect(), viewport, 200)
     })
@@ -2329,36 +2653,134 @@ export function ReaderView(props) {
     }
   }
 
-  const translatePdfPage = async () => {
-    if (!doc || !doc.pdf || pdfTranslating) return
+  React.useEffect(() => {
+    pdfPageRef.current = page
+  }, [page])
+
+  const translatePdfPage = async (targetPage = pdfPageRef.current) => {
+    if (!doc || !doc.pdf) return
+    if (pdfTranslatingRef.current) {
+      pdfPendingPageRef.current = targetPage
+      return
+    }
+    if (translationSkipRef.current) {
+      flash(t('label.alreadyTarget'))
+      return
+    }
+    pdfTranslatingRef.current = true
     setPdfTranslating(true)
+    setTranslationError('')
+    let completed = true
     try {
-      const blocks = await pdfPageBlocks(doc.pdf, page)
-      setPdfBlocks(blocks)
-      const missing = blocks.filter(
-        (block) => !translationFor(translationMapRef.current, blockHash(block.text)),
-      )
+      const blocks = await pdfPageBlocks(doc.pdf, targetPage)
+      if (targetPage === pdfPageRef.current) setPdfBlocks(blocks)
+      if (blocks.length === 0) {
+        setPdfFailed(0)
+        setTranslationError(t('label.pdfNoTextLayer'))
+        completed = false
+        return
+      }
+      const units = unitsFromPdfBlocks(blocks)
+      const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
       for (let index = 0; index < missing.length; index += 8) {
         const group = missing.slice(index, index + 8)
-        const segments = group.map((block) => ({ id: blockHash(block.text), text: block.text }))
+        try {
+          const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
+          const result = await api.translate(sessionId, {
+            docKey,
+            target: translationLangRef.current,
+            from: translationFromRef.current,
+            glossary: translationGlossaryRef.current,
+            context: translationContextRef.current,
+            segments,
+            ...(forceTranslateRef.current ? { force: true } : {}),
+          })
+          if (result?.skipped) {
+            if (result.detected) setDetectedLanguage(result.detected)
+            pdfFailedRef.current.clear()
+            setPdfFailed(0)
+            setTranslationError('')
+            completed = false
+            flash(t('label.alreadyTarget'))
+            return
+          }
+          mergeTranslations(translationLangRef.current, result)
+          for (const unit of group) {
+            if (translationFor(translationMapRef.current, unit.hash)) {
+              pdfFailedRef.current.delete(unit.hash)
+            } else {
+              pdfFailedRef.current.set(unit.hash, unit.text)
+            }
+          }
+          setPdfFailed(pdfFailedRef.current.size)
+        } catch (error) {
+          for (const unit of group) pdfFailedRef.current.set(unit.hash, unit.text)
+          while (pdfFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
+            const oldest = pdfFailedRef.current.keys().next().value
+            pdfFailedRef.current.delete(oldest)
+          }
+          setPdfFailed(pdfFailedRef.current.size)
+          setTranslationError(translationErrorInfo(error, t).message)
+          completed = false
+          break
+        }
+      }
+    } catch (error) {
+      completed = false
+      setTranslationError(translationErrorInfo(error, t).message)
+      reportError(error)
+    } finally {
+      pdfTranslatingRef.current = false
+      setPdfTranslating(false)
+      if (completed) void prefetchNextPdfPage(targetPage)
+      const pendingPage = pdfPendingPageRef.current
+      pdfPendingPageRef.current = null
+      if (pendingPage !== null && pendingPage !== targetPage) void translatePdfPage(pendingPage)
+    }
+  }
+
+  const prefetchNextPdfPage = async (targetPage = pdfPageRef.current) => {
+    if (!doc || !doc.pdf || pdfPrefetchingRef.current) return
+    if (targetPage !== pdfPageRef.current) return
+    const nextPage = targetPage + 1
+    if (!Number.isFinite(doc.pdf.numPages) || nextPage > doc.pdf.numPages) return
+    pdfPrefetchingRef.current = true
+    try {
+      const blocks = await pdfPageBlocks(doc.pdf, nextPage)
+      const units = unitsFromPdfBlocks(blocks)
+      const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
+      for (let index = 0; index < missing.length; index += 8) {
+        const group = missing.slice(index, index + 8)
+        const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
         const result = await api.translate(sessionId, {
           docKey,
           target: translationLangRef.current,
           from: translationFromRef.current,
+          glossary: translationGlossaryRef.current,
+          context: translationContextRef.current,
           segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
         })
+        if (result?.skipped) break
         mergeTranslations(translationLangRef.current, result)
       }
-    } catch (error) {
-      reportError(error)
+    } catch {
+      /* prefetch is best-effort; the page itself will surface errors */
     } finally {
-      setPdfTranslating(false)
+      pdfPrefetchingRef.current = false
     }
+  }
+
+  const retryPdfFailed = () => {
+    pdfFailedRef.current.clear()
+    setPdfFailed(0)
+    setTranslationError('')
+    void translatePdfPage()
   }
 
   React.useEffect(() => {
     if (drawer !== 'translate' || !doc || doc.ext !== '.pdf') return
-    void translatePdfPage()
+    void translatePdfPage(page)
   }, [drawer, page, translationLang, translationFrom])
 
   const translateSelection = async () => {
@@ -2370,14 +2792,71 @@ export function ReaderView(props) {
       return
     }
     const rect = menu.range.getBoundingClientRect()
+    const sentence = selectionSentence(menu.range, text)
     setMenu(null)
-    setSelectionTranslation({ text, loading: true, translation: '', rect })
+    if (sameLanguage) {
+      setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true, sentence })
+      return
+    }
+    setSelectionTranslation({ text, loading: true, translation: '', rect, sentence })
     try {
-      const hash = blockHash(text)
+      const unit = unitFromText(text)
+      const hash = unit.hash
       const result = await api.translate(sessionId, {
+        docKey,
         target: translationLang,
         from: translationFrom,
-        segments: [{ id: hash, text }],
+        glossary: translationGlossaryRef.current,
+        context: { ...translationContextRef.current, selectionSentence: sentence },
+        segments: [{ id: hash, text: unit.text }],
+        ...(forceTranslateRef.current ? { force: true } : {}),
+      })
+      if (result?.skipped) {
+        if (result.detected) setDetectedLanguage(result.detected)
+        setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true })
+        return
+      }
+      setSelectionTranslation({
+        text,
+        loading: false,
+        translation: (result.translations || {})[hash] || '',
+        rect,
+        sentence,
+      })
+    } catch (error) {
+      reportError(error)
+      setSelectionTranslation({ text, loading: false, translation: '', rect })
+    }
+  }
+
+  const forceTranslation = () => {
+    // The notice is derived from state, but the queue closure must see the new
+    // flag immediately, so both the ref and the state are updated.
+    forceTranslateRef.current = true
+    translationSkipRef.current = false
+    setForceTranslate(true)
+    if (doc?.pdf) {
+      translatePdfPage()
+      return
+    }
+    translateVisibleNow()
+  }
+
+  const forceSelectionTranslation = async () => {
+    if (!selectionTranslation || selectionTranslation.loading) return
+    const { text, rect } = selectionTranslation
+    const unit = unitFromText(text)
+    const hash = unit.hash
+    setSelectionTranslation({ text, loading: true, translation: '', rect, sentence: selectionTranslation.sentence || '' })
+    try {
+      const result = await api.translate(sessionId, {
+        docKey,
+        target: translationLang,
+        from: translationFrom,
+        glossary: translationGlossaryRef.current,
+        context: { ...translationContextRef.current, selectionSentence: selectionTranslation.sentence || '' },
+        segments: [{ id: hash, text: unit.text }],
+        force: true,
       })
       setSelectionTranslation({
         text,
@@ -2389,6 +2868,16 @@ export function ReaderView(props) {
       reportError(error)
       setSelectionTranslation({ text, loading: false, translation: '', rect })
     }
+  }
+
+  const swapLanguages = () => {
+    // Swapping `auto` downstream would mean "auto into nothing"; ask for a real
+    // source first, which also keeps the pair honest in the store.
+    if (translationFrom === 'auto') {
+      flash(t('label.swapNeedsSource'))
+      return
+    }
+    changePrefs({ translateFrom: translationLang, translateTo: translationFrom })
   }
 
   const renderLanguageControls = (className = '') =>
@@ -2408,8 +2897,25 @@ export function ReaderView(props) {
           },
           TRANSLATE_SOURCES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
         ),
+        translationFrom === 'auto' && detectedLanguage
+          ? h(
+              'span',
+              { className: 'rd-lang-detected', title: t('label.detected') },
+              `${t('label.detected')} ${t(`lang.${detectedLanguage}`)}`,
+            )
+          : null,
       ),
-      h('span', { className: 'rd-lang-arrow' }, '→'),
+      h(
+        'button',
+        {
+          type: 'button',
+          className: 'rd-btn ghost rd-lang-swap',
+          title: t('label.swapLanguages'),
+          'aria-label': t('label.swapLanguages'),
+          onClick: swapLanguages,
+        },
+        '⇄',
+      ),
       h(
         'label',
         { className: 'rd-lang-field' },
@@ -2421,10 +2927,26 @@ export function ReaderView(props) {
             value: translationLang,
             onChange: (event) => changePrefs({ translateTo: event.target.value }),
           },
-          TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
         ),
       ),
+      sameLanguage && !hasTranslations
+        ? h(
+            'span',
+            { className: 'rd-lang-notice' },
+            h('span', { className: 'rd-muted' }, t('label.alreadyTarget')),
+            h(
+              'button',
+              { type: 'button', className: 'rd-btn ghost', onClick: forceTranslation },
+              t('label.forceTranslate'),
+            ),
+          )
+        : null,
     )
+
+  const progressTotal = translatedCount + translationPending + translationFailed
+  const translationProgress = progressTotal > 0 ? Math.round((translatedCount / progressTotal) * 100) : 0
+  const workPending = translationBusy || translationPending > 0
 
   const renderTranslateBar = () =>
     h(
@@ -2432,30 +2954,94 @@ export function ReaderView(props) {
       { className: 'rd-translate-bar' },
       renderLanguageControls(),
       h('span', { className: 'rd-spacer' }),
-      translationBusy || translationPending > 0
-        ? h('span', { className: 'rd-muted rd-translate-status' }, t('label.translatingVisible'))
+      translationBusy || translationPending > 0 || translationFailed > 0 || translatedCount > 0
+        ? h(
+            'span',
+            { className: 'rd-muted rd-translate-status', 'aria-live': 'polite' },
+            `${t('label.translated')} ${translatedCount} · ${t('label.translatePending')} ${translationPending}` +
+              (translationFailed > 0 ? ` · ${t('label.translateFailed')} ${translationFailed}` : '') +
+              (translationBusy ? ` · ${t('label.translating')}` : '') +
+              (translationPaused ? ` · ${t('label.translatePaused')}` : ''),
+          )
         : null,
+      translationError ? h('span', { className: 'rd-translate-error', role: 'status' }, translationError) : null,
+      translationFailed > 0
+        ? h('button', { className: 'rd-btn ghost', onClick: retryFailedTranslations }, t('label.retryFailed'))
+        : null,
+      workPending
+        ? h(
+            'button',
+            { className: 'rd-btn ghost', onClick: translationPaused ? resumeTranslations : pauseTranslations },
+            translationPaused ? t('label.resumeTranslation') : t('label.pauseTranslation'),
+          )
+        : null,
+      workPending ? h('button', { className: 'rd-btn ghost', onClick: cancelTranslations }, t('label.cancelTranslation')) : null,
       h('button', { className: 'rd-btn ghost', onClick: translateVisibleNow }, t('label.translateVisible')),
       h(
         'button',
         { className: 'rd-btn ghost', onClick: () => setTranslationMode('off') },
         '×',
       ),
+      h(
+        'div',
+        { className: 'rd-progress', style: { flexBasis: '100%' } },
+        h('div', { className: 'rd-progress-bar', style: { width: `${translationProgress}%` } }),
+      ),
     )
 
   React.useEffect(() => {
     const root = contentRef.current
     if (!root || !doc || doc.ext === '.pdf') return
-    for (const node of Array.from(root.querySelectorAll('.rd-trans, .rd-trans-pending'))) node.remove()
-    if (translationMode === 'off') return
-    if (translationMode === 'only') return
+    if (translationMode === 'off' || translationMode === 'only') {
+      for (const node of Array.from(root.querySelectorAll('.rd-trans'))) node.remove()
+      return
+    }
+    const scroller = root.closest('.rd-main') || root.parentElement
+    const anchor = root.firstElementChild
+    const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0
+    const keep = new Set()
     for (const block of collectTranslationBlocks()) {
+      if (block.role === 'table-cell') continue
       const text = translationFor(translationMap, block.hash)
       if (!text) continue
-      const div = document.createElement('div')
-      div.className = 'rd-trans'
-      div.textContent = text
-      block.node.appendChild(div)
+      let div = null
+      for (const child of block.node.children || []) {
+        if (child.classList && child.classList.contains('rd-trans')) {
+          div = child
+          break
+        }
+      }
+      if (div && div.dataset.rdHash !== block.hash) {
+        div.remove()
+        div = null
+      }
+      if (!div) {
+        div = document.createElement('div')
+        div.className = 'rd-trans'
+        block.node.appendChild(div)
+      }
+      if (div._rdText !== text) {
+        const fragment = renderUnitFragment(block, text)
+        if (fragment) div.replaceChildren(fragment)
+        else div.textContent = text.replace(/\{\{RD:\d+\}\}/g, '')
+        div._rdText = text
+      }
+      div.dataset.rdHash = block.hash
+      div.lang = translationLang
+      div.classList.toggle('rd-trans-stale', translationStaleRef.current.has(block.hash))
+      if (translationStaleRef.current.has(block.hash)) div.title = t('label.staleTranslation')
+      keep.add(div)
+    }
+    for (const node of Array.from(root.querySelectorAll('.rd-trans'))) {
+      if (!keep.has(node)) node.remove()
+    }
+    if (scroller && anchor) {
+      // Keep the current reading line stable when translations are inserted
+      // above it; only compensate for the actual layout delta.
+      requestAnimationFrame(() => {
+        const delta = anchor.getBoundingClientRect().top - anchorTop
+        if (Math.abs(delta) > 0.5) scroller.scrollTop += delta
+      })
     }
   }, [doc, chapter, translationMode, translationLang, translationMap, layoutTick])
 
@@ -2464,28 +3050,28 @@ export function ReaderView(props) {
     const root = contentRef.current
     if (!root) return
     const scroller = root.closest('.rd-main') || root.parentElement
+    const units = collectTranslationBlocks().filter(
+      (unit) => translationMode === 'only' || unit.role !== 'table-cell',
+    )
     if (typeof IntersectionObserver !== 'function') {
-      const blocks = collectTranslationBlocks(12)
-      enqueueTranslationSegments(blocks.map((block) => ({ id: block.hash, text: block.text })))
+      enqueueTranslationSegments(units.slice(0, 12).map((unit) => ({ id: unit.hash, text: unit.text })))
       return
     }
+    const byNode = new Map(units.map((unit) => [unit.node, unit]))
     const observer = new IntersectionObserver(
       (entries) => {
         const segments = []
         for (const entry of entries) {
           if (!entry.isIntersecting) continue
-          const text = normalizeBlockText(entry.target.textContent)
-          if (text.length < 2) continue
-          segments.push({ id: blockHash(text), text })
+          const unit = byNode.get(entry.target)
+          if (!unit) continue
+          segments.push({ id: unit.hash, text: unit.text })
         }
         enqueueTranslationSegments(segments)
       },
       { root: scroller, rootMargin: '240px 0px', threshold: 0.01 },
     )
-    for (const node of root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')) {
-      if (node.closest('.rd-trans, .rd-trans-pending, .rd-card')) continue
-      observer.observe(node)
-    }
+    for (const unit of units) observer.observe(unit.node)
     return () => observer.disconnect()
   }, [doc, chapter, translationMode, translationLang, translationFrom, layoutTick, translationTick])
 
@@ -3248,7 +3834,7 @@ export function ReaderView(props) {
 
   const translatedOnlyHtml = React.useMemo(() => {
     if (!doc || doc.ext === '.pdf' || translationMode !== 'only') return ''
-    return buildTranslatedHtml(renderedHtml, (text) => translationFor(translationMap, blockHash(text)))
+    return buildTranslatedOnlyHtml(renderedHtml, (hash) => translationFor(translationMap, hash))
   }, [doc, chapter, renderedHtml, translationMode, translationMap])
 
   const renderContent = () => {
@@ -3474,14 +4060,23 @@ export function ReaderView(props) {
             translationPending > 0
               ? h('span', { className: 'rd-muted', style: { fontSize: '11px' } }, `${t('label.translatePending')} ${translationPending}`)
               : null,
+            pdfFailed > 0
+              ? h('span', { className: 'rd-muted', style: { fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' } }, `${t('label.translateFailed')} ${pdfFailed}`)
+              : null,
+            pdfFailed > 0
+              ? h('button', { className: 'rd-btn ghost', disabled: pdfTranslating, onClick: retryPdfFailed }, t('label.retryFailed'))
+              : null,
             h(
               'button',
               { className: 'rd-btn', disabled: pdfTranslating, onClick: translatePdfPage },
               pdfTranslating ? t('label.translating') : t('action.translatePage'),
             ),
           ),
+          translationError
+            ? h('div', { className: 'rd-translate-error', role: 'status', style: { marginBottom: '6px' } }, translationError)
+            : null,
           pdfBlocks.length === 0
-            ? h('div', { className: 'rd-empty' }, t('label.translating'))
+            ? h('div', { className: 'rd-empty' }, translationError || t('label.translating'))
             : pdfBlocks.map((block) => {
                 const translated = translationFor(translationMap, blockHash(block.text))
                 return h(
@@ -3925,7 +4520,45 @@ export function ReaderView(props) {
               value: translationLang,
               onChange: (event) => changePrefs({ translateTo: event.target.value }),
             },
-            TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+            TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'rd-setting-section', style: { padding: '8px 0', borderBottom: '1px dashed var(--dsw-alias-border-l1)' } },
+          h('div', { className: 'rd-setting-title', style: { fontSize: '12.5px', marginBottom: '6px' } }, t('label.glossary')),
+          (store.glossary?.terms || []).length === 0
+            ? h('div', { className: 'rd-muted', style: { fontSize: '11.5px' } }, t('label.glossaryEmpty'))
+            : (store.glossary?.terms || []).map((term) =>
+                h(
+                  'div',
+                  { key: term.id, className: 'rd-setting-row' },
+                  h('span', null, `${term.term} → ${term.translation}`),
+                  h(
+                    'button',
+                    { className: 'rd-btn ghost', onClick: () => removeGlossaryTerm(term.id) },
+                    '×',
+                  ),
+                ),
+              ),
+          h(
+            'div',
+            { className: 'rd-actions', style: { margin: '6px 0 0' } },
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTerm'),
+              value: glossaryDraft.term,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, term: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('input', {
+              className: 'rd-input',
+              placeholder: t('label.glossaryTranslation'),
+              value: glossaryDraft.translation,
+              onChange: (event) => setGlossaryDraft({ ...glossaryDraft, translation: event.target.value }),
+              style: { flex: 1, minWidth: 80 },
+            }),
+            h('button', { className: 'rd-btn', onClick: saveGlossaryTerm }, t('action.add')),
           ),
         ),
         row(

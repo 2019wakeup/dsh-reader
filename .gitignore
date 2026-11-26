@@ -9,3 +9,9 @@ dsh-reader/plugin-market.json
 dsh-reader/demo/out/
 
 示例-Word文档.docx
+
+dsh-reader/eval/translate/last-report.json
+dsh-reader/eval/translate/.cache/
+dsh-reader/eval/translate/live-report.json
+dsh-reader/eval/translate/last-report.md
+dsh-reader/eval/translate/live-report.md

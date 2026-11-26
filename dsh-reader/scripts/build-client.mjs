@@ -4,6 +4,9 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const files = [
   'lib/block-hash.js',
+  'lib/translate.js',
+  'lib/translation-cache.js',
+  'lib/glossary.js',
   'src/client/util.js',
   'src/client/motion.js',
   'src/client/attachments.js',
@@ -31,6 +34,9 @@ const files = [
   'src/client/translate.js',
   'src/client/navigation.js',
   'src/client/translation-schedule.js',
+  'src/client/translation-errors.js',
+  'src/client/translation/units.js',
+  'src/client/translation/context.js',
   'src/client/card-drag.js',
   'src/client/mindmap.js',
   'src/client/diagnostics.js',

@@ -1,0 +1,10 @@
+{
+  "adequacy": 4.3,
+  "fluency": 4.2,
+  "terminology": 4.5,
+  "passRate": 0.95,
+  "winRate": 0.6,
+  "lossRate": 0.15,
+  "humanAgreement": 0.85,
+  "humanKappa": 0.6
+}

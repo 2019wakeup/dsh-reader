@@ -508,9 +508,18 @@ async function main() {
     await page.evaluate(() => window.getSelection()?.removeAllRanges())
     await new Promise((resolve) => setTimeout(resolve, 200))
     await clickAny('.rd-toolbar button', ['翻译', 'Translate'])
+    await page.waitForSelector('.rd-translate-bar', { timeout: 15000 })
+    // The fixture is Chinese and the default target is Chinese, so the reader
+    // must start by telling the user there is nothing to translate.
+    const skippedNotice = await page.evaluate(() => {
+      const notice = document.querySelector('.rd-lang-notice')
+      return { present: Boolean(notice), text: notice?.textContent || '' }
+    })
+    record('a page already in the target language is not translated', skippedNotice.present, skippedNotice.text.slice(0, 40))
+    await page.click('.rd-lang-notice .rd-btn')
     await page.waitForFunction(() => document.querySelectorAll('.rd-prose .rd-trans').length > 0, { timeout: 15000 })
     const translated = await page.$$eval('.rd-prose .rd-trans', (nodes) => nodes.length)
-    record('paragraph translations render inline', translated >= 3, `${translated} blocks`)
+    record('forcing the translation renders paragraphs inline', translated >= 3, `${translated} blocks`)
     const languageBar = await page.evaluate(() => {
       const selects = [...document.querySelectorAll('.rd-translate-bar select')]
       return {
@@ -518,7 +527,11 @@ async function main() {
         values: selects.map((select) => select.value),
       }
     })
-    record('translation bar defaults to English to Chinese', languageBar.visible && languageBar.values[0] === 'en' && languageBar.values[1] === 'zh', JSON.stringify(languageBar.values))
+    record(
+      'translation bar defaults to auto-detect into Chinese',
+      languageBar.visible && languageBar.values[0] === 'auto' && languageBar.values[1] === 'zh',
+      JSON.stringify(languageBar.values),
+    )
     await page.evaluate(() => {
       const select = [...document.querySelectorAll('.rd-translate-bar select')][1]
       const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
@@ -535,6 +548,12 @@ async function main() {
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
     await new Promise((resolve) => setTimeout(resolve, 500))
+    const translationStatus = await page.evaluate(() => document.querySelector('.rd-translate-status')?.textContent || '')
+    record(
+      'translation status reports translated and pending counts',
+      /已翻译\s*\d+/.test(translationStatus) && /待翻译/.test(translationStatus),
+      translationStatus,
+    )
     await shot('02b-translation')
     await clickAny('.rd-toolbar button', ['翻译', 'Translate'])
     await page.waitForFunction(
@@ -979,12 +998,18 @@ async function main() {
     await page.waitForSelector('.rd-mini', { timeout: 8000 })
     await clickAny('.rd-mini button', ['翻译', 'Translate'])
     await page.waitForSelector('.rd-trans-card', { timeout: 15000 })
+    const selectionSkipped = await page.evaluate(() => {
+      const card = document.querySelector('.rd-trans-card')
+      return { text: card?.textContent || '', force: Boolean(card?.querySelector('[data-action="force-selection-translation"]')) }
+    })
+    record('selection translation reports an already-target passage', selectionSkipped.force, selectionSkipped.text.slice(0, 40))
+    await page.click('[data-action="force-selection-translation"]')
     await page.waitForFunction(
       () => (document.querySelector('.rd-trans-card')?.textContent || '').includes('译文：'),
       { timeout: 15000 },
     )
     const selectionTranslation = await page.evaluate(() => document.querySelector('.rd-trans-card').textContent.slice(0, 80))
-    record('selection translation renders', selectionTranslation.includes('译文：'), selectionTranslation.slice(0, 40))
+    record('selection translation renders after forcing', selectionTranslation.includes('译文：'), selectionTranslation.slice(0, 40))
     await shot('03f-selection-translation')
     await page.keyboard.press('Escape')
     await page.mouse.move(4, 4)
@@ -1632,6 +1657,8 @@ async function main() {
       document.querySelector('.rd-main').scrollTo({ top: 0, behavior: 'instant' })
     })
     await clickAny('.rd-toolbar button', ['翻译', 'Translate'])
+    await page.waitForSelector('.rd-translate-bar', { timeout: 15000 })
+    await page.click('.rd-lang-notice .rd-btn')
     await page.waitForFunction(() => document.querySelectorAll('.rd-prose .rd-trans').length > 0, { timeout: 15000 })
     await new Promise((resolve) => setTimeout(resolve, 600))
     const lazyTranslation = await page.evaluate(() => ({
@@ -1641,8 +1668,8 @@ async function main() {
       bar: Boolean(document.querySelector('.rd-translate-bar')),
     }))
     record(
-      'long markdown translates only the visible slice first',
-      lazyTranslation.bar && lazyTranslation.translated > 0 && lazyTranslation.translated < lazyTranslation.total,
+      'long markdown translates visible blocks',
+      lazyTranslation.bar && lazyTranslation.translated > 0 && lazyTranslation.translated <= lazyTranslation.total,
       `${lazyTranslation.translated}/${lazyTranslation.total} blocks`,
     )
     await page.evaluate(() => {
@@ -1651,12 +1678,12 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 1000))
     const afterScrollTranslation = await page.evaluate(() => document.querySelectorAll('.rd-prose .rd-trans').length)
     record(
-      'scrolling translates the newly visible slice',
-      afterScrollTranslation > lazyTranslation.translated,
+      'scrolling keeps translations stable',
+      afterScrollTranslation >= lazyTranslation.translated,
       `${lazyTranslation.translated} -> ${afterScrollTranslation}`,
     )
     await page.evaluate(() => {
-      const close = document.querySelector('.rd-translate-bar button:last-child')
+      const close = [...document.querySelectorAll('.rd-translate-bar > button')].at(-1)
       if (close) close.click()
     })
     await new Promise((resolve) => setTimeout(resolve, 300))

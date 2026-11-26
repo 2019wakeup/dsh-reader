@@ -29,3 +29,25 @@ test('viewport check includes a prefetch margin', () => {
   assert.equal(isNearViewport({ top: 1000, bottom: 1100 }, viewport, 200), false)
   assert.equal(isNearViewport(null, viewport), false)
 })
+
+test('a partial translation keeps successes and retries the rest', async () => {
+  const { partitionTranslationBatch } = await import('../src/client/translation-schedule.js')
+  const segments = [
+    { id: 'a', text: 'one' },
+    { id: 'b', text: 'two' },
+    { id: 'c', text: 'three' },
+  ]
+  const { done, failed } = partitionTranslationBatch(segments, {
+    translations: { a: '一', b: '   ', d: 'ignored' },
+    failed: [{ id: 'c', code: 'missing' }],
+  })
+  assert.deepEqual(done.map((item) => item.id), ['a'])
+  assert.deepEqual(failed.map((item) => item.id), ['b', 'c'])
+})
+
+test('an empty or malformed reply fails the whole batch', async () => {
+  const { partitionTranslationBatch } = await import('../src/client/translation-schedule.js')
+  const segments = [{ id: 'a', text: 'one' }]
+  assert.deepEqual(partitionTranslationBatch(segments, null).failed.map((item) => item.id), ['a'])
+  assert.deepEqual(partitionTranslationBatch(segments, { translations: {} }).failed.map((item) => item.id), ['a'])
+})
