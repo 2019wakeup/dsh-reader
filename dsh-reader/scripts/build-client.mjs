@@ -4,6 +4,7 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const files = [
   'lib/block-hash.js',
+  'lib/translate.js',
   'src/client/util.js',
   'src/client/motion.js',
   'src/client/attachments.js',

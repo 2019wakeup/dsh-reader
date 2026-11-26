@@ -7,7 +7,13 @@ import { createDeadline } from './lib/deadline.js'
 import { readStore, writeStore, mutateStore, upsertDoc, listBackups, restoreLatestBackup } from './lib/store.js'
 import { recordSent } from './lib/sent.js'
 import { blockHash } from './lib/block-hash.js'
-import { buildTranslatePrompt, parseTranslationReply, TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } from './lib/translate.js'
+import {
+  buildTranslatePrompt,
+  detectLanguage,
+  parseTranslationReply,
+  TRANSLATE_LANGUAGES,
+  TRANSLATE_SOURCES,
+} from './lib/translate.js'
 import { docFingerprint } from './lib/fingerprint.js'
 import { buildExplainPrompt, buildQuickExplainPrompt, parseExplanation, buildContextPrompt, parseContextNote, buildAskPrompt } from './lib/explain.js'
 import { sectionHash, buildSectionPrompt, buildOverviewPrompt, buildPartPrompt, parseSectionReply, parseOverviewReply, parsePartReply } from './lib/guide.js'
@@ -598,8 +604,16 @@ function applyPrefs(store, patch) {
     if (!['quick', 'standard'].includes(patch.guideDepth)) throw httpError(400, 'invalid guideDepth')
     next.guideDepth = patch.guideDepth
   }
+  if ('translateFrom' in patch) {
+    if (!TRANSLATE_SOURCES.includes(patch.translateFrom)) throw httpError(400, 'invalid translateFrom')
+    next.translateFrom = patch.translateFrom
+    // Remember that this was a deliberate choice; without it an `en` value is
+    // indistinguishable from the old hard-coded default and gets migrated back
+    // to `auto` on the next read.
+    next.translateFromExplicit = true
+  }
   if ('translateTo' in patch) {
-    if (!['zh', 'en', 'ja'].includes(patch.translateTo)) throw httpError(400, 'invalid translateTo')
+    if (!TRANSLATE_LANGUAGES.includes(patch.translateTo)) throw httpError(400, 'invalid translateTo')
     next.translateTo = patch.translateTo
   }
   if ('pageKeys' in patch) {
@@ -1163,6 +1177,19 @@ async function translateRoute(ctx, req, res) {
     }
     if (total > 20000) throw httpError(400, 'translation request too large')
 
+    // Detect once per batch for two purposes: tell the reader what the source
+    // looks like, and skip the model call when it is already the target
+    // language. `force` is the reader overriding that skip.
+    const sample = segments.map((segment) => String(segment.text || '')).join('\n').slice(0, 4000)
+    const detection = from === 'auto' ? detectLanguage(sample) : { language: from, confidence: 1 }
+    const detected = detection.language === 'auto' ? null : detection.language
+    // A weak guess must not hide a page: only skip on a confident match.
+    const confident = detection.confidence >= 0.6
+    if (body?.force !== true && detected && detected === target && confident) {
+      send(res, 200, { translations: {}, cached: 0, generated: 0, target, detected, skipped: true })
+      return
+    }
+
     const store = await readStore(cwd)
     const existing = docKey && store.docs?.[docKey]?.translations?.[target]
       ? store.docs[docKey].translations[target]
@@ -1241,7 +1268,7 @@ async function translateRoute(ctx, req, res) {
       })
     }
 
-    send(res, 200, { translations: result, cached, generated, target, ...(stored ? { store: stored } : {}) })
+    send(res, 200, { translations: result, cached, generated, target, detected, ...(stored ? { store: stored } : {}) })
   } catch (error) {
     handleRouteError(res, error)
   }

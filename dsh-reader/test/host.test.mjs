@@ -6,6 +6,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { apply } from '../index.js'
 import { readStore } from '../lib/store.js'
+import { TRANSLATE_LANGUAGES } from '../lib/translate.js'
 
 const SESSION = { id: 's1', header: { cwd: '' } }
 
@@ -934,6 +935,117 @@ test('rejects a translation request with an unknown source', async (t) => {
     body: JSON.stringify({ from: 'xx', target: 'zh', segments: [{ id: 'a', text: 'hi' }] }),
   })
   assert.equal(res.status, 400)
+})
+
+test('prefs/set stores every target language and auto as the source', async (t) => {
+  const { call } = await setup(t)
+  for (const translateTo of TRANSLATE_LANGUAGES) {
+    const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'prefs/set', prefs: { translateTo } }),
+    })
+    assert.equal(res.status, 200, translateTo)
+    const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+    assert.equal(store.prefs.translateTo, translateTo)
+  }
+  const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'prefs/set', prefs: { translateFrom: 'auto' } }),
+  })
+  assert.equal(res.status, 200)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.prefs.translateFrom, 'auto')
+  assert.equal(store.prefs.translateTo, TRANSLATE_LANGUAGES.at(-1))
+})
+
+test('prefs/set marks a chosen source language as explicit', async (t) => {
+  const { call } = await setup(t)
+  const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'prefs/set', prefs: { translateFrom: 'fr' } }),
+  })
+  assert.equal(res.status, 200)
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.prefs.translateFrom, 'fr')
+  assert.equal(store.prefs.translateFromExplicit, true)
+})
+
+test('prefs/set rejects a language outside the shared table', async (t) => {
+  const { call } = await setup(t)
+  const bad = [
+    { translateTo: 'xx' },
+    { translateFrom: 'xx' },
+    { translateFrom: 'zh-CN' },
+  ]
+  for (const prefs of bad) {
+    const res = await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'prefs/set', prefs }),
+    })
+    assert.equal(res.status, 400, JSON.stringify(prefs))
+  }
+})
+
+test('a translation already in the target language is skipped without a call', async (t) => {
+  const { call, calls } = await setup(t)
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp1', path: 'a.md' }),
+  })
+  const before = calls()
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ docKey: 'fp1', target: 'zh', segments: [{ id: 'h1', text: '分布式系统的一致性模型要求所有副本看到同一份历史。' }] }),
+  })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.skipped, true)
+  assert.equal(body.detected, 'zh')
+  assert.equal(body.generated, 0)
+  assert.equal(calls(), before, 'no model call for a skip')
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.docs.fp1.translations?.zh, undefined, 'a skip stores nothing')
+})
+
+test('force translates text that already looks like the target', async (t) => {
+  const llmReply = (options) => {
+    if (!options.system.includes('专业翻译')) return '{"definition":"D"}'
+    const ids = [...options.messages[0].content[0].text.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1])
+    return JSON.stringify({ translations: Object.fromEntries(ids.map((id) => [id, `T:${id}`])) })
+  }
+  const { call, calls } = await setup(t, { llmReply })
+  await call('/dsh-reader-live/api/mutate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'doc/upsert', docKey: 'fp1', path: 'a.md' }),
+  })
+  const before = calls()
+  const res = await call('/dsh-reader-live/api/translate?sessionId=s1', {
+    method: 'POST',
+    body: JSON.stringify({
+      docKey: 'fp1',
+      target: 'zh',
+      force: true,
+      segments: [{ id: 'h1', text: '分布式系统的一致性模型要求所有副本看到同一份历史。' }],
+    }),
+  })
+  const body = await res.json()
+  assert.equal(body.skipped, undefined)
+  assert.equal(body.generated, 1)
+  assert.equal(body.detected, 'zh')
+  assert.equal(calls(), before + 1)
+})
+
+test('a legacy store from disk surfaces auto through the store route', async (t) => {
+  const { cwd, call } = await setup(t)
+  await fs.mkdir(path.join(cwd, '.dsh-reader'), { recursive: true })
+  await fs.writeFile(
+    path.join(cwd, '.dsh-reader', 'store.json'),
+    JSON.stringify({ version: 2, prefs: { translateFrom: 'en', translateTo: 'de' }, concepts: {}, docs: {} }),
+  )
+  const store = (await (await call('/dsh-reader-live/api/store?sessionId=s1')).json()).store
+  assert.equal(store.prefs.translateFrom, 'auto')
+  assert.equal(store.prefs.translateFromExplicit, false)
+  assert.equal(store.prefs.translateTo, 'de')
 })
 
 test('keeps at most ten sent entries', async (t) => {
