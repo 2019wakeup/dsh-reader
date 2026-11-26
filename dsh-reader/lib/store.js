@@ -4,6 +4,7 @@ import { migrateV1 } from './migrate.js'
 import { defaultPrefs } from './prefs.js'
 import { MAX_READING_SESSIONS, MAX_SESSION_ID_CHARS, normalizeReaderPosition } from './reader-context.js'
 import { toPosix } from './paths.js'
+import { TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } from './translate.js'
 import { writeFileAtomic } from './atomic-write.js'
 
 const DATA_DIR = '.dsh-reader'
@@ -43,18 +44,37 @@ function normalizePrefs(raw) {
     drawerWidth: number(raw.drawerWidth, base.drawerWidth, 240, 1100),
     mapWidth: number(raw.mapWidth, base.mapWidth, 320, 1200),
     chatWidth: number(raw.chatWidth, base.chatWidth, 320, 720),
-    translateFrom: ['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt'].includes(raw.translateFrom)
-      ? raw.translateFrom
-      : base.translateFrom,
-    translateTo: ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt'].includes(raw.translateTo) ? raw.translateTo : base.translateTo,
+    translateFrom: normalizeTranslateFrom(raw, base),
+    translateFromExplicit: normalizeTranslateFromExplicit(raw, base),
+    translateTo: TRANSLATE_LANGUAGES.includes(raw.translateTo) ? raw.translateTo : base.translateTo,
     guideDepth: ['quick', 'standard'].includes(raw.guideDepth) ? raw.guideDepth : base.guideDepth,
     motion: ['system', 'full', 'off'].includes(raw.motion) ? raw.motion : base.motion,
   }
 }
 
+/**
+ * 0.15 shipped `translateFrom: 'en'` as the default and `applyPrefs` had no
+ * branch for it, so every store ever written holds `en` whether or not the
+ * reader chose it. Without the explicit marker, treat `en` as "never set" and
+ * fall back to detection; a value the user really picked carries the marker.
+ */
+function normalizeTranslateFrom(raw, base) {
+  if (!TRANSLATE_SOURCES.includes(raw.translateFrom)) return base.translateFrom
+  if (raw.translateFromExplicit === true) return raw.translateFrom
+  return raw.translateFrom === 'en' ? 'auto' : raw.translateFrom
+}
+
+function normalizeTranslateFromExplicit(raw, base) {
+  if (raw.translateFromExplicit === true && TRANSLATE_SOURCES.includes(raw.translateFrom)) return true
+  if (!TRANSLATE_SOURCES.includes(raw.translateFrom)) return base.translateFromExplicit
+  // A legacy `en` is indistinguishable from the old default; `auto` needs no
+  // marker. Any other value proves the reader picked it.
+  return raw.translateFrom !== 'en' && raw.translateFrom !== 'auto'
+}
+
 function normalizeTranslations(raw) {
   const out = {}
-  for (const language of ['zh', 'en', 'ja']) {
+  for (const language of TRANSLATE_LANGUAGES) {
     const map = raw[language]
     if (!isRecord(map)) continue
     const entries = Object.entries(map)

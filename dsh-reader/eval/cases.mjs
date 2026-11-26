@@ -38,6 +38,9 @@ const { clampCardPosition } = await import(pathToFileURL(path.join(root, 'src/cl
 const { takeTranslationBatch, isNearViewport } = await import(pathToFileURL(path.join(root, 'src/client/translation-schedule.js')).href)
 const { buildTranscript, formatLocation, buildQuoteText } = await import(pathToFileURL(path.join(root, 'src/client/chat-transcript.js')).href)
 const { buildReadingReport, buildReaderContextPayload, buildReaderReadPayload } = await import(pathToFileURL(path.join(root, 'lib/reader-context.js')).href)
+const { buildTranslatePrompt, detectLanguage, TRANSLATE_LANGUAGES, TRANSLATE_SOURCES } = await import(
+  pathToFileURL(path.join(root, 'lib/translate.js')).href,
+)
 
 function mount(html) {
   const host = document.createElement('div')
@@ -185,6 +188,34 @@ export const cases = [
       if (count.length !== 2) throw new Error('segment limit not applied')
       if (!isNearViewport({ top: 480, bottom: 540 }, { top: 100, bottom: 500 }, 200)) throw new Error('viewport margin missing')
       return { batch: batch.length, count: count.length }
+    },
+  },
+  {
+    name: 'contract.detect',
+    async run() {
+      const sample = '分布式系统的一致性模型要求所有副本在同一时刻看到同一份历史，系统就像只有一份数据。'
+      const chinese = detectLanguage(sample)
+      if (chinese.language !== 'zh' || chinese.confidence < 0.6) throw new Error(`zh sample detected as ${chinese.language}/${chinese.confidence}`)
+      // A short snippet must stay unknown: skipping on a guess hides a page.
+      const short = detectLanguage('hi')
+      if (short.language !== 'auto') throw new Error(`short sample guessed ${short.language}`)
+      if (TRANSLATE_LANGUAGES.length !== 9 || TRANSLATE_SOURCES[0] !== 'auto') throw new Error('shared language table drifted')
+      return { chinese: chinese.language, short: short.language }
+    },
+  },
+  {
+    name: 'contract.prompt',
+    async run() {
+      // Every target must be nameable and produce a prompt segment for the
+      // model; an unknown target must be refused by the shared table.
+      const segments = TRANSLATE_LANGUAGES.map((target) => {
+        const prompt = buildTranslatePrompt({ target, from: 'auto', segments: [{ id: `h-${target}`, text: 'hello' }] })
+        if (!prompt.system || !prompt.user) throw new Error(`empty prompt for ${target}`)
+        if (!prompt.user.includes(`h-${target}`)) throw new Error(`segment id lost for ${target}`)
+        return target
+      })
+      if (segments.length !== 9) throw new Error('target list truncated')
+      return { targets: segments.length }
     },
   },
   {

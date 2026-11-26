@@ -11,7 +11,11 @@ export function defaultPrefs() {
     drawerWidth: 320,
     mapWidth: 760,
     chatWidth: 420,
-    translateFrom: 'en',
+    // `auto` detects the source language; `translateFromExplicit` records that
+    // the reader actually picked a language, so the 0.15 default `en` can be
+    // migrated instead of being mistaken for a deliberate choice.
+    translateFrom: 'auto',
+    translateFromExplicit: false,
     translateTo: 'zh',
     guideDepth: 'standard',
     motion: 'system',

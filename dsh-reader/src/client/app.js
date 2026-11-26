@@ -1,3 +1,5 @@
+import { TRANSLATE_LANGUAGES, TRANSLATE_SOURCES, detectLanguage } from '../../lib/translate.js'
+
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
 function viewStateKey(sessionId) {
@@ -27,8 +29,6 @@ function writeSavedViewState(sessionId, value) {
 }
 
 const COLORS = ['#f2c94c', '#6fcf97', '#56ccf2', '#bb6bd9']
-const TRANSLATE_TARGETS = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt']
-const TRANSLATE_SOURCES = ['auto', ...TRANSLATE_TARGETS]
 
 /** Chapters exposed by the packaged text formats (EPUB and Word). */
 function chaptersFor(target) {
@@ -2117,11 +2117,24 @@ export function ReaderView(props) {
         { style: { marginTop: '6px', fontSize: '13.5px', lineHeight: 1.6 } },
         selectionTranslation.loading
           ? t('label.translating')
-          : selectionTranslation.translation || t('label.noTranslation'),
+          : selectionTranslation.skipped
+            ? t('label.alreadyTarget')
+            : selectionTranslation.translation || t('label.noTranslation'),
       ),
       h(
         'div',
         { className: 'rd-actions' },
+        selectionTranslation.skipped
+          ? h(
+              'button',
+              {
+                className: 'rd-btn ghost',
+                'data-action': 'force-selection-translation',
+                onClick: forceSelectionTranslation,
+              },
+              t('label.forceTranslate'),
+            )
+          : null,
         h('button', { className: 'rd-btn ghost', onClick: () => setSelectionTranslation(null) }, t('action.close')),
       ),
     )
@@ -2171,7 +2184,9 @@ export function ReaderView(props) {
   }
 
   const translationLang = prefs.translateTo || 'zh'
-  const translationFrom = prefs.translateFrom || 'en'
+  const translationFrom = prefs.translateFrom || 'auto'
+  const [detectedLanguage, setDetectedLanguage] = React.useState(null)
+  const [forceTranslate, setForceTranslate] = React.useState(false)
   const storeTranslations = React.useMemo(
     () => (docKey ? store.docs?.[docKey]?.translations?.[translationLang] || {} : {}),
     [store.docs, docKey, translationLang],
@@ -2180,6 +2195,9 @@ export function ReaderView(props) {
     () => ({ ...storeTranslations, ...(translationCache[translationLang] || {}) }),
     [storeTranslations, translationCache, translationLang],
   )
+  // Once translations exist for the current target there is nothing left to
+  // warn about, even if the source still looks like the target language.
+  const hasTranslations = Object.keys(storeTranslations).length > 0
   const translationCacheRef = React.useRef(translationCache)
   const translationMapRef = React.useRef(translationMap)
   const translationLangRef = React.useRef(translationLang)
@@ -2190,6 +2208,19 @@ export function ReaderView(props) {
   const [translationPending, setTranslationPending] = React.useState(0)
   const [translationTick, setTranslationTick] = React.useState(0)
   const translationPendingRef = React.useRef(0)
+  // "Already in the target language": no request, no queue. `forceTranslate`
+  // is the explicit override the notice offers.
+  const effectiveSource = translationFrom === 'auto' ? detectedLanguage : translationFrom
+  const sameLanguage = Boolean(!forceTranslate && effectiveSource && effectiveSource === translationLang)
+  const translationSkipRef = React.useRef(sameLanguage)
+  const forceTranslateRef = React.useRef(false)
+  React.useEffect(() => {
+    translationSkipRef.current = sameLanguage
+  }, [sameLanguage])
+  React.useEffect(() => {
+    forceTranslateRef.current = false
+    setForceTranslate(false)
+  }, [docKey, translationLang, translationFrom])
 
   React.useEffect(() => {
     translationCacheRef.current = translationCache
@@ -2201,6 +2232,45 @@ export function ReaderView(props) {
     translationLangRef.current = translationLang
     translationFromRef.current = translationFrom
   }, [translationLang, translationFrom])
+
+  React.useEffect(() => {
+    if (!doc) {
+      setDetectedLanguage(null)
+      return
+    }
+    let cancelled = false
+    let attempts = 0
+    // The first paint can happen before the prose nodes exist, so an empty
+    // sample is retried a few frames instead of silently giving up.
+    const detect = () => {
+      if (cancelled) return
+      let sample = ''
+      if (doc.ext === '.pdf') {
+        sample = (pdfBlocks || []).map((block) => block.text).join('\n').slice(0, 2000)
+      } else if (contentRef.current) {
+        const parts = []
+        for (const node of contentRef.current.querySelectorAll('p, li, blockquote, h2, h3, h4')) {
+          if (node.closest('.rd-trans, .rd-card')) continue
+          parts.push(node.textContent || '')
+          if (parts.length >= 40) break
+        }
+        sample = parts.join('\n').slice(0, 2000)
+      }
+      if (!sample.trim() && attempts < 4) {
+        attempts += 1
+        requestAnimationFrame(detect)
+        return
+      }
+      const detection = detectLanguage(sample)
+      // Only show / act on a confident answer; a weak guess would just confuse
+      // the source selector and could hide a page behind an "already target" note.
+      setDetectedLanguage(detection.language === 'auto' || detection.confidence < 0.6 ? null : detection.language)
+    }
+    detect()
+    return () => {
+      cancelled = true
+    }
+  }, [doc, chapter, page, layoutTick, pdfBlocks, translationMode])
 
   React.useEffect(() => {
     translationQueueRef.current.clear()
@@ -2237,6 +2307,7 @@ export function ReaderView(props) {
   }
 
   const enqueueTranslationSegments = (segments) => {
+    if (translationSkipRef.current) return
     let added = 0
     for (const segment of segments) {
       if (!segment || !segment.id || !segment.text) continue
@@ -2277,7 +2348,19 @@ export function ReaderView(props) {
           target: lang,
           from,
           segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
         })
+        if (result?.skipped) {
+          // The host detected the source already is the target: stop instead of
+          // retrying the same blocks forever.
+          translationQueueRef.current.clear()
+          translationQueuedRef.current.clear()
+          translationPendingRef.current = 0
+          setTranslationPending(0)
+          if (result.detected) setDetectedLanguage(result.detected)
+          flash(t('label.alreadyTarget'))
+          break
+        }
         mergeTranslations(lang, result)
         for (const segment of segments) {
           translationQueueRef.current.delete(segment.id)
@@ -2331,6 +2414,10 @@ export function ReaderView(props) {
 
   const translatePdfPage = async () => {
     if (!doc || !doc.pdf || pdfTranslating) return
+    if (translationSkipRef.current) {
+      flash(t('label.alreadyTarget'))
+      return
+    }
     setPdfTranslating(true)
     try {
       const blocks = await pdfPageBlocks(doc.pdf, page)
@@ -2346,7 +2433,13 @@ export function ReaderView(props) {
           target: translationLangRef.current,
           from: translationFromRef.current,
           segments,
+          ...(forceTranslateRef.current ? { force: true } : {}),
         })
+        if (result?.skipped) {
+          if (result.detected) setDetectedLanguage(result.detected)
+          flash(t('label.alreadyTarget'))
+          return
+        }
         mergeTranslations(translationLangRef.current, result)
       }
     } catch (error) {
@@ -2371,6 +2464,10 @@ export function ReaderView(props) {
     }
     const rect = menu.range.getBoundingClientRect()
     setMenu(null)
+    if (sameLanguage) {
+      setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true })
+      return
+    }
     setSelectionTranslation({ text, loading: true, translation: '', rect })
     try {
       const hash = blockHash(text)
@@ -2378,6 +2475,49 @@ export function ReaderView(props) {
         target: translationLang,
         from: translationFrom,
         segments: [{ id: hash, text }],
+        ...(forceTranslateRef.current ? { force: true } : {}),
+      })
+      if (result?.skipped) {
+        if (result.detected) setDetectedLanguage(result.detected)
+        setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true })
+        return
+      }
+      setSelectionTranslation({
+        text,
+        loading: false,
+        translation: (result.translations || {})[hash] || '',
+        rect,
+      })
+    } catch (error) {
+      reportError(error)
+      setSelectionTranslation({ text, loading: false, translation: '', rect })
+    }
+  }
+
+  const forceTranslation = () => {
+    // The notice is derived from state, but the queue closure must see the new
+    // flag immediately, so both the ref and the state are updated.
+    forceTranslateRef.current = true
+    translationSkipRef.current = false
+    setForceTranslate(true)
+    if (doc?.pdf) {
+      translatePdfPage()
+      return
+    }
+    translateVisibleNow()
+  }
+
+  const forceSelectionTranslation = async () => {
+    if (!selectionTranslation || selectionTranslation.loading) return
+    const { text, rect } = selectionTranslation
+    const hash = blockHash(text)
+    setSelectionTranslation({ text, loading: true, translation: '', rect })
+    try {
+      const result = await api.translate(sessionId, {
+        target: translationLang,
+        from: translationFrom,
+        segments: [{ id: hash, text }],
+        force: true,
       })
       setSelectionTranslation({
         text,
@@ -2389,6 +2529,16 @@ export function ReaderView(props) {
       reportError(error)
       setSelectionTranslation({ text, loading: false, translation: '', rect })
     }
+  }
+
+  const swapLanguages = () => {
+    // Swapping `auto` downstream would mean "auto into nothing"; ask for a real
+    // source first, which also keeps the pair honest in the store.
+    if (translationFrom === 'auto') {
+      flash(t('label.swapNeedsSource'))
+      return
+    }
+    changePrefs({ translateFrom: translationLang, translateTo: translationFrom })
   }
 
   const renderLanguageControls = (className = '') =>
@@ -2408,8 +2558,25 @@ export function ReaderView(props) {
           },
           TRANSLATE_SOURCES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
         ),
+        translationFrom === 'auto' && detectedLanguage
+          ? h(
+              'span',
+              { className: 'rd-lang-detected', title: t('label.detected') },
+              `${t('label.detected')} ${t(`lang.${detectedLanguage}`)}`,
+            )
+          : null,
       ),
-      h('span', { className: 'rd-lang-arrow' }, '→'),
+      h(
+        'button',
+        {
+          type: 'button',
+          className: 'rd-btn ghost rd-lang-swap',
+          title: t('label.swapLanguages'),
+          'aria-label': t('label.swapLanguages'),
+          onClick: swapLanguages,
+        },
+        '⇄',
+      ),
       h(
         'label',
         { className: 'rd-lang-field' },
@@ -2421,9 +2588,21 @@ export function ReaderView(props) {
             value: translationLang,
             onChange: (event) => changePrefs({ translateTo: event.target.value }),
           },
-          TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+          TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
         ),
       ),
+      sameLanguage && !hasTranslations
+        ? h(
+            'span',
+            { className: 'rd-lang-notice' },
+            h('span', { className: 'rd-muted' }, t('label.alreadyTarget')),
+            h(
+              'button',
+              { type: 'button', className: 'rd-btn ghost', onClick: forceTranslation },
+              t('label.forceTranslate'),
+            ),
+          )
+        : null,
     )
 
   const renderTranslateBar = () =>
@@ -3925,7 +4104,7 @@ export function ReaderView(props) {
               value: translationLang,
               onChange: (event) => changePrefs({ translateTo: event.target.value }),
             },
-            TRANSLATE_TARGETS.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
+            TRANSLATE_LANGUAGES.map((value) => h('option', { key: value, value }, t(`lang.${value}`))),
           ),
         ),
         row(
