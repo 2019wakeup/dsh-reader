@@ -69,3 +69,13 @@ test('prompt v2 carries glossary and chapter context', async () => {
   assert.match(user, /chapter: 引言/)
   assert.match(user, /context: 一致性讨论/)
 })
+
+test('prompt v2 includes the selected sentence context', async () => {
+  const { buildTranslatePrompt } = await import('../lib/translate.js')
+  const { user } = buildTranslatePrompt({
+    target: 'zh',
+    context: { chapterSnapshot: '本章讲缓存。', selectionSentence: '缓存命中可以降低延迟。' },
+    segments: [{ id: 's1', text: 'cache hit' }],
+  })
+  assert.match(user, /当前选中句：缓存命中可以降低延迟/)
+})

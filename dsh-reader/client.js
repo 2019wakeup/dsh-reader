@@ -185,7 +185,11 @@ function buildTranslatePrompt({ target, from = 'auto', segments, glossary = [], 
   const parts = []
   const title = String(context.title || '').trim().slice(0, 160)
   const chapter = String(context.chapter || '').trim().slice(0, 160)
-  const snapshot = String(context.chapterSnapshot || '').trim().slice(0, 400)
+  const selectionSentence = String(context.selectionSentence || '').trim().slice(0, 200)
+  const snapshot = [String(context.chapterSnapshot || '').trim(), selectionSentence ? `当前选中句：${selectionSentence}` : '']
+    .filter(Boolean)
+    .join('；')
+    .slice(0, 400)
   if (title || chapter || snapshot) {
     parts.push(
       ['<document>', title ? `title: ${title}` : '', chapter ? `chapter: ${chapter}` : '', snapshot ? `context: ${snapshot}` : '', '</document>']
@@ -8842,6 +8846,24 @@ function ReaderView(props) {
     reveal()
   }
 
+  const selectionSentence = (range, selected) => {
+    const element = range?.startContainer?.parentElement
+    const block = element?.closest?.('p, li, blockquote, td, th, h1, h2, h3, h4')
+    const full = String(block?.textContent || '').replace(/\s+/g, ' ').trim()
+    if (!full) return ''
+    const index = full.indexOf(selected)
+    if (index < 0) return full.slice(0, 200)
+    const before = full.slice(0, index)
+    const after = full.slice(index + selected.length)
+    const start = Math.max(before.lastIndexOf('。'), before.lastIndexOf('！'), before.lastIndexOf('？'), before.lastIndexOf('. ')) + 1
+    const ends = ['。', '！', '？', '. ', '\n'].map((mark) => {
+      const at = after.indexOf(mark)
+      return at >= 0 ? at + mark.length : -1
+    }).filter((at) => at > 0)
+    const end = index + selected.length + (ends.length ? Math.min(...ends) : after.length)
+    return full.slice(start, end).trim().slice(0, 200)
+  }
+
   const renderSelectionTranslation = () => {
     if (!selectionTranslation) return null
     const style = placePanel(selectionTranslation.rect, 220)
@@ -8884,6 +8906,20 @@ function ReaderView(props) {
               },
               t('label.forceTranslate'),
             )
+          : null,
+        selectionTranslation.translation
+          ? h(
+              'button',
+              {
+                className: 'rd-btn ghost',
+                'data-action': 'copy-selection-translation',
+                onClick: () => copyText(selectionTranslation.translation),
+              },
+              t('action.copy'),
+            )
+          : null,
+        !selectionTranslation.loading && !selectionTranslation.skipped && !selectionTranslation.translation
+          ? h('button', { className: 'rd-btn ghost', onClick: forceSelectionTranslation }, t('action.retry'))
           : null,
         h('button', { className: 'rd-btn ghost', onClick: () => setSelectionTranslation(null) }, t('action.close')),
       ),
@@ -9478,12 +9514,13 @@ function ReaderView(props) {
       return
     }
     const rect = menu.range.getBoundingClientRect()
+    const sentence = selectionSentence(menu.range, text)
     setMenu(null)
     if (sameLanguage) {
-      setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true })
+      setSelectionTranslation({ text, loading: false, translation: '', rect, skipped: true, sentence })
       return
     }
-    setSelectionTranslation({ text, loading: true, translation: '', rect })
+    setSelectionTranslation({ text, loading: true, translation: '', rect, sentence })
     try {
       const unit = unitFromText(text)
       const hash = unit.hash
@@ -9492,7 +9529,7 @@ function ReaderView(props) {
         target: translationLang,
         from: translationFrom,
         glossary: translationGlossaryRef.current,
-        context: translationContextRef.current,
+        context: { ...translationContextRef.current, selectionSentence: sentence },
         segments: [{ id: hash, text: unit.text }],
         ...(forceTranslateRef.current ? { force: true } : {}),
       })
@@ -9506,6 +9543,7 @@ function ReaderView(props) {
         loading: false,
         translation: (result.translations || {})[hash] || '',
         rect,
+        sentence,
       })
     } catch (error) {
       reportError(error)
@@ -9531,14 +9569,14 @@ function ReaderView(props) {
     const { text, rect } = selectionTranslation
     const unit = unitFromText(text)
     const hash = unit.hash
-    setSelectionTranslation({ text, loading: true, translation: '', rect })
+    setSelectionTranslation({ text, loading: true, translation: '', rect, sentence: selectionTranslation.sentence || '' })
     try {
       const result = await api.translate(sessionId, {
         docKey,
         target: translationLang,
         from: translationFrom,
         glossary: translationGlossaryRef.current,
-        context: translationContextRef.current,
+        context: { ...translationContextRef.current, selectionSentence: selectionTranslation.sentence || '' },
         segments: [{ id: hash, text: unit.text }],
         force: true,
       })

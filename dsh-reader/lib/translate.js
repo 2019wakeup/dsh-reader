@@ -152,7 +152,11 @@ export function buildTranslatePrompt({ target, from = 'auto', segments, glossary
   const parts = []
   const title = String(context.title || '').trim().slice(0, 160)
   const chapter = String(context.chapter || '').trim().slice(0, 160)
-  const snapshot = String(context.chapterSnapshot || '').trim().slice(0, 400)
+  const selectionSentence = String(context.selectionSentence || '').trim().slice(0, 200)
+  const snapshot = [String(context.chapterSnapshot || '').trim(), selectionSentence ? `当前选中句：${selectionSentence}` : '']
+    .filter(Boolean)
+    .join('；')
+    .slice(0, 400)
   if (title || chapter || snapshot) {
     parts.push(
       ['<document>', title ? `title: ${title}` : '', chapter ? `chapter: ${chapter}` : '', snapshot ? `context: ${snapshot}` : '', '</document>']
