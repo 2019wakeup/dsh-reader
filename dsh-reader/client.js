@@ -4576,7 +4576,7 @@ function translationRetryDelay(code, attempt) {
  * original nodes to restore after translation.
  */
 
-const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, figcaption'
+const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, figcaption, td, th'
 const BLOCK_CHILD_SELECTOR = 'p, div, ul, ol, blockquote, pre, table, h1, h2, h3, h4, figure, section'
 const PROTECTED_SELECTOR = 'code, kbd, samp, .katex, math, mjx-container, a[href], a[id], a[name], svg'
 
@@ -4593,6 +4593,7 @@ function roleFor(node) {
   if (tag === 'li') return 'list'
   if (tag === 'blockquote') return 'quote'
   if (tag === 'figcaption') return 'caption'
+  if (tag === 'td' || tag === 'th') return 'table-cell'
   return 'body'
 }
 
@@ -9310,6 +9311,7 @@ function ReaderView(props) {
     const scroller = root.closest('.rd-main')
     const viewport = scroller ? scroller.getBoundingClientRect() : null
     const visible = blocks.filter((block) => {
+      if (translationMode !== 'only' && block.role === 'table-cell') return false
       if (!viewport) return true
       return isNearViewport(block.node.getBoundingClientRect(), viewport, 200)
     })
@@ -9679,6 +9681,7 @@ function ReaderView(props) {
     const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0
     const keep = new Set()
     for (const block of collectTranslationBlocks()) {
+      if (block.role === 'table-cell') continue
       const text = translationFor(translationMap, block.hash)
       if (!text) continue
       let div = null
@@ -9727,7 +9730,9 @@ function ReaderView(props) {
     const root = contentRef.current
     if (!root) return
     const scroller = root.closest('.rd-main') || root.parentElement
-    const units = collectTranslationBlocks()
+    const units = collectTranslationBlocks().filter(
+      (unit) => translationMode === 'only' || unit.role !== 'table-cell',
+    )
     if (typeof IntersectionObserver !== 'function') {
       enqueueTranslationSegments(units.slice(0, 12).map((unit) => ({ id: unit.hash, text: unit.text })))
       return
