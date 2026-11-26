@@ -95,7 +95,7 @@ function countMatches(text, pattern) {
 
 function sampleForDetection(text) {
   return String(text || '')
-    .replace(/\{RD:\d+\}/g, ' ')
+    .replace(/\{\{RD:\d+\}\}/g, ' ')
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/```[\s\S]*?```/g, ' ')
     .slice(0, 4000)
@@ -178,6 +178,8 @@ function buildTranslatePrompt({ target, from = 'auto', segments }) {
     `如果原文已经是${languageName(target)}，原样返回。`,
     '只输出一个 JSON 对象：{"translations":{"<id>":"<译文>"}}，不要输出其他文字。',
     '逐段对应，不要合并或拆分段落。',
+    '保留 {{RD:n}} 占位符原样、顺序不变；不要翻译或增删占位符里的内容。',
+    '不要给译文加“译文：”之类的前缀。',
   ].join('')
   const user = segments.map((segment) => `[${segment.id}] ${segment.text}`).join('\n').slice(0, 12000)
   return { system, user }
@@ -4351,6 +4353,168 @@ function translationRetryDelay(code, attempt) {
 }
 
 
+
+/**
+ * The one block model shared by the HTML renderers.
+ *
+ * `text` is what goes to the model: inline code, formulas, links and anchors
+ * are replaced by `{{RD:n}}` placeholders so the model cannot rewrite them.
+ * `plainText` stays available for detection/statistics; `protected` keeps the
+ * original nodes to restore after translation.
+ */
+
+const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, figcaption'
+const BLOCK_CHILD_SELECTOR = 'p, div, ul, ol, blockquote, pre, table, h1, h2, h3, h4, figure, section'
+const PROTECTED_SELECTOR = 'code, kbd, samp, .katex, math, mjx-container, a[href], a[id], a[name], svg'
+
+function hasBlockChild(node) {
+  for (const child of node.children || []) {
+    if (child.matches && child.matches(BLOCK_CHILD_SELECTOR)) return true
+  }
+  return false
+}
+
+function roleFor(node) {
+  const tag = String(node.tagName || '').toLowerCase()
+  if (/^h[1-4]$/.test(tag)) return 'heading'
+  if (tag === 'li') return 'list'
+  if (tag === 'blockquote') return 'quote'
+  if (tag === 'figcaption') return 'caption'
+  return 'body'
+}
+
+/**
+ * Flatten a block into prompt text, replacing protected inline nodes with
+ * placeholders. Non-protected wrappers (strong/em/span) contribute their text
+ * and are intentionally flattened for 0.16.0.
+ */
+function unitFor(node, { chapter = '', order = 0 } = {}) {
+  const protectedNodes = []
+  let raw = ''
+  const walk = (parent) => {
+    for (const child of parent.childNodes || []) {
+      if (child.nodeType === 3) {
+        raw += child.nodeValue || ''
+        continue
+      }
+      if (child.nodeType !== 1) continue
+      if (child.matches && child.matches(PROTECTED_SELECTOR)) {
+        const token = `{{RD:${protectedNodes.length}}}`
+        protectedNodes.push({ token, node: child.cloneNode(true) })
+        raw += token
+        continue
+      }
+      walk(child)
+    }
+  }
+  walk(node)
+  const text = normalizeBlockText(raw)
+  const plainText = normalizeBlockText(node.textContent || '')
+  if (text.length < 2) return null
+  const hash = blockHash(text)
+  return {
+    key: `${chapter}:${order}:${hash}`,
+    hash,
+    contentHash: hash,
+    text,
+    plainText,
+    node,
+    role: roleFor(node),
+    chapter,
+    order,
+    protected: protectedNodes,
+  }
+}
+
+/** Extract leaf blocks in reading order; containers with block children are skipped. */
+function extractUnits(root, { chapter = '', limit = 1000 } = {}) {
+  if (!root || typeof root.querySelectorAll !== 'function') return []
+  const units = []
+  for (const node of root.querySelectorAll(BLOCK_SELECTOR)) {
+    if (units.length >= limit) break
+    if (node.closest && node.closest('.rd-trans, .rd-card')) continue
+    if (hasBlockChild(node)) continue
+    const unit = unitFor(node, { chapter, order: units.length })
+    if (unit) units.push(unit)
+  }
+  return units
+}
+
+/**
+ * Restore placeholders from a translated block. Returns null when the model
+ * dropped/duplicated a placeholder; the caller keeps the source block instead
+ * of rendering a broken half-translation.
+ */
+function renderUnitFragment(unit, translation) {
+  if (!unit || typeof translation !== 'string') return null
+  const tokens = unit.protected || []
+  const document = unit.node.ownerDocument
+  if (!document) return null
+  const fragment = document.createDocumentFragment()
+  const pattern = /\{\{RD:(\d+)\}\}/g
+  const used = new Set()
+  let last = 0
+  let match
+  while ((match = pattern.exec(translation)) !== null) {
+    const index = Number(match[1])
+    if (!Number.isInteger(index) || !tokens[index] || used.has(index)) return null
+    used.add(index)
+    if (match.index > last) fragment.appendChild(document.createTextNode(translation.slice(last, match.index)))
+    fragment.appendChild(tokens[index].node.cloneNode(true))
+    last = match.index + match[0].length
+  }
+  if (used.size !== tokens.length) return null
+  if (last < translation.length) fragment.appendChild(document.createTextNode(translation.slice(last)))
+  return fragment
+}
+
+/** Replace a block's children with the translated fragment; preserve the block attrs/id. */
+function applyUnitTranslation(unit, translation) {
+  const fragment = renderUnitFragment(unit, translation)
+  if (!fragment) return false
+  unit.node.replaceChildren(fragment)
+  return true
+}
+
+/** Build the translation-only HTML for a chapter while preserving block structure. */
+function buildTranslatedOnlyHtml(html, resolve) {
+  if (typeof document === 'undefined') return String(html || '')
+  const container = document.createElement('div')
+  container.innerHTML = String(html || '')
+  for (const unit of extractUnits(container, { limit: 20000 })) {
+    const translated = resolve ? resolve(unit.hash) : ''
+    if (translated) applyUnitTranslation(unit, translated)
+  }
+  return container.innerHTML
+}
+
+/** A single plain-text unit (selection translation / callers without a DOM block). */
+function unitFromText(text, { role = 'selection', chapter = '', order = 0 } = {}) {
+  const value = normalizeBlockText(text)
+  if (!value) return null
+  const hash = blockHash(value)
+  return {
+    key: `${chapter}:${order}:${hash}`,
+    hash,
+    contentHash: hash,
+    text: value,
+    plainText: value,
+    node: null,
+    role,
+    chapter,
+    order,
+    protected: [],
+  }
+}
+
+/** PDF page blocks use the same unit shape without DOM references. */
+function unitsFromPdfBlocks(blocks, { chapter = '' } = {}) {
+  return (blocks || [])
+    .map((block, order) => unitFromText(block.text, { role: 'body', chapter, order }))
+    .filter(Boolean)
+}
+
+
 /**
  * Clamp a dragged card to the reader surface.
  *
@@ -6300,6 +6464,7 @@ function createPositionReporter(options = {}) {
     },
   }
 }
+
 
 
 
@@ -8618,20 +8783,8 @@ function ReaderView(props) {
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
-    const blocks = []
-    const seen = new Set()
-    for (const node of nodes) {
-      if (node.closest('.rd-trans, .rd-card')) continue
-      const text = normalizeBlockText(node.textContent)
-      if (text.length < 2) continue
-      const hash = blockHash(text)
-      if (seen.has(hash)) continue
-      seen.add(hash)
-      blocks.push({ node, text, hash })
-      if (blocks.length >= limit) break
-    }
-    return blocks
+    const chapterTitle = (chaptersFor(doc)[chapter] || {}).title || ''
+    return extractUnits(root, { chapter: chapterTitle, limit })
   }
 
   const mergeTranslations = (lang, result) => {
@@ -8875,13 +9028,12 @@ function ReaderView(props) {
     try {
       const blocks = await pdfPageBlocks(doc.pdf, page)
       setPdfBlocks(blocks)
-      const missing = blocks.filter(
-        (block) => !translationFor(translationMapRef.current, blockHash(block.text)),
-      )
+      const units = unitsFromPdfBlocks(blocks)
+      const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
       for (let index = 0; index < missing.length; index += 8) {
         const group = missing.slice(index, index + 8)
         try {
-          const segments = group.map((block) => ({ id: blockHash(block.text), text: block.text }))
+          const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
           const result = await api.translate(sessionId, {
             docKey,
             target: translationLangRef.current,
@@ -8898,16 +9050,16 @@ function ReaderView(props) {
             return
           }
           mergeTranslations(translationLangRef.current, result)
-          for (const block of group) {
-            if (translationFor(translationMapRef.current, blockHash(block.text))) {
-              pdfFailedRef.current.delete(block.id)
+          for (const unit of group) {
+            if (translationFor(translationMapRef.current, unit.hash)) {
+              pdfFailedRef.current.delete(unit.hash)
             } else {
-              pdfFailedRef.current.set(block.id, block.text)
+              pdfFailedRef.current.set(unit.hash, unit.text)
             }
           }
           setPdfFailed(pdfFailedRef.current.size)
         } catch (error) {
-          for (const block of group) pdfFailedRef.current.set(block.id, block.text)
+          for (const unit of group) pdfFailedRef.current.set(unit.hash, unit.text)
           while (pdfFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
             const oldest = pdfFailedRef.current.keys().next().value
             pdfFailedRef.current.delete(oldest)
@@ -8953,11 +9105,12 @@ function ReaderView(props) {
     }
     setSelectionTranslation({ text, loading: true, translation: '', rect })
     try {
-      const hash = blockHash(text)
+      const unit = unitFromText(text)
+      const hash = unit.hash
       const result = await api.translate(sessionId, {
         target: translationLang,
         from: translationFrom,
-        segments: [{ id: hash, text }],
+        segments: [{ id: hash, text: unit.text }],
         ...(forceTranslateRef.current ? { force: true } : {}),
       })
       if (result?.skipped) {
@@ -8993,13 +9146,14 @@ function ReaderView(props) {
   const forceSelectionTranslation = async () => {
     if (!selectionTranslation || selectionTranslation.loading) return
     const { text, rect } = selectionTranslation
-    const hash = blockHash(text)
+    const unit = unitFromText(text)
+    const hash = unit.hash
     setSelectionTranslation({ text, loading: true, translation: '', rect })
     try {
       const result = await api.translate(sessionId, {
         target: translationLang,
         from: translationFrom,
-        segments: [{ id: hash, text }],
+        segments: [{ id: hash, text: unit.text }],
         force: true,
       })
       setSelectionTranslation({
@@ -9136,16 +9290,42 @@ function ReaderView(props) {
   React.useEffect(() => {
     const root = contentRef.current
     if (!root || !doc || doc.ext === '.pdf') return
-    for (const node of Array.from(root.querySelectorAll('.rd-trans, .rd-trans-pending'))) node.remove()
-    if (translationMode === 'off') return
-    if (translationMode === 'only') return
+    if (translationMode === 'off' || translationMode === 'only') {
+      for (const node of Array.from(root.querySelectorAll('.rd-trans'))) node.remove()
+      return
+    }
+    const keep = new Set()
     for (const block of collectTranslationBlocks()) {
       const text = translationFor(translationMap, block.hash)
       if (!text) continue
-      const div = document.createElement('div')
-      div.className = 'rd-trans'
-      div.textContent = text
-      block.node.appendChild(div)
+      let div = null
+      for (const child of block.node.children || []) {
+        if (child.classList && child.classList.contains('rd-trans')) {
+          div = child
+          break
+        }
+      }
+      if (div && div.dataset.rdHash !== block.hash) {
+        div.remove()
+        div = null
+      }
+      if (!div) {
+        div = document.createElement('div')
+        div.className = 'rd-trans'
+        block.node.appendChild(div)
+      }
+      if (div._rdText !== text) {
+        const fragment = renderUnitFragment(block, text)
+        if (fragment) div.replaceChildren(fragment)
+        else div.textContent = text.replace(/\{\{RD:\d+\}\}/g, '')
+        div._rdText = text
+      }
+      div.dataset.rdHash = block.hash
+      div.lang = translationLang
+      keep.add(div)
+    }
+    for (const node of Array.from(root.querySelectorAll('.rd-trans'))) {
+      if (!keep.has(node)) node.remove()
     }
   }, [doc, chapter, translationMode, translationLang, translationMap, layoutTick])
 
@@ -9154,28 +9334,26 @@ function ReaderView(props) {
     const root = contentRef.current
     if (!root) return
     const scroller = root.closest('.rd-main') || root.parentElement
+    const units = collectTranslationBlocks()
     if (typeof IntersectionObserver !== 'function') {
-      const blocks = collectTranslationBlocks(12)
-      enqueueTranslationSegments(blocks.map((block) => ({ id: block.hash, text: block.text })))
+      enqueueTranslationSegments(units.slice(0, 12).map((unit) => ({ id: unit.hash, text: unit.text })))
       return
     }
+    const byNode = new Map(units.map((unit) => [unit.node, unit]))
     const observer = new IntersectionObserver(
       (entries) => {
         const segments = []
         for (const entry of entries) {
           if (!entry.isIntersecting) continue
-          const text = normalizeBlockText(entry.target.textContent)
-          if (text.length < 2) continue
-          segments.push({ id: blockHash(text), text })
+          const unit = byNode.get(entry.target)
+          if (!unit) continue
+          segments.push({ id: unit.hash, text: unit.text })
         }
         enqueueTranslationSegments(segments)
       },
       { root: scroller, rootMargin: '240px 0px', threshold: 0.01 },
     )
-    for (const node of root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')) {
-      if (node.closest('.rd-trans, .rd-trans-pending, .rd-card')) continue
-      observer.observe(node)
-    }
+    for (const unit of units) observer.observe(unit.node)
     return () => observer.disconnect()
   }, [doc, chapter, translationMode, translationLang, translationFrom, layoutTick, translationTick])
 
@@ -9938,7 +10116,7 @@ function ReaderView(props) {
 
   const translatedOnlyHtml = React.useMemo(() => {
     if (!doc || doc.ext === '.pdf' || translationMode !== 'only') return ''
-    return buildTranslatedHtml(renderedHtml, (text) => translationFor(translationMap, blockHash(text)))
+    return buildTranslatedOnlyHtml(renderedHtml, (hash) => translationFor(translationMap, hash))
   }, [doc, chapter, renderedHtml, translationMode, translationMap])
 
   const renderContent = () => {

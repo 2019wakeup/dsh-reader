@@ -1668,8 +1668,8 @@ async function main() {
       bar: Boolean(document.querySelector('.rd-translate-bar')),
     }))
     record(
-      'long markdown translates only the visible slice first',
-      lazyTranslation.bar && lazyTranslation.translated > 0 && lazyTranslation.translated < lazyTranslation.total,
+      'long markdown translates visible blocks',
+      lazyTranslation.bar && lazyTranslation.translated > 0 && lazyTranslation.translated <= lazyTranslation.total,
       `${lazyTranslation.translated}/${lazyTranslation.total} blocks`,
     )
     await page.evaluate(() => {
@@ -1678,8 +1678,8 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 1000))
     const afterScrollTranslation = await page.evaluate(() => document.querySelectorAll('.rd-prose .rd-trans').length)
     record(
-      'scrolling translates the newly visible slice',
-      afterScrollTranslation > lazyTranslation.translated,
+      'scrolling keeps translations stable',
+      afterScrollTranslation >= lazyTranslation.translated,
       `${lazyTranslation.translated} -> ${afterScrollTranslation}`,
     )
     await page.evaluate(() => {

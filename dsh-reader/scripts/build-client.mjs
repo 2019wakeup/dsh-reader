@@ -33,6 +33,7 @@ const files = [
   'src/client/navigation.js',
   'src/client/translation-schedule.js',
   'src/client/translation-errors.js',
+  'src/client/translation/units.js',
   'src/client/card-drag.js',
   'src/client/mindmap.js',
   'src/client/diagnostics.js',

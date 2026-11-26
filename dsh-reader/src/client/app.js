@@ -1,6 +1,7 @@
 import { TRANSLATE_LANGUAGES, TRANSLATE_SOURCES, detectLanguage } from '../../lib/translate.js'
 import { partitionTranslationBatch } from './translation-schedule.js'
 import { translationErrorInfo, translationRetryDelay } from './translation-errors.js'
+import { extractUnits, renderUnitFragment, buildTranslatedOnlyHtml, unitFromText, unitsFromPdfBlocks } from './translation/units.js'
 
 const VIEW_STATE_PREFIX = 'dsh-reader:view:'
 
@@ -2315,20 +2316,8 @@ export function ReaderView(props) {
   const collectTranslationBlocks = (limit = 1000) => {
     const root = contentRef.current
     if (!root) return []
-    const nodes = root.querySelectorAll('p, li, blockquote, h2, h3, h4')
-    const blocks = []
-    const seen = new Set()
-    for (const node of nodes) {
-      if (node.closest('.rd-trans, .rd-card')) continue
-      const text = normalizeBlockText(node.textContent)
-      if (text.length < 2) continue
-      const hash = blockHash(text)
-      if (seen.has(hash)) continue
-      seen.add(hash)
-      blocks.push({ node, text, hash })
-      if (blocks.length >= limit) break
-    }
-    return blocks
+    const chapterTitle = (chaptersFor(doc)[chapter] || {}).title || ''
+    return extractUnits(root, { chapter: chapterTitle, limit })
   }
 
   const mergeTranslations = (lang, result) => {
@@ -2572,13 +2561,12 @@ export function ReaderView(props) {
     try {
       const blocks = await pdfPageBlocks(doc.pdf, page)
       setPdfBlocks(blocks)
-      const missing = blocks.filter(
-        (block) => !translationFor(translationMapRef.current, blockHash(block.text)),
-      )
+      const units = unitsFromPdfBlocks(blocks)
+      const missing = units.filter((unit) => !translationFor(translationMapRef.current, unit.hash))
       for (let index = 0; index < missing.length; index += 8) {
         const group = missing.slice(index, index + 8)
         try {
-          const segments = group.map((block) => ({ id: blockHash(block.text), text: block.text }))
+          const segments = group.map((unit) => ({ id: unit.hash, text: unit.text }))
           const result = await api.translate(sessionId, {
             docKey,
             target: translationLangRef.current,
@@ -2595,16 +2583,16 @@ export function ReaderView(props) {
             return
           }
           mergeTranslations(translationLangRef.current, result)
-          for (const block of group) {
-            if (translationFor(translationMapRef.current, blockHash(block.text))) {
-              pdfFailedRef.current.delete(block.id)
+          for (const unit of group) {
+            if (translationFor(translationMapRef.current, unit.hash)) {
+              pdfFailedRef.current.delete(unit.hash)
             } else {
-              pdfFailedRef.current.set(block.id, block.text)
+              pdfFailedRef.current.set(unit.hash, unit.text)
             }
           }
           setPdfFailed(pdfFailedRef.current.size)
         } catch (error) {
-          for (const block of group) pdfFailedRef.current.set(block.id, block.text)
+          for (const unit of group) pdfFailedRef.current.set(unit.hash, unit.text)
           while (pdfFailedRef.current.size > MAX_TRANSLATION_FAILURES) {
             const oldest = pdfFailedRef.current.keys().next().value
             pdfFailedRef.current.delete(oldest)
@@ -2650,11 +2638,12 @@ export function ReaderView(props) {
     }
     setSelectionTranslation({ text, loading: true, translation: '', rect })
     try {
-      const hash = blockHash(text)
+      const unit = unitFromText(text)
+      const hash = unit.hash
       const result = await api.translate(sessionId, {
         target: translationLang,
         from: translationFrom,
-        segments: [{ id: hash, text }],
+        segments: [{ id: hash, text: unit.text }],
         ...(forceTranslateRef.current ? { force: true } : {}),
       })
       if (result?.skipped) {
@@ -2690,13 +2679,14 @@ export function ReaderView(props) {
   const forceSelectionTranslation = async () => {
     if (!selectionTranslation || selectionTranslation.loading) return
     const { text, rect } = selectionTranslation
-    const hash = blockHash(text)
+    const unit = unitFromText(text)
+    const hash = unit.hash
     setSelectionTranslation({ text, loading: true, translation: '', rect })
     try {
       const result = await api.translate(sessionId, {
         target: translationLang,
         from: translationFrom,
-        segments: [{ id: hash, text }],
+        segments: [{ id: hash, text: unit.text }],
         force: true,
       })
       setSelectionTranslation({
@@ -2833,16 +2823,42 @@ export function ReaderView(props) {
   React.useEffect(() => {
     const root = contentRef.current
     if (!root || !doc || doc.ext === '.pdf') return
-    for (const node of Array.from(root.querySelectorAll('.rd-trans, .rd-trans-pending'))) node.remove()
-    if (translationMode === 'off') return
-    if (translationMode === 'only') return
+    if (translationMode === 'off' || translationMode === 'only') {
+      for (const node of Array.from(root.querySelectorAll('.rd-trans'))) node.remove()
+      return
+    }
+    const keep = new Set()
     for (const block of collectTranslationBlocks()) {
       const text = translationFor(translationMap, block.hash)
       if (!text) continue
-      const div = document.createElement('div')
-      div.className = 'rd-trans'
-      div.textContent = text
-      block.node.appendChild(div)
+      let div = null
+      for (const child of block.node.children || []) {
+        if (child.classList && child.classList.contains('rd-trans')) {
+          div = child
+          break
+        }
+      }
+      if (div && div.dataset.rdHash !== block.hash) {
+        div.remove()
+        div = null
+      }
+      if (!div) {
+        div = document.createElement('div')
+        div.className = 'rd-trans'
+        block.node.appendChild(div)
+      }
+      if (div._rdText !== text) {
+        const fragment = renderUnitFragment(block, text)
+        if (fragment) div.replaceChildren(fragment)
+        else div.textContent = text.replace(/\{\{RD:\d+\}\}/g, '')
+        div._rdText = text
+      }
+      div.dataset.rdHash = block.hash
+      div.lang = translationLang
+      keep.add(div)
+    }
+    for (const node of Array.from(root.querySelectorAll('.rd-trans'))) {
+      if (!keep.has(node)) node.remove()
     }
   }, [doc, chapter, translationMode, translationLang, translationMap, layoutTick])
 
@@ -2851,28 +2867,26 @@ export function ReaderView(props) {
     const root = contentRef.current
     if (!root) return
     const scroller = root.closest('.rd-main') || root.parentElement
+    const units = collectTranslationBlocks()
     if (typeof IntersectionObserver !== 'function') {
-      const blocks = collectTranslationBlocks(12)
-      enqueueTranslationSegments(blocks.map((block) => ({ id: block.hash, text: block.text })))
+      enqueueTranslationSegments(units.slice(0, 12).map((unit) => ({ id: unit.hash, text: unit.text })))
       return
     }
+    const byNode = new Map(units.map((unit) => [unit.node, unit]))
     const observer = new IntersectionObserver(
       (entries) => {
         const segments = []
         for (const entry of entries) {
           if (!entry.isIntersecting) continue
-          const text = normalizeBlockText(entry.target.textContent)
-          if (text.length < 2) continue
-          segments.push({ id: blockHash(text), text })
+          const unit = byNode.get(entry.target)
+          if (!unit) continue
+          segments.push({ id: unit.hash, text: unit.text })
         }
         enqueueTranslationSegments(segments)
       },
       { root: scroller, rootMargin: '240px 0px', threshold: 0.01 },
     )
-    for (const node of root.querySelectorAll('p, li, blockquote, h2, h3, h4, td')) {
-      if (node.closest('.rd-trans, .rd-trans-pending, .rd-card')) continue
-      observer.observe(node)
-    }
+    for (const unit of units) observer.observe(unit.node)
     return () => observer.disconnect()
   }, [doc, chapter, translationMode, translationLang, translationFrom, layoutTick, translationTick])
 
@@ -3635,7 +3649,7 @@ export function ReaderView(props) {
 
   const translatedOnlyHtml = React.useMemo(() => {
     if (!doc || doc.ext === '.pdf' || translationMode !== 'only') return ''
-    return buildTranslatedHtml(renderedHtml, (text) => translationFor(translationMap, blockHash(text)))
+    return buildTranslatedOnlyHtml(renderedHtml, (hash) => translationFor(translationMap, hash))
   }, [doc, chapter, renderedHtml, translationMode, translationMap])
 
   const renderContent = () => {

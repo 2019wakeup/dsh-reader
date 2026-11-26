@@ -62,7 +62,7 @@ function countMatches(text, pattern) {
 
 function sampleForDetection(text) {
   return String(text || '')
-    .replace(/\{RD:\d+\}/g, ' ')
+    .replace(/\{\{RD:\d+\}\}/g, ' ')
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/```[\s\S]*?```/g, ' ')
     .slice(0, 4000)
@@ -145,6 +145,8 @@ export function buildTranslatePrompt({ target, from = 'auto', segments }) {
     `如果原文已经是${languageName(target)}，原样返回。`,
     '只输出一个 JSON 对象：{"translations":{"<id>":"<译文>"}}，不要输出其他文字。',
     '逐段对应，不要合并或拆分段落。',
+    '保留 {{RD:n}} 占位符原样、顺序不变；不要翻译或增删占位符里的内容。',
+    '不要给译文加“译文：”之类的前缀。',
   ].join('')
   const user = segments.map((segment) => `[${segment.id}] ${segment.text}`).join('\n').slice(0, 12000)
   return { system, user }
