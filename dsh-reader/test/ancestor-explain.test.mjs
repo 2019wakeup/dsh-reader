@@ -27,6 +27,15 @@ if (win.Range) {
 }
 
 const tick = (ms = 25) => new Promise((resolve) => setTimeout(resolve, ms))
+const waitFor = async (read, timeoutMs = 3000) => {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const value = read()
+    if (value) return value
+    await tick(25)
+  }
+  return read()
+}
 
 function json(value) {
   return Promise.resolve({
@@ -164,8 +173,7 @@ async function mountReader(t) {
     }
   })
   root.render(React.createElement(Boundary, null, React.createElement(component, { sessionId: 's1' })))
-  await tick(200)
-  const entry = container.querySelector('.rd-entry')
+  const entry = await waitFor(() => container.querySelector('.rd-entry'))
   assert.ok(entry, 'library row rendered: ' + (container.querySelector('#err')?.textContent || '').slice(0, 600))
   entry.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
   await tick(80)
