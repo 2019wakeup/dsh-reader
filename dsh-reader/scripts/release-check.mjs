@@ -56,6 +56,11 @@ await check('visual pipeline', async () => {
   return '171 checks + baselines'
 })
 
+await check('translation eval', async () => {
+  command('translate eval', 'node eval/translate.mjs --offline')
+  return '44/44'
+})
+
 await check('docx pipeline', async () => {
   command('docx', 'node eval/docx.mjs')
   return '9/9'
