@@ -1,0 +1,60 @@
+{"id": "en-zh.systems.01", "split": "holdout", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": ["term"], "source": "Consistency means every replica observes the same history at the same time."}
+{"id": "en-zh.systems.02", "split": "tune", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": ["term"], "source": "The CAP theorem states that a distributed system cannot simultaneously guarantee consistency, availability, and partition tolerance."}
+{"id": "en-zh.systems.03", "split": "tune", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "A cache reduces latency by storing recently used data closer to the consumer."}
+{"id": "en-zh.systems.04", "split": "holdout", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "A B-tree keeps data sorted and allows searches, insertions, and deletions in logarithmic time."}
+{"id": "en-zh.systems.05", "split": "tune", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "TCP provides reliable, ordered delivery of a byte stream over an unreliable network."}
+{"id": "en-zh.systems.06", "split": "tune", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "TLS protects data in transit by encrypting the connection between the client and the server."}
+{"id": "en-zh.systems.07", "split": "holdout", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "An index speeds up reads but adds write overhead because every update must maintain the index."}
+{"id": "en-zh.systems.08", "split": "tune", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Raft elects a leader and replicates a log so that a minority failure does not stop the cluster."}
+{"id": "en-zh.systems.09", "split": "tune", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Kubernetes reconciles the desired state with the observed state through a control loop."}
+{"id": "en-zh.systems.10", "split": "holdout", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Garbage collection reclaims memory that is no longer reachable from the program roots."}
+{"id": "en-zh.systems.11", "split": "tune", "domain": "systems", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "The compiler can inline small functions and eliminate redundant loads after escape analysis."}
+{"id": "en-zh.ml.12", "split": "tune", "domain": "ml", "format": "md", "from": "en", "target": "zh", "tags": ["term"], "source": "Attention lets the model weigh different parts of the input when producing each output token."}
+{"id": "en-zh.ml.13", "split": "holdout", "domain": "ml", "format": "md", "from": "en", "target": "zh", "tags": ["term"], "source": "Overfitting occurs when a model memorizes the training data and fails to generalize."}
+{"id": "en-zh.ml.14", "split": "tune", "domain": "ml", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Gradient descent updates parameters in the direction that reduces the loss."}
+{"id": "en-zh.ml.15", "split": "tune", "domain": "ml", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Accuracy alone is misleading on imbalanced datasets, so precision and recall are also reported."}
+{"id": "en-zh.legal.16", "split": "holdout", "domain": "legal", "format": "md", "from": "en", "target": "zh", "tags": ["shall"], "source": "The Supplier shall deliver the Services in accordance with the agreed service levels."}
+{"id": "en-zh.legal.17", "split": "tune", "domain": "legal", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Either party may terminate this Agreement with thirty days written notice."}
+{"id": "en-zh.privacy.18", "split": "tune", "domain": "privacy", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Personal data must be deleted when it is no longer necessary for the stated purpose."}
+{"id": "en-zh.medical.19", "split": "holdout", "domain": "medical", "format": "md", "from": "en", "target": "zh", "tags": ["number"], "source": "The recommended dose is 10 mg once daily, and renal impairment requires dose adjustment."}
+{"id": "en-zh.medical.20", "split": "tune", "domain": "medical", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Patients should stop the drug and seek medical advice if a rash develops."}
+{"id": "en-zh.finance.21", "split": "tune", "domain": "finance", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Inflation erodes purchasing power when wages do not keep pace with prices."}
+{"id": "en-zh.finance.22", "split": "holdout", "domain": "finance", "format": "md", "from": "en", "target": "zh", "tags": ["number"], "source": "The central bank raised the policy rate by 25 basis points to anchor expectations."}
+{"id": "en-zh.finance.23", "split": "tune", "domain": "finance", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Supply chain disruption increased lead times and pushed inventory costs higher."}
+{"id": "en-zh.docs.24", "split": "tune", "domain": "docs", "format": "md", "from": "en", "target": "zh", "tags": ["number"], "source": "The endpoint accepts at most 100 requests per minute and returns 429 when the limit is exceeded."}
+{"id": "en-zh.docs.25", "split": "holdout", "domain": "docs", "format": "md", "from": "en", "target": "zh", "tags": ["term"], "source": "An idempotency key lets the client retry a request without creating duplicate resources."}
+{"id": "en-zh.docs.26", "split": "tune", "domain": "docs", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "A good code review focuses on correctness, readability, and the risks of the change."}
+{"id": "en-zh.ops.27", "split": "tune", "domain": "ops", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Observability combines logs, metrics, and traces to explain the behavior of a running system."}
+{"id": "en-zh.ops.28", "split": "holdout", "domain": "ops", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "A postmortem should describe the impact, the timeline, the root cause, and the follow-up work."}
+{"id": "en-zh.a11y.29", "split": "tune", "domain": "a11y", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "Accessible interfaces support keyboard navigation, readable contrast, and clear focus states."}
+{"id": "en-zh.research.30", "split": "tune", "domain": "research", "format": "md", "from": "en", "target": "zh", "tags": [], "source": "User research should start with a question, not with the solution the team already prefers."}
+{"id": "zh-zh.systems.01", "split": "holdout", "domain": "systems", "format": "md", "from": "zh", "target": "zh", "tags": ["term"], "source": "一致性要求所有副本在同一时刻看到相同的数据。"}
+{"id": "zh-zh.systems.02", "split": "tune", "domain": "systems", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "缓存命中可以显著降低平均响应时间。"}
+{"id": "zh-zh.systems.03", "split": "tune", "domain": "systems", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "数据库索引会加快查询，但会增加写入成本。"}
+{"id": "zh-zh.ml.04", "split": "holdout", "domain": "ml", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "模型的泛化能力取决于训练数据是否具有代表性。"}
+{"id": "zh-zh.legal.05", "split": "tune", "domain": "legal", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "本协议自双方签字之日起生效。"}
+{"id": "zh-zh.medical.06", "split": "tune", "domain": "medical", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "出现不良反应时应立即停药并联系医生。"}
+{"id": "zh-zh.finance.07", "split": "holdout", "domain": "finance", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "利率上升会提高企业的融资成本。"}
+{"id": "zh-zh.finance.08", "split": "tune", "domain": "finance", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "供应链中断可能导致交付延迟和库存积压。"}
+{"id": "zh-zh.docs.09", "split": "tune", "domain": "docs", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "接口调用失败时，客户端应使用指数退避重试。"}
+{"id": "zh-zh.docs.10", "split": "holdout", "domain": "docs", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "代码评审应优先关注正确性和可维护性。"}
+{"id": "zh-zh.a11y.11", "split": "tune", "domain": "a11y", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "界面应支持键盘操作和屏幕阅读器。"}
+{"id": "zh-zh.research.12", "split": "tune", "domain": "research", "format": "md", "from": "zh", "target": "zh", "tags": [], "source": "用户访谈应避免诱导性问题。"}
+{"id": "ja-zh.systems.01", "split": "holdout", "domain": "systems", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "分散システムでは、すべての複製が同じ履歴を見る必要があります。"}
+{"id": "ja-zh.systems.02", "split": "tune", "domain": "systems", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "キャッシュは応答時間を短縮しますが、古いデータを返す可能性があります。"}
+{"id": "ja-zh.systems.03", "split": "tune", "domain": "systems", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "データベースの索引は読み取りを速くし、書き込みを遅くします。"}
+{"id": "ja-zh.ml.04", "split": "holdout", "domain": "ml", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "過学習を防ぐには、検証データで性能を確認する必要があります。"}
+{"id": "ja-zh.security.05", "split": "tune", "domain": "security", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "通信は暗号化され、第三者が内容を読むことはできません。"}
+{"id": "ja-zh.ops.06", "split": "tune", "domain": "ops", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "可用性を高めるには、単一障害点を減らすことが重要です。"}
+{"id": "ja-zh.ops.07", "split": "holdout", "domain": "ops", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "監視とログを組み合わせることで、障害の原因を特定できます。"}
+{"id": "ja-zh.docs.08", "split": "tune", "domain": "docs", "format": "md", "from": "ja", "target": "zh", "tags": [], "source": "仕様変更は関係者に事前に共有してください。"}
+{"id": "fr-zh.systems.01", "split": "tune", "domain": "systems", "format": "md", "from": "fr", "target": "zh", "tags": [], "source": "La cohérence garantit que toutes les répliques voient les mêmes données."}
+{"id": "fr-zh.systems.02", "split": "holdout", "domain": "systems", "format": "md", "from": "fr", "target": "zh", "tags": [], "source": "Le cache réduit la latence mais peut contenir des données obsolètes."}
+{"id": "fr-zh.security.03", "split": "tune", "domain": "security", "format": "md", "from": "fr", "target": "zh", "tags": [], "source": "Le chiffrement protège les données pendant leur transmission."}
+{"id": "fr-zh.legal.04", "split": "tune", "domain": "legal", "format": "md", "from": "fr", "target": "zh", "tags": [], "source": "Le contrat prend effet à la date de signature."}
+{"id": "fr-zh.ops.05", "split": "holdout", "domain": "ops", "format": "md", "from": "fr", "target": "zh", "tags": [], "source": "La disponibilité dépend de la suppression des points de défaillance uniques."}
+{"id": "auto-zh.mixed.01", "split": "tune", "domain": "mixed", "format": "md", "from": "auto", "target": "zh", "tags": [], "source": "Distributed systems are hard because failures are partial and asynchronous."}
+{"id": "auto-zh.mixed.02", "split": "tune", "domain": "mixed", "format": "md", "from": "auto", "target": "zh", "tags": [], "source": "缓存未命中时，请求会回源到数据库。"}
+{"id": "auto-zh.mixed.03", "split": "holdout", "domain": "mixed", "format": "md", "from": "auto", "target": "zh", "tags": [], "source": "分散システムの可用性は、障害時の復旧時間にも依存します。"}
+{"id": "auto-zh.mixed.04", "split": "tune", "domain": "mixed", "format": "md", "from": "auto", "target": "zh", "tags": [], "source": "La traçabilité est essentielle pour diagnostiquer les incidents."}
+{"id": "auto-zh.mixed.05", "split": "tune", "domain": "mixed", "format": "md", "from": "auto", "target": "zh", "tags": [], "source": "Die Konsistenz kann durch Replikation und Quorum erreicht werden."}
