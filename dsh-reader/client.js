@@ -3332,6 +3332,29 @@ async function pdfRenderPage(pdf, pageNumber, canvas, layer, scale, onTask) {
 }
 
 /**
+ * The 1-based page number that owns a DOM range inside the rendered PDF.
+ *
+ * Text selections live in `.rd-text-layer` spans nested under
+ * `.rd-pdf-page[data-page]`, so the range's start node always resolves to the
+ * page the reader is looking at. Returns `undefined` when the range is not
+ * inside a page element; callers fall back to their own current page.
+ * @param {Range | null | undefined} range
+ * @returns {number | undefined}
+ */
+function pdfPageFromRange(range) {
+  try {
+    const node = range && range.startContainer
+    if (!node) return undefined
+    const element = node.nodeType === 3 ? node.parentElement : node
+    const pageElement = element && element.closest ? element.closest('.rd-pdf-page') : null
+    const pageNumber = pageElement ? Number(pageElement.dataset.page) : NaN
+    return Number.isFinite(pageNumber) ? pageNumber : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Group one PDF page's text items into paragraph-ish blocks for translation.
  * Lines are merged while the vertical gap stays within one line height.
  * @returns {Promise<Array<{id: string, text: string}>>}
