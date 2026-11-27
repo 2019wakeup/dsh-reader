@@ -1540,7 +1540,9 @@ export function ReaderView(props) {
     )
     let occurrence = 0
     let pageNumber
-    if (inContent && doc?.ext === '.pdf') pageNumber = pdfPageFromRange(range)
+    // Keep the page on screen as the fallback: the selection start may sit in an
+    // overlay that has no `.rd-pdf-page` ancestor.
+    if (inContent && doc?.ext === '.pdf') pageNumber = pdfPageFromRange(range) ?? page
     else if (inContent && range) {
       occurrence = occurrenceBefore(contentRef.current, range).split(term).length - 1
     }
@@ -1602,7 +1604,7 @@ export function ReaderView(props) {
     const quote = menu.range.toString()
     if (!quote) return
     if (doc.ext === '.pdf') {
-      setNoteDraft({ quote, page: pdfPageFromRange(menu.range), pdf: true, text: '', color: '#f2c94c' })
+      setNoteDraft({ quote, page: pdfPageFromRange(menu.range) ?? page, pdf: true, text: '', color: '#f2c94c' })
       setMenu(null)
       return
     }

@@ -54,6 +54,7 @@ async function main() {
     if (path.includes('/api/guide')) return json({ guide: fixtures.guide, reused: 0, generated: 0, store: currentStore })
     if (path.includes('/api/explain')) {
       const payload = JSON.parse(init?.body || '{}')
+      ;(window.__explainPosts ||= []).push(payload)
       let concept = { ...fixtures.concept, occurrences: [] }
       if (payload.parentId) {
         // Reuse the second fixture concept so the store and the concept-library
