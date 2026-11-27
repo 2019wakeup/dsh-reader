@@ -420,7 +420,11 @@ async function main() {
     args: ['--no-sandbox', '--disable-lcd-text', '--force-device-scale-factor=1', '--font-render-hinting=none', '--lang=zh-CN', '--accept-lang=zh-CN'],
   })
   const page = await browser.newPage()
-  page.on('pageerror', (error) => console.log('PAGE ERROR:', error.message))
+  const pageErrors = []
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message)
+    console.log('PAGE ERROR:', error.message)
+  })
   page.on('console', (message) => {
     if (message.type() === 'error') console.log('PAGE CONSOLE:', message.text().slice(0, 200))
   })
@@ -1565,6 +1569,59 @@ async function main() {
     record('pdf text layer extracted', pdf.textItems > 20, `${pdf.textItems} spans`)
     record('pdf canvas not blank', !pdf.canvasBlank, '')
     await shot('08-pdf')
+
+    // Selecting text on a PDF page used to throw before the explain request:
+    // app.js called pdfPageFromRange, and that helper did not exist.
+    await page.evaluate(() => {
+      const span = [...document.querySelectorAll('.rd-text-layer span')].find(
+        (node) => (node.textContent || '').trim().length >= 2,
+      )
+      const range = document.createRange()
+      range.selectNodeContents(span)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      span.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    })
+    const pdfMenu = await page.waitForSelector('.rd-mini', { timeout: 8000 }).then(() => true).catch(() => false)
+    const pdfExplain = pdfMenu ? await clickAny('.rd-mini button', ['解释']) : false
+    const pdfCard = await page
+      .waitForFunction(
+        () => {
+          const card = document.querySelector('.rd-card')
+          if (!card || card.querySelector('.rd-skeleton')) return null
+          return card.textContent || ''
+        },
+        { timeout: 10000 },
+      )
+      .then((handle) => handle.jsonValue())
+      .catch(() => '')
+    record(
+      'pdf selection explain opens a card',
+      Boolean(pdfExplain) && pdfCard.includes('所有副本在同一时刻'),
+      String(pdfCard).slice(0, 60),
+    )
+    const pdfExplainPosts = await page.evaluate(() => window.__explainPosts || [])
+    const pdfPost = pdfExplainPosts[pdfExplainPosts.length - 1] || null
+    record(
+      'pdf selection explain carries the page number',
+      Boolean(pdfPost) && pdfPost.page === 1,
+      pdfPost ? `page=${String(pdfPost.page)} term=${String(pdfPost.term || '')}` : 'no request',
+    )
+    record(
+      'pdf selection explain raises no page error',
+      pageErrors.every((message) => !/pdfPageFromRange|is not defined/.test(message)),
+      pageErrors.join(' | ').slice(0, 80),
+    )
+    // Close the card and let the "已收下" toast expire, otherwise both leak into
+    // the later screenshots (epub / narrow / markdown-tables).
+    await page.evaluate(() => {
+      const card = document.querySelector('.rd-card')
+      const closer = card && [...card.querySelectorAll('h3 button')].find((node) => (node.textContent || '').trim() === '×')
+      if (closer) closer.click()
+    })
+    await page.waitForFunction(() => !document.querySelector('.rd-card'), { timeout: 8000 }).catch(() => {})
+    await page.waitForFunction(() => !document.querySelector('.rd-toast'), { timeout: 8000 }).catch(() => {})
 
     await clickAny('.rd-toolbar button', ['←'])
     await page.waitForSelector('.rd-library', { timeout: 8000 })

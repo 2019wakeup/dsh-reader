@@ -77,6 +77,25 @@ export async function pdfRenderPage(pdf, pageNumber, canvas, layer, scale, onTas
 }
 
 /**
+ * Resolve the 1-based page number that owns the start of a PDF selection.
+ *
+ * The text layer renders each page's spans inside `.rd-pdf-page[data-page]`, so
+ * walking up from the selection start is enough. Returns `undefined` when the
+ * node is not inside a page container (callers keep their own fallback, e.g. the
+ * page currently on screen), which keeps selections from headers/footers safe.
+ * @param {Range|null|undefined} range
+ * @returns {number|undefined}
+ */
+export function pdfPageFromRange(range) {
+  const start = range && range.startContainer
+  if (!start) return undefined
+  const element = start.nodeType === 1 ? start : start.parentElement
+  const container = element && typeof element.closest === 'function' ? element.closest('.rd-pdf-page') : null
+  const page = Number(container && container.dataset ? container.dataset.page : NaN)
+  return Number.isFinite(page) && page > 0 ? page : undefined
+}
+
+/**
  * Group one PDF page's text items into paragraph-ish blocks for translation.
  * Lines are merged while the vertical gap stays within one line height.
  * @returns {Promise<Array<{id: string, text: string}>>}
