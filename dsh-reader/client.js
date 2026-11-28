@@ -459,6 +459,25 @@ function undoLabel() {
   return modifierLabel() === '⌘' ? '⌘Z / ⌘⇧Z' : 'Ctrl+Z / Ctrl+Shift+Z'
 }
 
+/**
+ * True while a keyboard event belongs to an IME composition.
+ *
+ * Pressing Enter to pick a Chinese/Japanese/Korean candidate fires `keydown`
+ * with `isComposing === true` (Chrome/macOS) or `keyCode === 229` (Safari and
+ * some Windows IMEs) before the composition is committed. Enter handlers that
+ * submit on `key === 'Enter'` must ignore that event, otherwise the first
+ * candidate keypress submits half-typed pinyin as if the user pressed Enter.
+ */
+function isImeComposing(event) {
+  if (!event) return false
+  // React's synthetic keydown event does not expose `isComposing`, so read the
+  // native event as well; plain DOM listeners carry the flag on the event itself.
+  const native = event.nativeEvent || null
+  const composing = event.isComposing || (native && native.isComposing)
+  const code = event.keyCode || (native && native.keyCode)
+  return Boolean(composing || code === 229)
+}
+
 
 const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
 const RING_CLASS = 'rd-jump-ring'
@@ -8967,7 +8986,7 @@ function ReaderView(props) {
           value: searchQuery,
           onChange: (event) => setSearchQuery(event.target.value),
           onKeyDown: (event) => {
-            if (event.key === 'Enter') runSearch()
+            if (event.key === 'Enter' && !isImeComposing(event)) runSearch()
           },
         }),
         h('button', { className: 'rd-btn', onClick: runSearch }, t('action.search')),
@@ -10407,7 +10426,7 @@ function ReaderView(props) {
             defaultValue: String(page),
             onFocus: (event) => event.target.select(),
             onKeyDown: (event) => {
-              if (event.key === 'Enter') {
+              if (event.key === 'Enter' && !isImeComposing(event)) {
                 const next = parsePageInput(event.target.value, doc.pdf.numPages)
                 if (next !== null) setPage(next)
                 event.target.blur()
@@ -11769,7 +11788,7 @@ function ReaderView(props) {
             value: askText,
             onChange: (event) => setAskText(event.target.value),
             onKeyDown: (event) => {
-              if (event.key === 'Enter') askConcept(concept)
+              if (event.key === 'Enter' && !isImeComposing(event)) askConcept(concept)
             },
           }),
           h(
