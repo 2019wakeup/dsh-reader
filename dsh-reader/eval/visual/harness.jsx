@@ -67,7 +67,14 @@ async function main() {
       }
       return json({ concept, store: currentStore })
     }
-    if (path.includes('/api/concept/ask')) return json({ answer: '示例回答：这是视觉测试夹具。', store: currentStore })
+    if (path.includes('/api/concept/ask')) {
+      try {
+        ;(window.__askPosts ||= []).push(JSON.parse(init?.body || '{}'))
+      } catch {
+        /* keep the visual run alive even if a body is malformed */
+      }
+      return json({ answer: '示例回答：这是视觉测试夹具。', store: currentStore })
+    }
     if (path.includes('/api/translate')) {
       const payload = JSON.parse(init?.body || '{}')
       const translations = {}

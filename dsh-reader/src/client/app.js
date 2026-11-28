@@ -2222,7 +2222,7 @@ export function ReaderView(props) {
           value: searchQuery,
           onChange: (event) => setSearchQuery(event.target.value),
           onKeyDown: (event) => {
-            if (event.key === 'Enter') runSearch()
+            if (event.key === 'Enter' && !isImeComposing(event)) runSearch()
           },
         }),
         h('button', { className: 'rd-btn', onClick: runSearch }, t('action.search')),
@@ -3662,7 +3662,7 @@ export function ReaderView(props) {
             defaultValue: String(page),
             onFocus: (event) => event.target.select(),
             onKeyDown: (event) => {
-              if (event.key === 'Enter') {
+              if (event.key === 'Enter' && !isImeComposing(event)) {
                 const next = parsePageInput(event.target.value, doc.pdf.numPages)
                 if (next !== null) setPage(next)
                 event.target.blur()
@@ -5024,7 +5024,7 @@ export function ReaderView(props) {
             value: askText,
             onChange: (event) => setAskText(event.target.value),
             onKeyDown: (event) => {
-              if (event.key === 'Enter') askConcept(concept)
+              if (event.key === 'Enter' && !isImeComposing(event)) askConcept(concept)
             },
           }),
           h(

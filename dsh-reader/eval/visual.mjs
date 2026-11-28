@@ -832,6 +832,57 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 950))
     record('card closes after leaving', (await page.$('.rd-card')) === null, '')
 
+    // The Enter that commits an IME candidate (Chinese pinyin input) must not
+    // submit the ask question.
+    await page.hover('.rd-prose .rd-term')
+    await page.waitForSelector('.rd-card', { timeout: 8000 })
+    const askSelector = '.rd-card .rd-actions > input.rd-input'
+    const readAsk = () =>
+      page.evaluate((selector) => {
+        const input = document.querySelector(selector)
+        return {
+          posts: (window.__askPosts || []).length,
+          value: input ? input.value : null,
+        }
+      }, askSelector)
+    await page.click(askSelector)
+    await page.keyboard.type('ni')
+    // Chrome delivers the Enter that confirms a pinyin candidate as a normal
+    // looking keydown that carries isComposing:true (verified once with a CDP
+    // Input.imeSetComposition + dispatchKeyEvent probe). Replay that event shape
+    // here: driving the real IME queue tears down the page context in headless
+    // Chrome, so the parked regression asserts the handler contract instead.
+    await page.evaluate(() => {
+      const input = document.querySelector('.rd-card .rd-actions > input.rd-input')
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          bubbles: true,
+          cancelable: true,
+          isComposing: true,
+        }),
+      )
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const afterIme = await readAsk()
+    record(
+      'IME enter does not send the question',
+      afterIme.posts === 0 && afterIme.value === 'ni',
+      `posts=${afterIme.posts} value=${JSON.stringify(afterIme.value)}`,
+    )
+    await page.keyboard.press('Enter')
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const afterPlain = await readAsk()
+    record('a plain enter still asks the question', afterPlain.posts === 1, `posts=${afterPlain.posts}`)
+    await page.keyboard.press('Escape')
+    await page.mouse.move(4, 4)
+    // The ask raises a four second toast; wait it out so the following shots
+    // record the card states and not a transient banner.
+    await page.waitForFunction(() => !document.querySelector('.rd-toast'), { timeout: 8000 }).catch(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
 
     const rectOf = (selector) =>
       page.$eval(selector, (node) => {
@@ -878,6 +929,9 @@ async function main() {
       Boolean(stickyActions && stickyActions.visible),
       stickyActions ? `${Math.round(stickyActions.saveBottom)} <= ${Math.round(stickyActions.cardBottom)}` : 'save missing',
     )
+    // Upstream's baseline for this shot caught a transient "已收下" toast; wait it
+    // out so the frame records the editor instead of a banner.
+    await page.waitForFunction(() => !document.querySelector('.rd-toast'), { timeout: 8000 }).catch(() => {})
     await shot('03c-concept-edit')
     await clickAny('.rd-card button', ['取消', 'Cancel'])
     await page.mouse.move(4, 4)

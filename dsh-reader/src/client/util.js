@@ -59,3 +59,22 @@ export function modifierLabel() {
 export function undoLabel() {
   return modifierLabel() === '⌘' ? '⌘Z / ⌘⇧Z' : 'Ctrl+Z / Ctrl+Shift+Z'
 }
+
+/**
+ * True while a keyboard event belongs to an IME composition.
+ *
+ * Pressing Enter to pick a Chinese/Japanese/Korean candidate fires `keydown`
+ * with `isComposing === true` (Chrome/macOS) or `keyCode === 229` (Safari and
+ * some Windows IMEs) before the composition is committed. Enter handlers that
+ * submit on `key === 'Enter'` must ignore that event, otherwise the first
+ * candidate keypress submits half-typed pinyin as if the user pressed Enter.
+ */
+export function isImeComposing(event) {
+  if (!event) return false
+  // React's synthetic keydown event does not expose `isComposing`, so read the
+  // native event as well; plain DOM listeners carry the flag on the event itself.
+  const native = event.nativeEvent || null
+  const composing = event.isComposing || (native && native.isComposing)
+  const code = event.keyCode || (native && native.keyCode)
+  return Boolean(composing || code === 229)
+}
