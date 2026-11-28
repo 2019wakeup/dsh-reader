@@ -7298,6 +7298,7 @@ function ReaderView(props) {
   React.useEffect(() => {
     if (!mapFullscreen) return
     const onEscape = (event) => {
+      if (isImeComposing(event)) return
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
@@ -7853,7 +7854,7 @@ function ReaderView(props) {
 
   React.useEffect(() => {
     const onKey = (event) => {
-      if (event.isComposing) return
+      if (isImeComposing(event)) return
       const action = shortcutFor(event, { editable: isEditableTarget(event.target), pageKeys: prefs.pageKeys })
       if (action === 'undo' || action === 'redo') {
         event.preventDefault()
@@ -8605,6 +8606,7 @@ function ReaderView(props) {
   }
 
   const onRootKeyDown = (event) => {
+    if (isImeComposing(event)) return
     if (event.key !== 'Enter' && event.key !== ' ') return
     const target = event.target
     if (!target || !target.classList) return
@@ -10179,6 +10181,7 @@ function ReaderView(props) {
           'data-pan-y': mapPan.y,
           style: mapGridVars({ pan: mapPan, scale: mapScale }),
           onKeyDown: (event) => {
+            if (isImeComposing(event)) return
             if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
             event.preventDefault()
             event.stopPropagation()
@@ -10702,6 +10705,7 @@ function ReaderView(props) {
         onPointerCancel: endDrawerResize,
         onDoubleClick: resetDrawerWidth,
         onKeyDown: (event) => {
+          if (isImeComposing(event)) return
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
           event.preventDefault()
           commitDrawerWidth(drawerWidth + (event.key === 'ArrowLeft' ? 24 : -24))
