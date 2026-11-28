@@ -283,3 +283,29 @@ test('the Enter that commits an IME candidate does not run the search', async (t
   })
   assert.ok(hits, 'plain Enter runs the search')
 })
+
+test('IME enter on a concept term does not activate its card', async (t) => {
+  const container = await mountReader(t)
+  const term = await waitFor(() => container.querySelector('.rd-prose .rd-term'))
+  assert.ok(term, 'term rendered')
+  term.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }))
+  await tick(80)
+  assert.equal(container.querySelector('.rd-card'), null, 'composing Enter must not open the card')
+  term.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  assert.ok(await waitFor(() => container.querySelector('.rd-card')), 'plain Enter opens the card')
+})
+
+test('a keyCode 229 shortcut event does not open search', async (t) => {
+  const container = await mountReader(t)
+  const event = new win.KeyboardEvent('keydown', {
+    key: 'f',
+    ctrlKey: true,
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  })
+  Object.defineProperty(event, 'keyCode', { value: 229 })
+  win.dispatchEvent(event)
+  await tick(60)
+  assert.equal(container.querySelector('.rd-search'), null, 'IME keyCode 229 must not trigger search')
+})
